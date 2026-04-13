@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Aurora Bakers{% endblock %}</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+
+<aside class="sidebar">
+  <div class="sidebar-logo">
+    <span class="logo-icon">🍞</span>
+    <div>
+      <div class="logo-title">Aurora Bakers</div>
+      <div class="logo-sub">panypasta.cl</div>
+    </div>
+  </div>
+  <nav class="sidebar-nav">
+    <a href="/ventas"        class="nav-item {% if active=='ventas'        %}active{% endif %}"><i class="bi bi-receipt"></i> Ventas</a>
+    <a href="/clientes"      class="nav-item {% if active=='clientes'      %}active{% endif %}"><i class="bi bi-people"></i> Clientes</a>
+    <a href="/productos"     class="nav-item {% if active=='productos'     %}active{% endif %}"><i class="bi bi-basket"></i> Productos</a>
+    <a href="/suscripciones" class="nav-item {% if active=='suscripciones' %}active{% endif %}"><i class="bi bi-calendar-check"></i> Suscripciones</a>
+    <a href="/reportes"      class="nav-item {% if active=='reportes'      %}active{% endif %}"><i class="bi bi-bar-chart-line"></i> Reportes</a>
+    <a href="/crm"           class="nav-item {% if active=='crm'           %}active{% endif %}"><i class="bi bi-diagram-3"></i> CRM</a>
+    <div class="nav-divider">ERP</div>
+    <a href="/produccion"    class="nav-item {% if active=='produccion'    %}active{% endif %}"><i class="bi bi-fire"></i> Producción</a>
+    <a href="/inventario"    class="nav-item {% if active=='inventario'    %}active{% endif %}"><i class="bi bi-boxes"></i> Inventario</a>
+    <a href="/gastos"        class="nav-item {% if active=='gastos'        %}active{% endif %}"><i class="bi bi-cash-coin"></i> Gastos</a>
+    <a href="/agenda"        class="nav-item {% if active=='agenda'        %}active{% endif %}"><i class="bi bi-calendar3"></i> Agenda</a>
+    <a href="/configuracion-negocio" class="nav-item {% if active=='config_negocio' %}active{% endif %}"><i class="bi bi-gear"></i> Configuración</a>
+    {% if session.get('user_rol') == 'admin' %}
+    <a href="/admin/usuarios" class="nav-item {% if active=='admin' %}active{% endif %}"><i class="bi bi-people-fill"></i> Usuarios</a>
+    {% endif %}
+  </nav>
+  <div class="sidebar-footer" id="sb-date">
+    {% if session.get('user_nombre') %}
+    <div style="font-size:.72rem;color:var(--text-3);padding:.5rem .75rem;border-top:1px solid var(--border);margin-top:.5rem">
+      <div style="font-weight:600;color:var(--text-2)"><i class="bi bi-person-circle"></i> {{ session.user_nombre }}</div>
+      <a href="/logout" style="color:var(--text-3);font-size:.68rem;text-decoration:none;display:inline-flex;align-items:center;gap:.3rem;margin-top:.25rem"><i class="bi bi-box-arrow-left"></i> Cerrar sesión</a>
+    </div>
+    {% endif %}
+  </div>
+</aside>
+
+<main class="main">
+  <header class="topbar">
+    <h1>{% block page_title %}{% endblock %}</h1>
+    <span class="topbar-meta" id="top-date"></span>
+  </header>
+  <div class="content">
+    {% block content %}{% endblock %}
+  </div>
+</main>
+
+<!-- Toast container -->
+<div id="toast-container"></div>
+
+<script>
+// ── Date display ──────────────────────────────────────────────────────────────
+(function(){
+  const d = new Date();
+  const opts = { weekday:'long', year:'numeric', month:'long', day:'numeric' };
+  const str  = d.toLocaleDateString('es-CL', opts);
+  document.getElementById('top-date').textContent = str;
+  document.getElementById('sb-date').textContent  = str;
+})();
+
+// ── Toast ─────────────────────────────────────────────────────────────────────
+function toast(msg, type='success') {
+  const tc = document.getElementById('toast-container');
+  const t  = document.createElement('div');
+  t.className = `toast ${type}`;
+  const icon = type === 'success' ? 'bi-check-circle-fill' : type === 'error' ? 'bi-x-circle-fill' : 'bi-info-circle-fill';
+  t.innerHTML = `<i class="bi ${icon}"></i><span>${msg}</span>`;
+  tc.appendChild(t);
+  setTimeout(() => t.remove(), 3500);
+}
+
+// ── Modals ────────────────────────────────────────────────────────────────────
+function openModal(id)  { document.getElementById(id).classList.add('open'); }
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+
+document.addEventListener('click', e => {
+  if (e.target.classList.contains('modal-overlay')) e.target.classList.remove('open');
+  if (e.target.classList.contains('panel-overlay'))  e.target.classList.remove('open');
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    document.querySelectorAll('.modal-overlay.open, .panel-overlay.open')
+      .forEach(el => el.classList.remove('open'));
+  }
+});
+
+// ── Currency ──────────────────────────────────────────────────────────────────
+function clp(n) {
+  return '$' + Math.round(n || 0).toLocaleString('es-CL');
+}
+
+// ── Fetch helpers ─────────────────────────────────────────────────────────────
+async function api(method, url, body) {
+  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(url, opts);
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({}));
+    throw new Error(err.error || `Error ${r.status}`);
+  }
+  return r.json();
+}
+
+function canal_badge(canal) {
+  const map = { local:'Local', online:'Online', suscripcion:'Suscripción' };
+  return `<span class="badge badge-${canal}">${map[canal]||canal}</span>`;
+}
+function estado_badge(estado) {
+  const map = { activo:'Activo', pausado:'Pausado', cancelado:'Cancelado' };
+  return `<span class="badge badge-${estado}">${map[estado]||estado}</span>`;
+}
+</script>
+
+{% block scripts %}{% endblock %}
+</body>
+</html>

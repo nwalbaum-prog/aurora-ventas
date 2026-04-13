@@ -1,0 +1,400 @@
+{% extends "base.html" %}
+{% block title %}CRM — Aurora Bakers{% endblock %}
+{% block page_title %}CRM · Captación y Ventas{% endblock %}
+
+{% block content %}
+<style>
+/* ── Zona chips ──────────────────────────────────────────────────────────── */
+.zona-chip { padding:.25rem .65rem; border-radius:20px; font-size:.72rem; font-weight:600;
+              border:1.5px solid var(--border); background:var(--bg); color:var(--text-2);
+              cursor:pointer; transition:.15s; }
+.zona-chip:hover { border-color:var(--accent); color:var(--accent); }
+.zona-chip.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+
+/* ── Page tabs ──────────────────────────────────────────────────────────── */
+.crm-tabs { display:flex; gap:.5rem; margin-bottom:1.5rem; }
+.crm-tab  { padding:.45rem 1.1rem; border-radius:6px; font-size:.85rem; font-weight:600;
+             border:1.5px solid var(--border); background:var(--surface); color:var(--text-2);
+             cursor:pointer; transition:.15s; }
+.crm-tab:hover { background:var(--hover); }
+.crm-tab.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+
+/* ── KPI row ─────────────────────────────────────────────────────────────── */
+.kpi-row { display:grid; grid-template-columns:repeat(4,1fr); gap:1rem; margin-bottom:1.5rem; }
+.kpi-card { background:var(--surface); border:1px solid var(--border); border-radius:10px;
+             padding:1rem 1.25rem; }
+.kpi-label { font-size:.75rem; font-weight:600; color:var(--text-2); text-transform:uppercase;
+              letter-spacing:.04em; margin-bottom:.35rem; }
+.kpi-value { font-size:1.75rem; font-weight:700; color:var(--text-1); line-height:1; }
+.kpi-sub   { font-size:.75rem; color:var(--text-3); margin-top:.3rem; }
+.kpi-up    { color:#22c55e; } .kpi-down { color:#ef4444; }
+
+/* ── Grid layout ─────────────────────────────────────────────────────────── */
+.crm-grid { display:grid; grid-template-columns:1fr 320px; gap:1.25rem; }
+
+/* ── Pipeline kanban ─────────────────────────────────────────────────────── */
+.pipeline-wrap { background:var(--surface); border:1px solid var(--border);
+                  border-radius:10px; padding:1.25rem; overflow-x:auto; }
+.pipeline-title { font-size:.8rem; font-weight:700; text-transform:uppercase;
+                   letter-spacing:.05em; color:var(--text-2); margin-bottom:1rem; }
+.kanban { display:flex; gap:.75rem; min-width:max-content; }
+.kanban-col { width:180px; flex-shrink:0; }
+.kanban-head { font-size:.72rem; font-weight:700; text-transform:uppercase;
+                letter-spacing:.04em; padding:.35rem .6rem; border-radius:5px;
+                margin-bottom:.5rem; white-space:nowrap; }
+.kanban-cards { display:flex; flex-direction:column; gap:.5rem; min-height:60px; }
+.k-card { background:var(--bg); border:1px solid var(--border); border-radius:7px;
+           padding:.6rem .75rem; cursor:pointer; transition:.15s; }
+.k-card:hover { border-color:var(--accent); box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 15%,transparent); }
+.k-card-name { font-size:.8rem; font-weight:600; color:var(--text-1); white-space:nowrap;
+                overflow:hidden; text-overflow:ellipsis; }
+.k-card-sub  { font-size:.7rem; color:var(--text-3); margin-top:.15rem; }
+.k-card-addr { font-size:.67rem; color:var(--text-3); margin-top:.1rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.k-card-temp { display:inline-block; font-size:.65rem; font-weight:700; padding:.1rem .35rem;
+                border-radius:4px; margin-top:.3rem; }
+.temp-HOT  { background:#fee2e2; color:#b91c1c; }
+.temp-WARM { background:#fef3c7; color:#92400e; }
+.temp-COLD { background:#dbeafe; color:#1e40af; }
+.kanban-empty { font-size:.72rem; color:var(--text-3); text-align:center; padding:.75rem 0; }
+
+/* Stage colors */
+.stage-NUEVO_CONTACTO   { background:#f1f5f9; color:#475569; }
+.stage-CALIFICADO       { background:#ede9fe; color:#5b21b6; }
+.stage-PRIMERA_COMPRA   { background:#fef3c7; color:#92400e; }
+.stage-RECURRENTE       { background:#d1fae5; color:#065f46; }
+.stage-SUSCRIPTOR_CLUB  { background:#dbeafe; color:#1e40af; }
+.stage-INACTIVO         { background:#fee2e2; color:#991b1b; }
+.stage-PROSPECTO        { background:#f1f5f9; color:#475569; }
+.stage-CONTACTADO       { background:#ede9fe; color:#5b21b6; }
+.stage-MUESTRA_ENVIADA  { background:#fef9c3; color:#713f12; }
+.stage-NEGOCIACION      { background:#fef3c7; color:#92400e; }
+.stage-CONTRATO_FIRMADO { background:#d1fae5; color:#065f46; }
+.stage-ONBOARDING       { background:#cffafe; color:#164e63; }
+.stage-CUENTA_ACTIVA    { background:#dbeafe; color:#1e40af; }
+.stage-EN_RIESGO        { background:#fee2e2; color:#991b1b; }
+
+/* ── Sidebar panels ───────────────────────────────────────────────────────── */
+.crm-sidebar { display:flex; flex-direction:column; gap:1rem; }
+.panel-box { background:var(--surface); border:1px solid var(--border);
+              border-radius:10px; padding:1.1rem 1.25rem; }
+.panel-head { font-size:.75rem; font-weight:700; text-transform:uppercase;
+               letter-spacing:.05em; color:var(--text-2); margin-bottom:.75rem;
+               display:flex; align-items:center; justify-content:space-between; }
+.panel-head a { font-size:.72rem; font-weight:600; color:var(--accent);
+                 text-decoration:none; text-transform:none; letter-spacing:0; }
+
+/* Task list */
+.task-list { display:flex; flex-direction:column; gap:.5rem; }
+.task-item { display:flex; align-items:flex-start; gap:.6rem; padding:.5rem .6rem;
+              border-radius:7px; border:1px solid var(--border); background:var(--bg); }
+.task-check { width:15px; height:15px; border-radius:50%; border:2px solid var(--border);
+               flex-shrink:0; margin-top:.1rem; cursor:pointer; }
+.task-check.done { background:var(--accent); border-color:var(--accent); }
+.task-body  { flex:1; min-width:0; }
+.task-desc  { font-size:.78rem; color:var(--text-1); }
+.task-meta  { font-size:.68rem; color:var(--text-3); margin-top:.1rem; }
+.task-due-past { color:#ef4444; font-weight:600; }
+
+/* Recent leads list */
+.lead-list { display:flex; flex-direction:column; gap:.45rem; }
+.lead-item { display:flex; align-items:center; gap:.6rem; padding:.45rem .6rem;
+              border-radius:7px; background:var(--bg); border:1px solid var(--border);
+              text-decoration:none; transition:.15s; }
+.lead-item:hover { border-color:var(--accent); }
+.lead-avatar { width:30px; height:30px; border-radius:50%; background:var(--accent);
+                color:#fff; display:flex; align-items:center; justify-content:center;
+                font-size:.78rem; font-weight:700; flex-shrink:0; }
+.lead-info  { flex:1; min-width:0; }
+.lead-name  { font-size:.78rem; font-weight:600; color:var(--text-1); white-space:nowrap;
+               overflow:hidden; text-overflow:ellipsis; }
+.lead-stage { font-size:.68rem; color:var(--text-3); }
+
+/* ── Add task modal ───────────────────────────────────────────────────────── */
+.task-form { display:flex; flex-direction:column; gap:.85rem; }
+</style>
+
+<!-- ── Módulo tabs ─────────────────────────────────────────────────────────── -->
+<div class="crm-tabs">
+  <button class="crm-tab active" data-mod="B2B" onclick="switchMod('B2B',this)">B2B · Negocios</button>
+  <button class="crm-tab"        data-mod="B2C" onclick="switchMod('B2C',this)">B2C · Consumidor Final</button>
+  <div style="flex:1"></div>
+  <a href="/crm/buscar" class="btn btn-primary" style="text-decoration:none;padding:.4rem 1rem;font-size:.82rem;">
+    <i class="bi bi-search"></i> Buscar leads
+  </a>
+  <a href="/crm/email-masivo" class="btn btn-secondary" style="text-decoration:none;padding:.4rem 1rem;font-size:.82rem;background:#6366f1;border-color:#6366f1;color:#fff;">
+    <i class="bi bi-envelope-fill"></i> Email Masivo
+  </a>
+  <a href="/crm/whatsapp-masivo" class="btn btn-secondary" style="text-decoration:none;padding:.4rem 1rem;font-size:.82rem;background:#25d366;border-color:#25d366;color:#fff;">
+    <i class="bi bi-whatsapp"></i> WhatsApp Masivo
+  </a>
+  <a href="/crm/configuracion" class="btn btn-ghost" style="text-decoration:none;padding:.4rem .85rem;font-size:.82rem;" title="Configurar agente WhatsApp y email">
+    <i class="bi bi-gear"></i>
+  </a>
+</div>
+
+<!-- ── KPI row ─────────────────────────────────────────────────────────────── -->
+<div class="kpi-row" id="kpi-row">
+  <div class="kpi-card"><div class="kpi-label">Total Leads</div><div class="kpi-value" id="k-total">—</div><div class="kpi-sub">activos en pipeline</div></div>
+  <div class="kpi-card"><div class="kpi-label">Tasa Conversión</div><div class="kpi-value" id="k-conv">—</div><div class="kpi-sub">leads → clientes</div></div>
+  <div class="kpi-card"><div class="kpi-label">Este Mes</div><div class="kpi-value" id="k-mes">—</div><div class="kpi-sub">leads ingresados</div></div>
+  <div class="kpi-card"><div class="kpi-label">Tareas Pendientes</div><div class="kpi-value" id="k-tareas">—</div><div class="kpi-sub">vencen hoy o antes</div></div>
+</div>
+
+<!-- ── Zona filter ──────────────────────────────────────────────────────────── -->
+<div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;margin-bottom:1rem">
+  <span style="font-size:.72rem;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.04em">Zona:</span>
+  <div id="zona-chips" style="display:flex;gap:.35rem;flex-wrap:wrap">
+    <button class="zona-chip active" data-zona="" onclick="filterZona('',this)">Todas</button>
+  </div>
+</div>
+
+<!-- ── Main grid ──────────────────────────────────────────────────────────── -->
+<div class="crm-grid">
+  <!-- Pipeline kanban -->
+  <div class="pipeline-wrap">
+    <div class="pipeline-title" id="pipeline-label">Pipeline B2C</div>
+    <div class="kanban" id="kanban"></div>
+  </div>
+
+  <!-- Right sidebar -->
+  <div class="crm-sidebar">
+    <!-- Tareas -->
+    <div class="panel-box">
+      <div class="panel-head">
+        Tareas pendientes
+        <a href="#" onclick="openModal('modal-task');return false;">+ Nueva</a>
+      </div>
+      <div class="task-list" id="task-list"><p style="font-size:.75rem;color:var(--text-3)">Cargando…</p></div>
+    </div>
+
+    <!-- Leads recientes -->
+    <div class="panel-box">
+      <div class="panel-head">Leads recientes</div>
+      <div class="lead-list" id="lead-list"><p style="font-size:.75rem;color:var(--text-3)">Cargando…</p></div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Modal nueva tarea ──────────────────────────────────────────────────── -->
+<div class="modal-overlay" id="modal-task">
+  <div class="modal" style="max-width:420px">
+    <div class="modal-header"><h3>Nueva tarea</h3><button class="modal-close" onclick="closeModal('modal-task')">×</button></div>
+    <div class="modal-body">
+      <div class="task-form">
+        <div class="form-group">
+          <label class="form-label">Lead (opcional)</label>
+          <select id="t-lead" class="form-control"><option value="">— Sin lead asociado —</option></select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Descripción *</label>
+          <input id="t-desc" class="form-control" placeholder="Ej: Llamar para seguimiento" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Vence</label>
+          <input id="t-due" type="datetime-local" class="form-control" />
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-task')">Cancelar</button>
+      <button class="btn btn-primary" onclick="saveTask()">Guardar</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentMod  = 'B2B';
+let allLeads    = [];
+let currentZona = '';
+
+const PIPELINE_LABELS = {
+  NUEVO_CONTACTO:'Nuevo Contacto', CALIFICADO:'Calificado', PRIMERA_COMPRA:'1ª Compra',
+  RECURRENTE:'Recurrente', SUSCRIPTOR_CLUB:'Club Suscriptor', INACTIVO:'Inactivo',
+  PROSPECTO:'Prospecto', CONTACTADO:'Contactado', MUESTRA_ENVIADA:'Muestra Enviada',
+  NEGOCIACION:'Negociación', CONTRATO_FIRMADO:'Contrato Firmado', ONBOARDING:'Onboarding',
+  CUENTA_ACTIVA:'Cuenta Activa', EN_RIESGO:'En Riesgo'
+};
+
+const TEMP_LABEL = { HOT:'🔥 Caliente', WARM:'🌡️ Tibio', COLD:'❄️ Frío' };
+
+// ── Load all data ──────────────────────────────────────────────────────────
+async function loadAll() {
+  await Promise.all([loadKpis(), loadLeads(), loadTasks()]);
+}
+
+async function loadKpis() {
+  try {
+    const d = await api('GET', `/api/crm/kpis?modulo=${currentMod}`);
+    document.getElementById('k-total').textContent  = d.total ?? 0;
+    document.getElementById('k-conv').textContent   = (d.tasa_conversion ?? 0) + '%';
+    document.getElementById('k-mes').textContent    = d.leads_mes ?? 0;
+    document.getElementById('k-tareas').textContent = d.tareas_vencidas ?? 0;
+  } catch(e) { console.error(e); }
+}
+
+async function loadLeads() {
+  try {
+    const d = await api('GET', `/api/crm/leads?modulo=${currentMod}`);
+    allLeads = Array.isArray(d) ? d : (d.leads || []);
+    renderZonaChips();
+    renderKanban();
+    renderLeadList();
+  } catch(e) { console.error(e); }
+}
+
+function renderZonaChips() {
+  const zonas = [...new Set(allLeads.map(l => l.zona).filter(Boolean))].sort();
+  const wrap  = document.getElementById('zona-chips');
+  wrap.innerHTML = `<button class="zona-chip${currentZona===''?' active':''}" data-zona="" onclick="filterZona('',this)">Todas</button>`;
+  zonas.forEach(z => {
+    const btn = document.createElement('button');
+    btn.className = 'zona-chip' + (currentZona===z?' active':'');
+    btn.textContent = z;
+    btn.onclick = () => filterZona(z, btn);
+    wrap.appendChild(btn);
+  });
+}
+
+function filterZona(zona, btn) {
+  currentZona = zona;
+  document.querySelectorAll('.zona-chip').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderKanban();
+  renderLeadList();
+}
+
+async function loadTasks() {
+  try {
+    const d = await api('GET', '/api/crm/tareas?pendientes=1');
+    renderTasks(Array.isArray(d) ? d : (d.tareas || []));
+    // populate lead select
+    const sel = document.getElementById('t-lead');
+    const prev = sel.value;
+    sel.innerHTML = '<option value="">— Sin lead asociado —</option>';
+    allLeads.forEach(l => {
+      const o = document.createElement('option');
+      o.value = l.id; o.textContent = l.nombre;
+      sel.appendChild(o);
+    });
+    if (prev) sel.value = prev;
+  } catch(e) { console.error(e); }
+}
+
+// ── Kanban ─────────────────────────────────────────────────────────────────
+const STAGES = {
+  B2C: ['NUEVO_CONTACTO','CALIFICADO','PRIMERA_COMPRA','RECURRENTE','SUSCRIPTOR_CLUB','INACTIVO'],
+  B2B: ['PROSPECTO','CONTACTADO','MUESTRA_ENVIADA','NEGOCIACION','CONTRATO_FIRMADO','ONBOARDING','CUENTA_ACTIVA','EN_RIESGO']
+};
+
+function leadsVisibles() {
+  return currentZona ? allLeads.filter(l => l.zona === currentZona) : allLeads;
+}
+
+function renderKanban() {
+  document.getElementById('pipeline-label').textContent = `Pipeline ${currentMod}${currentZona?' · '+currentZona:''}`;
+  const stages = STAGES[currentMod];
+  const byStage = {};
+  stages.forEach(s => byStage[s] = []);
+  leadsVisibles().forEach(l => { if (byStage[l.etapa] !== undefined) byStage[l.etapa].push(l); });
+
+  const kanban = document.getElementById('kanban');
+  kanban.innerHTML = '';
+  stages.forEach(stage => {
+    const leads = byStage[stage];
+    const col = document.createElement('div');
+    col.className = 'kanban-col';
+    col.innerHTML = `
+      <div class="kanban-head stage-${stage}">${PIPELINE_LABELS[stage]||stage} <span style="opacity:.6">${leads.length}</span></div>
+      <div class="kanban-cards" id="col-${stage}">
+        ${leads.length === 0 ? '<div class="kanban-empty">—</div>' :
+          leads.map(l => `
+            <div class="k-card" onclick="window.location='/crm/lead/${l.id}'">
+              <div class="k-card-name">${escHtml(l.nombre)}</div>
+              <div class="k-card-sub">${escHtml(l.empresa||l.canal_origen||'')}</div>
+              ${l.direccion ? `<div class="k-card-addr"><i class="bi bi-geo-alt"></i> ${escHtml(l.direccion)}</div>` : ''}
+              <span class="k-card-temp temp-${l.temperatura}">${TEMP_LABEL[l.temperatura]||l.temperatura}</span>
+            </div>`).join('')}
+      </div>`;
+    kanban.appendChild(col);
+  });
+}
+
+function renderLeadList() {
+  const el = document.getElementById('lead-list');
+  const recent = [...leadsVisibles()].sort((a,b) => new Date(b.fecha_creacion)-new Date(a.fecha_creacion)).slice(0,8);
+  if (!recent.length) { el.innerHTML = '<p style="font-size:.75rem;color:var(--text-3)">Sin leads registrados.</p>'; return; }
+  el.innerHTML = recent.map(l => `
+    <a href="/crm/lead/${l.id}" class="lead-item">
+      <div class="lead-avatar">${escHtml(l.nombre.charAt(0).toUpperCase())}</div>
+      <div class="lead-info">
+        <div class="lead-name">${escHtml(l.nombre)}${l.empresa?` <span style="font-weight:400;color:var(--text-3)">· ${escHtml(l.empresa)}</span>`:''}</div>
+        <div class="lead-stage">${PIPELINE_LABELS[l.etapa]||l.etapa}${l.direccion?` · <i class="bi bi-geo-alt"></i> ${escHtml(l.direccion)}`:''}${l.zona&&!l.direccion?` · ${escHtml(l.zona)}`:''}</div>
+      </div>
+      <span class="k-card-temp temp-${l.temperatura}" style="font-size:.65rem">${l.temperatura}</span>
+    </a>`).join('');
+}
+
+function renderTasks(tasks) {
+  const el = document.getElementById('task-list');
+  if (!tasks.length) { el.innerHTML = '<p style="font-size:.75rem;color:var(--text-3)">Sin tareas pendientes 🎉</p>'; return; }
+  const now = new Date();
+  el.innerHTML = tasks.slice(0,8).map(t => {
+    const due     = t.fecha_vencimiento ? new Date(t.fecha_vencimiento) : null;
+    const past    = due && due < now;
+    const dueStr  = due ? due.toLocaleDateString('es-CL',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}) : '';
+    return `
+      <div class="task-item">
+        <div class="task-check${t.completada?' done':''}" onclick="toggleTask(${t.id},this)" title="Marcar completada"></div>
+        <div class="task-body">
+          <div class="task-desc">${escHtml(t.titulo||t.descripcion)}</div>
+          ${t.lead_nombre ? `<div class="task-meta">📌 ${escHtml(t.lead_nombre)}</div>` : ''}
+          ${dueStr ? `<div class="task-meta ${past?'task-due-past':''}"><i class="bi bi-clock"></i> ${dueStr}</div>` : ''}
+        </div>
+      </div>`;
+  }).join('');
+}
+
+// ── Actions ────────────────────────────────────────────────────────────────
+async function toggleTask(id, el) {
+  try {
+    await api('POST', `/api/crm/tareas/${id}/completar`);
+    el.classList.toggle('done');
+    await loadTasks();
+  } catch(e) { toast(e.message,'error'); }
+}
+
+async function saveTask() {
+  const desc = document.getElementById('t-desc').value.trim();
+  if (!desc) { toast('La descripción es obligatoria','error'); return; }
+  const body = {
+    descripcion: desc,
+    lead_id    : document.getElementById('t-lead').value || null,
+    vence_en   : document.getElementById('t-due').value || null
+  };
+  try {
+    await api('POST', '/api/crm/tareas', body);
+    closeModal('modal-task');
+    document.getElementById('t-desc').value = '';
+    document.getElementById('t-due').value  = '';
+    await loadTasks();
+    toast('Tarea creada');
+  } catch(e) { toast(e.message,'error'); }
+}
+
+function switchMod(mod, btn) {
+  currentMod = mod;
+  document.querySelectorAll('.crm-tab').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  loadAll();
+}
+
+function escHtml(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── Init ───────────────────────────────────────────────────────────────────
+loadAll();
+</script>
+{% endblock %}

@@ -1,0 +1,282 @@
+{% extends "base.html" %}
+{% block title %}Productos{% endblock %}
+{% block page_title %}Productos{% endblock %}
+
+{% block content %}
+<div class="toolbar">
+  <div class="filter-tabs" id="cat-tabs">
+    <button class="filter-tab active" onclick="filtrarCat(this,'')">Todos</button>
+    <button class="filter-tab" onclick="filtrarCat(this,'pan')">🍞 Pan</button>
+    <button class="filter-tab" onclick="filtrarCat(this,'suscripcion')">📦 Suscripción</button>
+  </div>
+  <div class="toolbar-right">
+    <button class="btn btn-primary" onclick="openAdd()">
+      <i class="bi bi-plus-lg"></i> Nuevo Producto
+    </button>
+  </div>
+</div>
+
+<div class="card">
+  <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th>Producto</th>
+        <th>Categoría</th>
+        <th>Unidad</th>
+        <th class="right">Precio retail</th>
+        <th class="right">Precio mayorista</th>
+        <th class="right">Costo / Margen</th>
+        <th class="right">Stock</th>
+        <th></th>
+      </tr></thead>
+      <tbody id="prod-tbody">
+        <tr><td colspan="7" class="text-center text-muted" style="padding:40px">Cargando...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Modal producto -->
+<div class="modal-overlay" id="prod-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title" id="prod-modal-title">Nuevo Producto</span>
+      <button class="modal-close" onclick="closeModal('prod-modal')"><i class="bi bi-x-lg"></i></button>
+    </div>
+    <input type="hidden" id="p-id">
+    <div class="form-group">
+      <label>Nombre *</label>
+      <input type="text" id="p-nombre" placeholder="Ej: Hogaza Integral">
+    </div>
+    <div class="form-row fr-2">
+      <div class="form-group">
+        <label>Descripción</label>
+        <input type="text" id="p-descripcion" placeholder="Descripción breve">
+      </div>
+      <div class="form-group">
+        <label>Categoría</label>
+        <select id="p-categoria">
+          <option value="pan">🍞 Pan</option>
+          <option value="suscripcion">📦 Suscripción</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Precios -->
+    <div class="form-row fr-3">
+      <div class="form-group">
+        <label>Precio retail *</label>
+        <input type="number" id="p-precio" min="0" step="50" oninput="calcMargen()" placeholder="0">
+      </div>
+      <div class="form-group">
+        <label>Precio mayorista</label>
+        <input type="number" id="p-precio-mayorista" min="0" step="50" oninput="calcMargen()" placeholder="0">
+      </div>
+      <div class="form-group">
+        <label>Costo</label>
+        <input type="number" id="p-costo" min="0" step="50" oninput="calcMargen()" placeholder="0">
+      </div>
+    </div>
+
+    <!-- Márgenes (readonly) -->
+    <div class="form-row fr-2">
+      <div class="form-group">
+        <label>Margen retail</label>
+        <input type="text" id="p-margen" readonly placeholder="—" style="background:var(--bg);cursor:default">
+      </div>
+      <div class="form-group">
+        <label>Margen mayorista</label>
+        <input type="text" id="p-margen-mayorista" readonly placeholder="—" style="background:var(--bg);cursor:default">
+      </div>
+    </div>
+
+    <div class="form-row fr-2">
+      <div class="form-group">
+        <label>Stock disponible</label>
+        <input type="number" id="p-stock" min="0" step="1" placeholder="0">
+      </div>
+      <div class="form-group">
+        <label>Unidad</label>
+        <select id="p-unidad">
+          <option value="unidad">Unidad</option>
+          <option value="kg">Kg</option>
+          <option value="bolsa">Bolsa</option>
+          <option value="caja">Caja</option>
+        </select>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('prod-modal')">Cancelar</button>
+      <button class="btn btn-primary" onclick="saveProducto()"><i class="bi bi-check-lg"></i> Guardar</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let productos = [];
+let filtroCat = '';
+
+async function loadProductos() {
+  productos = await api('GET', '/api/productos');
+  render();
+}
+
+function filtrarCat(btn, cat) {
+  document.querySelectorAll('#cat-tabs .filter-tab').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  filtroCat = cat;
+  render();
+}
+
+function margenPct(precio, costo) {
+  if (!precio || precio <= 0) return null;
+  return ((precio - costo) / precio * 100).toFixed(1);
+}
+
+function margenColor(pct) {
+  if (pct === null) return 'var(--muted)';
+  if (pct >= 50) return 'var(--success)';
+  if (pct >= 30) return 'var(--warning)';
+  return 'var(--danger)';
+}
+
+function catBadge(cat) {
+  if (cat === 'suscripcion') return '<span class="badge badge-sub-cat">📦 Suscripción</span>';
+  return '<span class="badge badge-pan-cat">🍞 Pan</span>';
+}
+
+function render() {
+  const tbody = document.getElementById('prod-tbody');
+  const lista = filtroCat ? productos.filter(p => p.categoria === filtroCat) : productos;
+  if (!lista.length) {
+    tbody.innerHTML = '<tr><td colspan="8"><div class="empty"><i class="bi bi-basket"></i><p>Sin productos</p></div></td></tr>';
+    return;
+  }
+  tbody.innerHTML = lista.map(p => {
+    const pctR = margenPct(p.precio, p.costo);
+    const pctM = p.precio_mayorista > 0 ? margenPct(p.precio_mayorista, p.costo) : null;
+    const colorR = margenColor(pctR);
+    const colorM = margenColor(pctM);
+    const stockColor = p.stock <= 2 ? 'var(--danger)' : p.stock <= 5 ? 'var(--warning)' : 'var(--success)';
+    return `<tr>
+      <td>
+        <div class="fw-600 text-white">${p.nombre}</div>
+        <div class="text-muted text-sm">${p.descripcion||''}</div>
+      </td>
+      <td>${catBadge(p.categoria||'pan')}</td>
+      <td class="text-muted">${p.unidad}</td>
+      <td class="right">
+        <div class="mono fw-600 text-white">${clp(p.precio)}</div>
+        <div class="text-sm mono" style="color:${colorR}">${pctR !== null ? pctR+'%' : '—'}</div>
+      </td>
+      <td class="right">
+        ${p.precio_mayorista > 0
+          ? `<div class="mono fw-600" style="color:var(--aurora)">${clp(p.precio_mayorista)}</div>
+             <div class="text-sm mono" style="color:${colorM}">${pctM !== null ? pctM+'%' : '—'}</div>`
+          : `<div class="text-muted text-sm">—</div>`
+        }
+      </td>
+      <td class="right">
+        <div class="mono text-muted">${clp(p.costo)}</div>
+      </td>
+      <td class="right mono fw-600" style="color:${stockColor}">${p.stock}</td>
+      <td>
+        <div class="flex gap-8">
+          <button class="btn btn-secondary btn-icon btn-sm" onclick="openEdit(${p.id})" title="Editar"><i class="bi bi-pencil"></i></button>
+          <button class="btn btn-danger btn-icon btn-sm" onclick="deleteProducto(${p.id})" title="Eliminar"><i class="bi bi-trash3"></i></button>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function calcMargen() {
+  const precio         = parseFloat(document.getElementById('p-precio').value) || 0;
+  const precioMay      = parseFloat(document.getElementById('p-precio-mayorista').value) || 0;
+  const costo          = parseFloat(document.getElementById('p-costo').value) || 0;
+
+  const elR = document.getElementById('p-margen');
+  const pctR = margenPct(precio, costo);
+  elR.value = pctR !== null ? pctR + '%' : '—';
+  elR.style.color = margenColor(pctR);
+
+  const elM = document.getElementById('p-margen-mayorista');
+  const pctM = precioMay > 0 ? margenPct(precioMay, costo) : null;
+  elM.value = pctM !== null ? pctM + '%' : '—';
+  elM.style.color = margenColor(pctM);
+}
+
+function openAdd() {
+  document.getElementById('p-id').value = '';
+  document.getElementById('prod-modal-title').textContent = 'Nuevo Producto';
+  ['nombre','descripcion','precio','precio-mayorista','costo','stock'].forEach(f =>
+    document.getElementById('p-'+f).value = ''
+  );
+  document.getElementById('p-unidad').value    = 'unidad';
+  document.getElementById('p-categoria').value = 'pan';
+  document.getElementById('p-margen').value = '—';
+  document.getElementById('p-margen-mayorista').value = '—';
+  openModal('prod-modal');
+}
+
+function openEdit(id) {
+  const p = productos.find(x=>x.id===id);
+  if (!p) return;
+  document.getElementById('p-id').value                   = id;
+  document.getElementById('prod-modal-title').textContent = 'Editar Producto';
+  document.getElementById('p-nombre').value               = p.nombre;
+  document.getElementById('p-descripcion').value          = p.descripcion||'';
+  document.getElementById('p-precio').value               = p.precio;
+  document.getElementById('p-precio-mayorista').value     = p.precio_mayorista||0;
+  document.getElementById('p-costo').value                = p.costo;
+  document.getElementById('p-stock').value                = p.stock;
+  document.getElementById('p-unidad').value               = p.unidad;
+  document.getElementById('p-categoria').value            = p.categoria||'pan';
+  calcMargen();
+  openModal('prod-modal');
+}
+
+async function saveProducto() {
+  const nombre = document.getElementById('p-nombre').value.trim();
+  const precio = parseFloat(document.getElementById('p-precio').value);
+  if (!nombre || !precio) { toast('Nombre y precio son obligatorios', 'error'); return; }
+  const body = {
+    nombre,
+    descripcion:      document.getElementById('p-descripcion').value.trim(),
+    precio,
+    precio_mayorista: parseFloat(document.getElementById('p-precio-mayorista').value) || 0,
+    costo:            parseFloat(document.getElementById('p-costo').value)  || 0,
+    stock:            parseFloat(document.getElementById('p-stock').value)  || 0,
+    unidad:           document.getElementById('p-unidad').value,
+    categoria:        document.getElementById('p-categoria').value,
+  };
+  const id = document.getElementById('p-id').value;
+  try {
+    if (id) await api('PUT', `/api/productos/${id}`, body);
+    else    await api('POST', '/api/productos', body);
+    closeModal('prod-modal');
+    toast(id ? 'Producto actualizado' : 'Producto creado');
+    loadProductos();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function deleteProducto(id) {
+  const p = productos.find(x=>x.id===id);
+  if (!confirm(`¿Eliminar "${p?.nombre}"? Se ocultará del catálogo.`)) return;
+  try {
+    await api('DELETE', `/api/productos/${id}`);
+    toast('Producto eliminado');
+    loadProductos();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+loadProductos();
+</script>
+
+<style>
+.badge-pan-cat { background:#d4a85a22; color:#d4a85a; }
+.badge-sub-cat { background:#6b9fd422; color:#6b9fd4; }
+</style>
+{% endblock %}

@@ -1,0 +1,326 @@
+{% extends "base.html" %}
+{% block title %}Clientes{% endblock %}
+{% block page_title %}Clientes{% endblock %}
+
+{% block content %}
+<div class="toolbar">
+  <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+    <div class="search-wrap">
+      <i class="bi bi-search"></i>
+      <input type="text" id="search" placeholder="Buscar por nombre, RUT, email o teléfono..." oninput="buscar(this.value)">
+    </div>
+    <div class="filter-tabs" id="tipo-tabs">
+      <button class="filter-tab active" onclick="filtrarTipo(this,'')">Todos</button>
+      <button class="filter-tab" onclick="filtrarTipo(this,'CLIENTE')">Clientes</button>
+      <button class="filter-tab" onclick="filtrarTipo(this,'MAYORISTA')">Mayoristas</button>
+    </div>
+  </div>
+  <div class="toolbar-right">
+    <button class="btn btn-primary" onclick="openAdd()">
+      <i class="bi bi-person-plus"></i> Nuevo Cliente
+    </button>
+  </div>
+</div>
+
+<div class="card">
+  <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th>Nombre / Tipo</th>
+        <th>RUT</th>
+        <th>Teléfono</th>
+        <th>Email</th>
+        <th class="center">Suscriptor</th>
+        <th class="right">Compras</th>
+        <th class="right">Total</th>
+        <th>Última compra</th>
+        <th></th>
+      </tr></thead>
+      <tbody id="cli-tbody">
+        <tr><td colspan="9" class="text-center text-muted" style="padding:40px">Cargando...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Modal cliente -->
+<div class="modal-overlay" id="cli-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title" id="cli-modal-title">Nuevo Cliente</span>
+      <button class="modal-close" onclick="closeModal('cli-modal')"><i class="bi bi-x-lg"></i></button>
+    </div>
+    <input type="hidden" id="cli-id">
+
+    <!-- Tipo de cliente — primero y destacado -->
+    <div class="form-group">
+      <label>Tipo de cliente *</label>
+      <div class="tipo-selector" id="tipo-selector">
+        <button type="button" class="tipo-btn active" data-v="CLIENTE" onclick="setTipo('CLIENTE')">
+          🏠 Cliente particular
+        </button>
+        <button type="button" class="tipo-btn" data-v="MAYORISTA" onclick="setTipo('MAYORISTA')">
+          🏢 Mayorista (HORECA / empresa)
+        </button>
+      </div>
+      <input type="hidden" id="cli-tipo" value="CLIENTE">
+    </div>
+
+    <!-- RUT — visible siempre, destacado para mayoristas -->
+    <div class="form-row fr-2">
+      <div class="form-group">
+        <label>Nombre *</label>
+        <input type="text" id="cli-nombre" placeholder="Nombre o razón social">
+      </div>
+      <div class="form-group" id="grupo-rut">
+        <label id="rut-label">RUT <span class="text-muted" style="text-transform:none;font-weight:400">(opcional)</span></label>
+        <input type="text" id="cli-rut" placeholder="12.345.678-9">
+      </div>
+    </div>
+
+    <div class="form-row fr-2">
+      <div class="form-group">
+        <label>Teléfono</label>
+        <input type="text" id="cli-telefono" placeholder="+56 9 XXXX XXXX">
+      </div>
+      <div class="form-group">
+        <label>Email</label>
+        <input type="email" id="cli-email" placeholder="correo@ejemplo.cl">
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Dirección</label>
+      <input type="text" id="cli-direccion" placeholder="Calle, número, comuna">
+    </div>
+    <div class="form-group">
+      <label>Notas</label>
+      <textarea id="cli-notas" placeholder="Preferencias, alergias, instrucciones de entrega..."></textarea>
+    </div>
+    <div class="form-group flex-center gap-8">
+      <input type="checkbox" id="cli-suscriptor" style="width:auto">
+      <label for="cli-suscriptor" style="margin:0;text-transform:none;letter-spacing:0;font-size:13.5px;color:var(--text)">Es suscriptor/a</label>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('cli-modal')">Cancelar</button>
+      <button class="btn btn-primary" onclick="saveCliente()"><i class="bi bi-check-lg"></i> Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Panel historial -->
+<div class="panel-overlay" id="hist-panel">
+  <div class="panel">
+    <div class="panel-header">
+      <div>
+        <div class="panel-title" id="hist-nombre">Historial</div>
+        <div class="text-muted text-sm mt-8" id="hist-meta"></div>
+      </div>
+      <button class="modal-close" onclick="closeModal('hist-panel')"><i class="bi bi-x-lg"></i></button>
+    </div>
+    <div id="hist-body">
+      <div class="empty"><i class="bi bi-receipt"></i><p>Sin compras registradas</p></div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+let allClientes = [];
+let filtroTipo  = '';
+let debounceT;
+
+async function loadClientes() {
+  allClientes = await api('GET', '/api/clientes');
+  renderTable(filtrar());
+}
+
+function filtrar(q = '') {
+  const l = q.toLowerCase();
+  return allClientes.filter(c => {
+    const matchTipo = !filtroTipo || c.tipo === filtroTipo;
+    const matchQ    = !l
+      || c.nombre.toLowerCase().includes(l)
+      || (c.email||'').toLowerCase().includes(l)
+      || (c.telefono||'').includes(l)
+      || (c.rut||'').replace(/[.\-]/g,'').includes(l.replace(/[.\-]/g,''));
+    return matchTipo && matchQ;
+  });
+}
+
+function renderTable(list) {
+  const tbody = document.getElementById('cli-tbody');
+  if (!list.length) {
+    tbody.innerHTML = '<tr><td colspan="9"><div class="empty"><i class="bi bi-people"></i><p>Sin clientes</p></div></td></tr>';
+    return;
+  }
+  tbody.innerHTML = list.map(c => {
+    const tipoBadge = c.tipo === 'MAYORISTA'
+      ? '<span class="badge badge-mayorista">Mayorista</span>'
+      : '<span class="badge badge-cliente-tipo">Cliente</span>';
+    return `<tr>
+      <td>
+        <div class="fw-600 text-white">${c.nombre}</div>
+        <div>${tipoBadge}</div>
+      </td>
+      <td class="text-muted text-sm mono">${c.rut || '—'}</td>
+      <td>${c.telefono || '<span class="text-muted">—</span>'}</td>
+      <td class="text-muted text-sm">${c.email || '—'}</td>
+      <td class="center">${c.es_suscriptor ? '<span class="badge badge-yes">Sí</span>' : '<span class="badge badge-no">No</span>'}</td>
+      <td class="right text-muted">${c.num_compras}</td>
+      <td class="right mono fw-600">${clp(c.total_compras)}</td>
+      <td class="text-muted text-sm">${c.ultima_compra || '—'}</td>
+      <td>
+        <div class="flex gap-8">
+          <button class="btn btn-secondary btn-icon btn-sm" title="Historial" onclick="openHistorial(${c.id},'${c.nombre.replace(/'/g,"\\'")}')"><i class="bi bi-clock-history"></i></button>
+          <button class="btn btn-secondary btn-icon btn-sm" title="Editar" onclick="openEdit(${c.id})"><i class="bi bi-pencil"></i></button>
+          <button class="btn btn-danger btn-icon btn-sm" title="Eliminar" onclick="deleteCliente(${c.id})"><i class="bi bi-trash3"></i></button>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function buscar(q) {
+  clearTimeout(debounceT);
+  debounceT = setTimeout(() => renderTable(filtrar(q)), 200);
+}
+
+function filtrarTipo(btn, tipo) {
+  document.querySelectorAll('#tipo-tabs .filter-tab').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  filtroTipo = tipo;
+  renderTable(filtrar(document.getElementById('search').value));
+}
+
+// ── Tipo selector en modal ────────────────────────────────────────────────────
+function setTipo(tipo) {
+  document.getElementById('cli-tipo').value = tipo;
+  document.querySelectorAll('.tipo-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.v === tipo);
+  });
+  // Si es MAYORISTA, destacar el campo RUT
+  const grupo = document.getElementById('grupo-rut');
+  const lbl   = document.getElementById('rut-label');
+  if (tipo === 'MAYORISTA') {
+    grupo.style.setProperty('--border-color', 'var(--aurora)');
+    lbl.innerHTML = 'RUT <span style="color:var(--aurora);font-size:11px;font-weight:600">requerido para factura</span>';
+  } else {
+    grupo.style.removeProperty('--border-color');
+    lbl.innerHTML = 'RUT <span class="text-muted" style="text-transform:none;font-weight:400">(opcional)</span>';
+  }
+}
+
+// ── CRUD ──────────────────────────────────────────────────────────────────────
+function openAdd() {
+  document.getElementById('cli-id').value = '';
+  document.getElementById('cli-modal-title').textContent = 'Nuevo Cliente';
+  ['nombre','telefono','email','direccion','notas','rut'].forEach(f => document.getElementById('cli-'+f).value = '');
+  document.getElementById('cli-suscriptor').checked = false;
+  setTipo('CLIENTE');
+  openModal('cli-modal');
+}
+
+function openEdit(id) {
+  const c = allClientes.find(x=>x.id===id);
+  if (!c) return;
+  document.getElementById('cli-id').value       = id;
+  document.getElementById('cli-modal-title').textContent = 'Editar Cliente';
+  document.getElementById('cli-nombre').value    = c.nombre;
+  document.getElementById('cli-telefono').value  = c.telefono||'';
+  document.getElementById('cli-email').value     = c.email||'';
+  document.getElementById('cli-direccion').value = c.direccion||'';
+  document.getElementById('cli-notas').value     = c.notas||'';
+  document.getElementById('cli-rut').value       = c.rut||'';
+  document.getElementById('cli-suscriptor').checked = !!c.es_suscriptor;
+  setTipo(c.tipo||'CLIENTE');
+  openModal('cli-modal');
+}
+
+async function saveCliente() {
+  const nombre = document.getElementById('cli-nombre').value.trim();
+  if (!nombre) { toast('El nombre es obligatorio', 'error'); return; }
+  const body = {
+    nombre,
+    tipo:         document.getElementById('cli-tipo').value,
+    rut:          document.getElementById('cli-rut').value.trim(),
+    telefono:     document.getElementById('cli-telefono').value.trim(),
+    email:        document.getElementById('cli-email').value.trim(),
+    direccion:    document.getElementById('cli-direccion').value.trim(),
+    notas:        document.getElementById('cli-notas').value.trim(),
+    es_suscriptor: document.getElementById('cli-suscriptor').checked ? 1 : 0,
+  };
+  const id = document.getElementById('cli-id').value;
+  try {
+    if (id) await api('PUT', `/api/clientes/${id}`, body);
+    else    await api('POST', '/api/clientes', body);
+    closeModal('cli-modal');
+    toast(id ? 'Cliente actualizado' : 'Cliente creado');
+    loadClientes();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function deleteCliente(id) {
+  const c = allClientes.find(x=>x.id===id);
+  if (!confirm(`¿Eliminar a ${c?.nombre}? Sus ventas se conservarán sin cliente.`)) return;
+  try {
+    await api('DELETE', `/api/clientes/${id}`);
+    toast('Cliente eliminado');
+    loadClientes();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+// ── Historial ─────────────────────────────────────────────────────────────────
+async function openHistorial(id, nombre) {
+  document.getElementById('hist-nombre').textContent = nombre;
+  document.getElementById('hist-meta').textContent   = 'Cargando...';
+  openModal('hist-panel');
+  const ventas = await api('GET', `/api/clientes/${id}/ventas`);
+  const c = allClientes.find(x=>x.id===id);
+  document.getElementById('hist-meta').textContent =
+    `${ventas.length} compra${ventas.length!=1?'s':''} · Total: ${clp(c?.total_compras||0)}`;
+  const body = document.getElementById('hist-body');
+  if (!ventas.length) {
+    body.innerHTML = '<div class="empty"><i class="bi bi-receipt"></i><p>Sin compras registradas</p></div>';
+    return;
+  }
+  body.innerHTML = ventas.map(v => `
+    <div class="card mb-12" style="padding:14px">
+      <div class="flex-between mb-8">
+        <div class="flex-center gap-8">
+          <span class="fw-600 text-white">${v.fecha}</span>
+          ${canal_badge(v.canal)}
+        </div>
+        <span class="fw-600 text-accent">${clp(v.total)}</span>
+      </div>
+      <div>
+        ${v.items.map(i=>`<div class="flex-between text-sm" style="padding:3px 0;border-bottom:1px solid var(--border)">
+          <span>${i.nombre}</span>
+          <span class="text-muted">${i.cantidad} × ${clp(i.precio_unitario)}</span>
+        </div>`).join('')}
+      </div>
+      ${v.notas ? `<div class="text-muted text-sm mt-8">${v.notas}</div>` : ''}
+    </div>
+  `).join('');
+}
+
+loadClientes();
+</script>
+
+<style>
+/* Tipo badges */
+.badge-mayorista    { background:#d4a85a22; color:#d4a85a; }
+.badge-cliente-tipo { background:#6b9fd422; color:#6b9fd4; }
+
+/* Tipo selector buttons */
+.tipo-selector { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.tipo-btn {
+  padding:10px 14px; border-radius:10px; font-size:13px; font-weight:600;
+  border:1.5px solid var(--border); background:var(--surface2);
+  color:var(--muted); cursor:pointer; transition:.2s; text-align:center;
+}
+.tipo-btn:hover { border-color:var(--aurora); color:var(--text); }
+.tipo-btn.active { border-color:var(--aurora); background:#d4845a18; color:var(--aurora); }
+</style>
+{% endblock %}

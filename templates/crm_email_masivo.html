@@ -1,0 +1,522 @@
+{% extends "base.html" %}
+{% block title %}Email Masivo · CRM — Aurora Bakers{% endblock %}
+{% block page_title %}CRM · Email Masivo{% endblock %}
+
+{% block content %}
+<style>
+.breadcrumb { display:flex; align-items:center; gap:.4rem; font-size:.8rem; color:var(--text-3); margin-bottom:1.25rem; }
+.breadcrumb a { color:var(--accent); text-decoration:none; }
+
+/* Layout */
+.em-layout { display:grid; grid-template-columns:1fr 380px; gap:1.25rem; align-items:start; }
+
+/* Card base */
+.em-card { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:1.1rem 1.25rem; margin-bottom:1rem; }
+.em-head { font-size:.75rem; font-weight:700; text-transform:uppercase; letter-spacing:.05em;
+            color:var(--text-2); margin-bottom:.85rem; display:flex; align-items:center;
+            justify-content:space-between; }
+
+/* Filter chips */
+.filter-row { display:flex; gap:.4rem; flex-wrap:wrap; margin-bottom:.65rem; }
+.fchip { padding:.22rem .6rem; border-radius:20px; font-size:.72rem; font-weight:600;
+          border:1.5px solid var(--border); background:var(--bg); color:var(--text-2);
+          cursor:pointer; transition:.15s; }
+.fchip:hover { border-color:var(--accent); color:var(--accent); }
+.fchip.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+
+/* Lead list */
+.lead-check-list { display:flex; flex-direction:column; gap:.35rem; max-height:340px; overflow-y:auto; }
+.lc-item { display:flex; align-items:center; gap:.6rem; padding:.45rem .6rem; border-radius:7px;
+            border:1px solid var(--border); background:var(--bg); cursor:pointer; transition:.15s; }
+.lc-item:hover { border-color:var(--accent); }
+.lc-item.no-email { opacity:.45; cursor:default; }
+.lc-cb { width:15px; height:15px; border-radius:3px; border:2px solid var(--border);
+          flex-shrink:0; display:flex; align-items:center; justify-content:center; font-size:.65rem; }
+.lc-cb.checked { background:var(--accent); border-color:var(--accent); color:#fff; }
+.lc-name { font-size:.78rem; font-weight:600; color:var(--text-1); flex:1; min-width:0;
+            white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.lc-email { font-size:.68rem; color:var(--text-3); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:160px; }
+.lc-mod { font-size:.62rem; font-weight:700; padding:.1rem .35rem; border-radius:4px; flex-shrink:0; }
+.lc-mod-b2b { background:#ede9fe; color:#5b21b6; }
+.lc-mod-b2c { background:#d1fae5; color:#065f46; }
+
+/* Template selector */
+.tpl-grid { display:grid; grid-template-columns:1fr; gap:.5rem; margin-bottom:.85rem; }
+.tpl-card { border:1.5px solid var(--border); border-radius:8px; padding:.75rem .9rem;
+             cursor:pointer; transition:.15s; position:relative; }
+.tpl-card:hover { border-color:var(--accent); }
+.tpl-card.selected { border-color:var(--accent); background:color-mix(in srgb,var(--accent) 5%,var(--surface)); }
+.tpl-card.custom-tpl { border-style:dashed; }
+.tpl-name { font-size:.8rem; font-weight:700; color:var(--text-1); }
+.tpl-asunto { font-size:.7rem; color:var(--text-3); margin-top:.15rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.tpl-mod { position:absolute; top:.6rem; right:.6rem; font-size:.62rem; font-weight:700;
+            padding:.1rem .35rem; border-radius:4px; }
+.tpl-actions { position:absolute; top:.55rem; right:.55rem; display:flex; gap:.3rem; }
+.tpl-btn { font-size:.65rem; padding:.15rem .4rem; border-radius:4px; border:1px solid var(--border);
+            background:var(--bg); color:var(--text-2); cursor:pointer; transition:.15s; }
+.tpl-btn:hover { background:var(--hover); }
+
+/* Compose area */
+.compose-box { display:flex; flex-direction:column; gap:.65rem; }
+
+/* Preview */
+.preview-box { background:var(--bg); border:1px solid var(--border); border-radius:8px;
+                padding:1rem; font-size:.8rem; color:var(--text-1); white-space:pre-wrap;
+                max-height:220px; overflow-y:auto; line-height:1.6; }
+.preview-asunto { font-weight:700; margin-bottom:.5rem; font-size:.85rem; border-bottom:1px solid var(--border); padding-bottom:.4rem; }
+
+/* Result summary */
+.result-bar { display:grid; grid-template-columns:repeat(3,1fr); gap:.65rem; margin-bottom:1rem; }
+.rb-card { border-radius:8px; padding:.65rem .85rem; text-align:center; }
+.rb-num  { font-size:1.5rem; font-weight:800; }
+.rb-lbl  { font-size:.7rem; font-weight:600; margin-top:.15rem; }
+.rb-ok   { background:#d1fae5; color:#065f46; }
+.rb-warn { background:#fef3c7; color:#92400e; }
+.rb-err  { background:#fee2e2; color:#991b1b; }
+
+/* Progress overlay */
+.sending-overlay { position:fixed; inset:0; background:rgba(0,0,0,.45); display:flex;
+                    align-items:center; justify-content:center; z-index:999; }
+.sending-box { background:var(--surface); border-radius:12px; padding:2rem 2.5rem;
+                text-align:center; min-width:280px; }
+.sending-title { font-size:1rem; font-weight:700; margin-bottom:.75rem; color:var(--text-1); }
+.sending-prog  { font-size:.85rem; color:var(--text-2); }
+</style>
+
+<!-- Breadcrumb -->
+<div class="breadcrumb">
+  <a href="/crm"><i class="bi bi-diagram-3"></i> CRM</a>
+  <i class="bi bi-chevron-right"></i>
+  <span>Email Masivo</span>
+</div>
+
+<div class="em-layout">
+
+  <!-- ── Columna izquierda: leads + compose ────────────────────────────────── -->
+  <div>
+
+    <!-- Selección de leads -->
+    <div class="em-card">
+      <div class="em-head">
+        <span><i class="bi bi-people"></i> Seleccionar destinatarios</span>
+        <div style="display:flex;gap:.5rem">
+          <button class="btn btn-ghost" style="font-size:.75rem;padding:.25rem .65rem" onclick="selectAll()">Todos</button>
+          <button class="btn btn-ghost" style="font-size:.75rem;padding:.25rem .65rem" onclick="clearSel()">Ninguno</button>
+        </div>
+      </div>
+
+      <!-- Filtros -->
+      <div style="display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:.75rem">
+        <div>
+          <div style="font-size:.68rem;font-weight:600;color:var(--text-3);text-transform:uppercase;margin-bottom:.3rem">Módulo</div>
+          <div class="filter-row">
+            <button class="fchip active" data-f="mod" data-v="" onclick="setFilter('mod','',this)">Todos</button>
+            <button class="fchip" data-f="mod" data-v="B2B" onclick="setFilter('mod','B2B',this)">B2B</button>
+            <button class="fchip" data-f="mod" data-v="B2C" onclick="setFilter('mod','B2C',this)">B2C</button>
+          </div>
+        </div>
+        <div>
+          <div style="font-size:.68rem;font-weight:600;color:var(--text-3);text-transform:uppercase;margin-bottom:.3rem">Temperatura</div>
+          <div class="filter-row">
+            <button class="fchip active" data-f="temp" data-v="" onclick="setFilter('temp','',this)">Todas</button>
+            <button class="fchip" data-f="temp" data-v="HOT" onclick="setFilter('temp','HOT',this)">🔥 Caliente</button>
+            <button class="fchip" data-f="temp" data-v="WARM" onclick="setFilter('temp','WARM',this)">🌡️ Tibio</button>
+            <button class="fchip" data-f="temp" data-v="COLD" onclick="setFilter('temp','COLD',this)">❄️ Frío</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Buscar -->
+      <input id="lead-search" class="form-control" placeholder="Buscar por nombre, empresa o email…"
+             oninput="renderLeads()" style="font-size:.8rem;margin-bottom:.65rem" />
+
+      <!-- Lista -->
+      <div id="lead-count" style="font-size:.72rem;color:var(--text-3);margin-bottom:.4rem"></div>
+      <div class="lead-check-list" id="lead-list"></div>
+    </div>
+
+    <!-- Compose -->
+    <div class="em-card" id="compose-card">
+      <div class="em-head"><i class="bi bi-envelope-paper"></i> Redactar correo</div>
+      <div class="compose-box">
+        <div class="form-group" style="margin:0">
+          <label class="form-label">Asunto *</label>
+          <input id="c-asunto" class="form-control" placeholder="Asunto del correo" oninput="updatePreview()" />
+        </div>
+        <div class="form-group" style="margin:0">
+          <label class="form-label">Cuerpo *</label>
+          <textarea id="c-cuerpo" class="form-control" rows="10" style="resize:vertical;font-size:.82rem"
+                    placeholder="Escribe el correo aquí…&#10;&#10;Variables: {nombre} {empresa} {telefono}"
+                    oninput="updatePreview()"></textarea>
+        </div>
+        <div style="font-size:.72rem;color:var(--text-3)">
+          Variables disponibles: <code>{nombre}</code> <code>{empresa}</code> <code>{telefono}</code>
+        </div>
+      </div>
+    </div>
+
+    <!-- Resultado -->
+    <div id="result-wrap" style="display:none"></div>
+
+  </div>
+
+  <!-- ── Columna derecha: templates + preview + send ───────────────────────── -->
+  <div>
+
+    <!-- Templates -->
+    <div class="em-card">
+      <div class="em-head">
+        <span><i class="bi bi-file-earmark-text"></i> Plantillas predefinidas</span>
+        <button class="btn btn-ghost" style="font-size:.73rem;padding:.25rem .6rem"
+                onclick="openModal('modal-tpl')">+ Nueva</button>
+      </div>
+      <div class="tpl-grid" id="tpl-grid">
+        <p style="font-size:.78rem;color:var(--text-3)">Cargando…</p>
+      </div>
+      <!-- Opción personalizada -->
+      <div class="tpl-card custom-tpl" id="tpl-custom" onclick="selectTemplate(null)">
+        <div class="tpl-name">✏️ Escribir mi propio correo</div>
+        <div class="tpl-asunto">Redactar desde cero</div>
+      </div>
+    </div>
+
+    <!-- Preview -->
+    <div class="em-card" id="preview-card">
+      <div class="em-head"><i class="bi bi-eye"></i> Vista previa</div>
+      <div class="preview-asunto" id="prev-asunto">— sin asunto —</div>
+      <div class="preview-box" id="prev-cuerpo">Selecciona una plantilla o escribe tu correo para ver la vista previa.</div>
+      <div style="font-size:.7rem;color:var(--text-3);margin-top:.5rem">
+        Variables reemplazadas con datos del primer lead seleccionado.
+      </div>
+    </div>
+
+    <!-- Send panel -->
+    <div class="em-card" style="border-color:var(--accent)">
+      <div class="em-head"><i class="bi bi-send" style="color:var(--accent)"></i> Enviar</div>
+      <div id="send-summary" style="font-size:.82rem;color:var(--text-2);margin-bottom:.85rem">
+        Selecciona destinatarios y redacta el correo para continuar.
+      </div>
+      <button class="btn btn-primary" id="btn-send" onclick="enviarMasivo()" disabled
+              style="width:100%;justify-content:center">
+        <i class="bi bi-send"></i> Enviar campaña
+      </button>
+      <div style="font-size:.7rem;color:var(--text-3);margin-top:.5rem;text-align:center">
+        Solo se envía a leads con email registrado
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ── Modal: nueva/editar plantilla ──────────────────────────────────────── -->
+<div class="modal-overlay" id="modal-tpl">
+  <div class="modal" style="max-width:580px">
+    <div class="modal-header">
+      <h3 id="modal-tpl-title">Nueva plantilla</h3>
+      <button class="modal-close" onclick="closeModal('modal-tpl')">×</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="tpl-edit-id" value="" />
+      <div style="display:flex;flex-direction:column;gap:.75rem">
+        <div class="form-group" style="margin:0">
+          <label class="form-label">Nombre de la plantilla *</label>
+          <input id="tpl-nombre" class="form-control" placeholder="Ej: Propuesta inicial B2B" />
+        </div>
+        <div class="form-group" style="margin:0">
+          <label class="form-label">Módulo</label>
+          <select id="tpl-modulo" class="form-control">
+            <option value="ambos">Ambos (B2B y B2C)</option>
+            <option value="B2B">Solo B2B</option>
+            <option value="B2C">Solo B2C</option>
+          </select>
+        </div>
+        <div class="form-group" style="margin:0">
+          <label class="form-label">Asunto *</label>
+          <input id="tpl-asunto" class="form-control" placeholder="Asunto del correo" />
+        </div>
+        <div class="form-group" style="margin:0">
+          <label class="form-label">Cuerpo *</label>
+          <textarea id="tpl-cuerpo" class="form-control" rows="8" style="resize:vertical;font-size:.82rem"
+                    placeholder="Variables disponibles: {nombre} {empresa} {telefono}"></textarea>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-tpl')">Cancelar</button>
+      <button class="btn btn-primary" onclick="saveTemplate()">Guardar plantilla</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let allLeads      = [];
+let selLeads      = new Set();
+let templates     = [];
+let selTplId      = null;   // null = custom
+let filters       = { mod:'', temp:'' };
+
+// ── Init ───────────────────────────────────────────────────────────────────
+async function init() {
+  await Promise.all([loadLeads(), loadTemplates()]);
+}
+
+async function loadLeads() {
+  try {
+    const d = await api('GET', '/api/crm/leads');
+    allLeads = Array.isArray(d) ? d : [];
+    renderLeads();
+  } catch(e) { console.error(e); }
+}
+
+async function loadTemplates() {
+  try {
+    templates = await api('GET', '/api/crm/email-templates');
+    renderTemplates();
+  } catch(e) { console.error(e); }
+}
+
+// ── Filters ────────────────────────────────────────────────────────────────
+function setFilter(key, val, btn) {
+  filters[key] = val;
+  document.querySelectorAll(`[data-f="${key}"]`).forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderLeads();
+}
+
+function leadsFiltered() {
+  const q = document.getElementById('lead-search').value.toLowerCase();
+  return allLeads.filter(l => {
+    if (filters.mod  && l.modulo      !== filters.mod)  return false;
+    if (filters.temp && l.temperatura !== filters.temp) return false;
+    if (q && !`${l.nombre} ${l.empresa} ${l.email}`.toLowerCase().includes(q)) return false;
+    return true;
+  });
+}
+
+// ── Lead list ──────────────────────────────────────────────────────────────
+function renderLeads() {
+  const lista = leadsFiltered();
+  const el    = document.getElementById('lead-list');
+  const conEmail = lista.filter(l => l.email).length;
+  document.getElementById('lead-count').textContent =
+    `${lista.length} leads filtrados · ${conEmail} con email`;
+
+  el.innerHTML = lista.map(l => {
+    const hasEmail = !!l.email;
+    const sel      = selLeads.has(l.id) && hasEmail;
+    return `
+      <div class="lc-item${hasEmail?'':' no-email'}" id="lc-${l.id}"
+           onclick="${hasEmail?`toggleLead(${l.id})`:''}">
+        <div class="lc-cb${sel?' checked':''}" id="lcb-${l.id}">${sel?'✓':''}</div>
+        <div style="flex:1;min-width:0">
+          <div class="lc-name">${escHtml(l.nombre)}${l.empresa?` · <span style="font-weight:400">${escHtml(l.empresa)}</span>`:''}</div>
+          <div class="lc-email">${l.email ? escHtml(l.email) : '<span style="color:#ef4444">Sin email</span>'}</div>
+        </div>
+        <span class="lc-mod ${l.modulo==='B2B'?'lc-mod-b2b':'lc-mod-b2c'}">${l.modulo}</span>
+      </div>`;
+  }).join('');
+  updateSendSummary();
+}
+
+function toggleLead(id) {
+  if (selLeads.has(id)) selLeads.delete(id);
+  else selLeads.add(id);
+  const cb = document.getElementById(`lcb-${id}`);
+  if (cb) { cb.classList.toggle('checked', selLeads.has(id)); cb.textContent = selLeads.has(id)?'✓':''; }
+  updateSendSummary();
+  updatePreview();
+}
+
+function selectAll() {
+  leadsFiltered().filter(l => l.email).forEach(l => { selLeads.add(l.id); });
+  renderLeads();
+}
+function clearSel() {
+  selLeads.clear();
+  renderLeads();
+}
+
+// ── Templates ──────────────────────────────────────────────────────────────
+function renderTemplates() {
+  const MOD_BADGE = {
+    B2B: '<span style="font-size:.62rem;font-weight:700;padding:.1rem .35rem;border-radius:4px;background:#ede9fe;color:#5b21b6">B2B</span>',
+    B2C: '<span style="font-size:.62rem;font-weight:700;padding:.1rem .35rem;border-radius:4px;background:#d1fae5;color:#065f46">B2C</span>',
+    ambos: '',
+  };
+  const el = document.getElementById('tpl-grid');
+  if (!templates.length) { el.innerHTML = '<p style="font-size:.78rem;color:var(--text-3)">Sin plantillas.</p>'; return; }
+  el.innerHTML = templates.map(t => `
+    <div class="tpl-card${selTplId===t.id?' selected':''}" id="tcard-${t.id}" onclick="selectTemplate(${t.id})">
+      <div class="tpl-name">${escHtml(t.nombre)} ${MOD_BADGE[t.modulo]||''}</div>
+      <div class="tpl-asunto">${escHtml(t.asunto)}</div>
+      <div class="tpl-actions" onclick="event.stopPropagation()">
+        <button class="tpl-btn" onclick="editTemplate(${t.id})"><i class="bi bi-pencil"></i></button>
+        <button class="tpl-btn" onclick="deleteTemplate(${t.id})" style="color:#ef4444"><i class="bi bi-trash"></i></button>
+      </div>
+    </div>`).join('');
+  // highlight custom
+  document.getElementById('tpl-custom').classList.toggle('selected', selTplId === null);
+}
+
+function selectTemplate(id) {
+  selTplId = id;
+  document.querySelectorAll('.tpl-card').forEach(c => c.classList.remove('selected'));
+  if (id === null) {
+    document.getElementById('tpl-custom').classList.add('selected');
+    document.getElementById('c-asunto').value = '';
+    document.getElementById('c-cuerpo').value = '';
+  } else {
+    document.getElementById(`tcard-${id}`)?.classList.add('selected');
+    const t = templates.find(t => t.id === id);
+    if (t) {
+      document.getElementById('c-asunto').value = t.asunto;
+      document.getElementById('c-cuerpo').value = t.cuerpo;
+    }
+  }
+  updatePreview();
+}
+
+// ── Preview ────────────────────────────────────────────────────────────────
+function updatePreview() {
+  const asunto = document.getElementById('c-asunto').value;
+  const cuerpo = document.getElementById('c-cuerpo').value;
+  // Tomar primer lead seleccionado para preview
+  const firstId = [...selLeads][0];
+  const lead    = allLeads.find(l => l.id === firstId) || { nombre:'Nombre Ejemplo', empresa:'Empresa Ejemplo', telefono:'+56 9 1234 5678' };
+  const ap = asunto.replace(/\{nombre\}/g, lead.nombre||'').replace(/\{empresa\}/g, lead.empresa||'');
+  const cp = cuerpo.replace(/\{nombre\}/g, lead.nombre||'').replace(/\{empresa\}/g, lead.empresa||'').replace(/\{telefono\}/g, lead.telefono||'');
+  document.getElementById('prev-asunto').textContent = ap || '— sin asunto —';
+  document.getElementById('prev-cuerpo').textContent = cp || 'Escribe el correo para ver la vista previa.';
+  updateSendSummary();
+}
+
+function updateSendSummary() {
+  const conEmail  = [...selLeads].filter(id => allLeads.find(l => l.id === id)?.email).length;
+  const sinEmail  = selLeads.size - conEmail;
+  const asunto    = document.getElementById('c-asunto').value.trim();
+  const cuerpo    = document.getElementById('c-cuerpo').value.trim();
+  const canSend   = conEmail > 0 && asunto && cuerpo;
+  document.getElementById('btn-send').disabled = !canSend;
+  let txt = '';
+  if (!selLeads.size)     txt = 'Selecciona al menos un destinatario.';
+  else if (!asunto||!cuerpo) txt = `${selLeads.size} seleccionados — completa el asunto y cuerpo.`;
+  else {
+    txt = `<strong>${conEmail}</strong> correos se enviarán`;
+    if (sinEmail) txt += ` · <span style="color:#f59e0b">${sinEmail} sin email (se omitirán)</span>`;
+  }
+  document.getElementById('send-summary').innerHTML = txt;
+}
+
+// ── Send ───────────────────────────────────────────────────────────────────
+async function enviarMasivo() {
+  const asunto = document.getElementById('c-asunto').value.trim();
+  const cuerpo = document.getElementById('c-cuerpo').value.trim();
+  const ids    = [...selLeads].filter(id => allLeads.find(l => l.id === id)?.email);
+  if (!ids.length || !asunto || !cuerpo) return;
+
+  // Overlay
+  const ov = document.createElement('div');
+  ov.className = 'sending-overlay';
+  ov.innerHTML = `<div class="sending-box">
+    <div class="sending-title"><i class="bi bi-send"></i> Enviando campaña…</div>
+    <div class="sending-prog">Enviando a ${ids.length} destinatarios…</div>
+  </div>`;
+  document.body.appendChild(ov);
+
+  try {
+    const res = await api('POST', '/api/crm/email-masivo', { lead_ids: ids, asunto, cuerpo });
+    ov.remove();
+    showResult(res);
+  } catch(e) {
+    ov.remove();
+    toast(e.message, 'error');
+  }
+}
+
+function showResult(res) {
+  const wrap = document.getElementById('result-wrap');
+  wrap.style.display = '';
+  wrap.innerHTML = `
+    <div class="em-card" style="border-color:var(--accent)">
+      <div class="em-head"><i class="bi bi-check-circle" style="color:#22c55e"></i> Resultado del envío</div>
+      <div class="result-bar">
+        <div class="rb-card rb-ok"><div class="rb-num">${res.enviados}</div><div class="rb-lbl">Enviados</div></div>
+        <div class="rb-card rb-warn"><div class="rb-num">${res.sin_email}</div><div class="rb-lbl">Sin email</div></div>
+        <div class="rb-card rb-err"><div class="rb-num">${res.errores}</div><div class="rb-lbl">Errores</div></div>
+      </div>
+      ${res.detalle_enviados.length ? `
+        <div style="font-size:.75rem;font-weight:600;color:var(--text-2);margin-bottom:.35rem">Enviados a:</div>
+        <div style="font-size:.73rem;color:var(--text-2);max-height:120px;overflow-y:auto">
+          ${res.detalle_enviados.map(l=>`<div>✅ ${escHtml(l.nombre)} — ${escHtml(l.email)}</div>`).join('')}
+        </div>` : ''}
+      ${res.detalle_errores.length ? `
+        <div style="font-size:.75rem;font-weight:600;color:#ef4444;margin-top:.5rem;margin-bottom:.35rem">Errores:</div>
+        <div style="font-size:.73rem;color:#ef4444">
+          ${res.detalle_errores.map(l=>`<div>❌ ${escHtml(l.nombre)} — ${escHtml(l.email)}</div>`).join('')}
+        </div>` : ''}
+    </div>`;
+  wrap.scrollIntoView({ behavior:'smooth' });
+  if (res.enviados) toast(`${res.enviados} correo(s) enviados correctamente`);
+}
+
+// ── Template CRUD ──────────────────────────────────────────────────────────
+function openNewTemplate() {
+  document.getElementById('tpl-edit-id').value = '';
+  document.getElementById('modal-tpl-title').textContent = 'Nueva plantilla';
+  document.getElementById('tpl-nombre').value = '';
+  document.getElementById('tpl-asunto').value = '';
+  document.getElementById('tpl-cuerpo').value = '';
+  document.getElementById('tpl-modulo').value = 'ambos';
+  openModal('modal-tpl');
+}
+
+function editTemplate(id) {
+  const t = templates.find(t => t.id === id);
+  if (!t) return;
+  document.getElementById('tpl-edit-id').value   = id;
+  document.getElementById('modal-tpl-title').textContent = 'Editar plantilla';
+  document.getElementById('tpl-nombre').value  = t.nombre;
+  document.getElementById('tpl-asunto').value  = t.asunto;
+  document.getElementById('tpl-cuerpo').value  = t.cuerpo;
+  document.getElementById('tpl-modulo').value  = t.modulo || 'ambos';
+  openModal('modal-tpl');
+}
+
+async function saveTemplate() {
+  const id     = document.getElementById('tpl-edit-id').value;
+  const nombre = document.getElementById('tpl-nombre').value.trim();
+  const asunto = document.getElementById('tpl-asunto').value.trim();
+  const cuerpo = document.getElementById('tpl-cuerpo').value.trim();
+  const modulo = document.getElementById('tpl-modulo').value;
+  if (!nombre || !asunto || !cuerpo) { toast('Completa todos los campos','error'); return; }
+  try {
+    if (id) {
+      await api('PUT', `/api/crm/email-templates/${id}`, { nombre, asunto, cuerpo, modulo });
+    } else {
+      await api('POST', '/api/crm/email-templates', { nombre, asunto, cuerpo, modulo });
+    }
+    closeModal('modal-tpl');
+    await loadTemplates();
+    toast('Plantilla guardada');
+  } catch(e) { toast(e.message,'error'); }
+}
+
+async function deleteTemplate(id) {
+  if (!confirm('¿Eliminar esta plantilla?')) return;
+  try {
+    await api('DELETE', `/api/crm/email-templates/${id}`);
+    if (selTplId === id) { selTplId = null; }
+    await loadTemplates();
+    toast('Plantilla eliminada');
+  } catch(e) { toast(e.message,'error'); }
+}
+
+function escHtml(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+init();
+</script>
+{% endblock %}

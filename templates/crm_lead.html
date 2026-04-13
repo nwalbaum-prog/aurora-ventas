@@ -1,0 +1,714 @@
+{% extends "base.html" %}
+{% block title %}Lead · CRM — Aurora Bakers{% endblock %}
+{% block page_title %}Ficha de Lead{% endblock %}
+
+{% block content %}
+<style>
+/* ── Layout ──────────────────────────────────────────────────────────────── */
+.lead-layout { display:grid; grid-template-columns:1fr 340px; gap:1.25rem; }
+
+/* ── Breadcrumb ───────────────────────────────────────────────────────────── */
+.breadcrumb { display:flex; align-items:center; gap:.4rem; font-size:.8rem;
+               color:var(--text-3); margin-bottom:1.25rem; }
+.breadcrumb a { color:var(--accent); text-decoration:none; }
+.breadcrumb a:hover { text-decoration:underline; }
+
+/* ── Header card ──────────────────────────────────────────────────────────── */
+.lead-header { background:var(--surface); border:1px solid var(--border);
+                border-radius:10px; padding:1.25rem 1.5rem; margin-bottom:1rem;
+                display:flex; align-items:center; gap:1.25rem; }
+.lead-avatar-lg { width:52px; height:52px; border-radius:50%; background:var(--accent);
+                   color:#fff; display:flex; align-items:center; justify-content:center;
+                   font-size:1.35rem; font-weight:700; flex-shrink:0; }
+.lead-meta { flex:1; }
+.lead-name-lg { font-size:1.15rem; font-weight:700; color:var(--text-1); }
+.lead-sub-row { display:flex; align-items:center; gap:.75rem; margin-top:.3rem;
+                 flex-wrap:wrap; }
+.lead-sub-row span { font-size:.78rem; color:var(--text-2); }
+.lead-sub-row a { font-size:.78rem; color:var(--accent); text-decoration:none; }
+
+/* Stage pill */
+.stage-pill { display:inline-flex; align-items:center; gap:.4rem; padding:.3rem .75rem;
+               border-radius:20px; font-size:.72rem; font-weight:700;
+               text-transform:uppercase; letter-spacing:.04em; cursor:pointer; border:none;
+               transition:.15s; }
+.stage-pill:hover { opacity:.85; }
+
+/* Temp badge */
+.temp-badge { display:inline-block; padding:.25rem .6rem; border-radius:5px;
+               font-size:.7rem; font-weight:700; }
+.temp-HOT  { background:#fee2e2; color:#b91c1c; }
+.temp-WARM { background:#fef3c7; color:#92400e; }
+.temp-COLD { background:#dbeafe; color:#1e40af; }
+
+/* Actions row */
+.action-row { display:flex; gap:.5rem; margin-left:auto; flex-shrink:0; }
+
+/* ── Sections ─────────────────────────────────────────────────────────────── */
+.section-box { background:var(--surface); border:1px solid var(--border);
+                border-radius:10px; padding:1.1rem 1.25rem; margin-bottom:1rem; }
+.section-head { font-size:.75rem; font-weight:700; text-transform:uppercase;
+                 letter-spacing:.05em; color:var(--text-2); margin-bottom:.85rem;
+                 display:flex; align-items:center; justify-content:space-between; }
+.section-head button { font-size:.72rem; font-weight:600; color:var(--accent);
+                        background:none; border:none; cursor:pointer; }
+
+/* ── Info grid ────────────────────────────────────────────────────────────── */
+.info-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:.75rem; }
+.info-item label { display:block; font-size:.68rem; font-weight:600; color:var(--text-3);
+                    text-transform:uppercase; letter-spacing:.04em; margin-bottom:.2rem; }
+.info-item span  { font-size:.82rem; color:var(--text-1); }
+.info-item input, .info-item select, .info-item textarea {
+  width:100%; font-size:.82rem; padding:.35rem .5rem; border-radius:6px;
+  border:1.5px solid var(--border); background:var(--bg); color:var(--text-1);
+  transition:.15s; }
+.info-item input:focus,.info-item select:focus,.info-item textarea:focus {
+  outline:none; border-color:var(--accent); }
+.info-save { margin-top:.75rem; }
+
+/* ── Timeline ─────────────────────────────────────────────────────────────── */
+.timeline { display:flex; flex-direction:column; gap:0; }
+.tl-item { display:flex; gap:.85rem; padding:.65rem 0;
+            border-bottom:1px solid var(--border); }
+.tl-item:last-child { border-bottom:none; }
+.tl-dot  { width:28px; height:28px; border-radius:50%; display:flex; align-items:center;
+            justify-content:center; font-size:.8rem; flex-shrink:0; margin-top:.1rem; }
+.tl-dot.tipo-nota      { background:#f1f5f9; color:#475569; }
+.tl-dot.tipo-email     { background:#ede9fe; color:#5b21b6; }
+.tl-dot.tipo-llamada   { background:#d1fae5; color:#065f46; }
+.tl-dot.tipo-reunion   { background:#fef3c7; color:#92400e; }
+.tl-dot.tipo-etapa     { background:#dbeafe; color:#1e40af; }
+.tl-dot.tipo-whatsapp  { background:#dcfce7; color:#15803d; }
+.tl-dir-out { font-size:.65rem; color:var(--text-3); margin-left:.3rem; }
+.tl-dir-in  { font-size:.65rem; color:#16a34a; margin-left:.3rem; font-weight:600; }
+.tl-body { flex:1; }
+.tl-desc { font-size:.8rem; color:var(--text-1); }
+.tl-meta { font-size:.7rem; color:var(--text-3); margin-top:.15rem; }
+.tl-note-text { font-size:.78rem; color:var(--text-2); background:var(--bg);
+                 border:1px solid var(--border); border-radius:6px; padding:.4rem .6rem;
+                 margin-top:.35rem; white-space:pre-wrap; }
+
+/* ── Quick actions (right sidebar) ───────────────────────────────────────── */
+.sidebar-box { background:var(--surface); border:1px solid var(--border);
+                border-radius:10px; padding:1.1rem 1.25rem; margin-bottom:1rem; }
+.sidebar-head { font-size:.75rem; font-weight:700; text-transform:uppercase;
+                 letter-spacing:.05em; color:var(--text-2); margin-bottom:.75rem; }
+
+/* Task list (compact) */
+.task-list-sm { display:flex; flex-direction:column; gap:.4rem; }
+.task-sm { display:flex; align-items:center; gap:.5rem; font-size:.78rem; }
+.task-sm .task-check { width:14px; height:14px; border-radius:50%;
+                        border:2px solid var(--border); flex-shrink:0; cursor:pointer; }
+.task-sm .task-check.done { background:var(--accent); border-color:var(--accent); }
+
+/* Stage selector */
+.stage-select { width:100%; font-size:.8rem; padding:.4rem .5rem; border-radius:6px;
+                 border:1.5px solid var(--border); background:var(--bg); color:var(--text-1);
+                 margin-bottom:.5rem; }
+.temp-btn-row { display:flex; gap:.4rem; margin-top:.5rem; }
+.temp-btn { flex:1; padding:.35rem; border-radius:6px; border:1.5px solid var(--border);
+             font-size:.72rem; font-weight:700; cursor:pointer; background:transparent;
+             transition:.15s; }
+.temp-btn.active-HOT  { background:#fee2e2; color:#b91c1c; border-color:#fca5a5; }
+.temp-btn.active-WARM { background:#fef3c7; color:#92400e; border-color:#fde68a; }
+.temp-btn.active-COLD { background:#dbeafe; color:#1e40af; border-color:#93c5fd; }
+
+/* Interaction form */
+.int-form { display:flex; flex-direction:column; gap:.6rem; }
+
+/* Email panel */
+.email-panel { display:none; }
+.email-panel.open { display:flex; flex-direction:column; gap:.6rem; }
+
+/* Stage colors (same as crm.html) */
+.stage-NUEVO_CONTACTO   { background:#f1f5f9; color:#475569; }
+.stage-CALIFICADO       { background:#ede9fe; color:#5b21b6; }
+.stage-PRIMERA_COMPRA   { background:#fef3c7; color:#92400e; }
+.stage-RECURRENTE       { background:#d1fae5; color:#065f46; }
+.stage-SUSCRIPTOR_CLUB  { background:#dbeafe; color:#1e40af; }
+.stage-INACTIVO         { background:#fee2e2; color:#991b1b; }
+.stage-PROSPECTO        { background:#f1f5f9; color:#475569; }
+.stage-CONTACTADO       { background:#ede9fe; color:#5b21b6; }
+.stage-MUESTRA_ENVIADA  { background:#fef9c3; color:#713f12; }
+.stage-NEGOCIACION      { background:#fef3c7; color:#92400e; }
+.stage-CONTRATO_FIRMADO { background:#d1fae5; color:#065f46; }
+.stage-ONBOARDING       { background:#cffafe; color:#164e63; }
+.stage-CUENTA_ACTIVA    { background:#dbeafe; color:#1e40af; }
+.stage-EN_RIESGO        { background:#fee2e2; color:#991b1b; }
+</style>
+
+<!-- ── Breadcrumb ─────────────────────────────────────────────────────────── -->
+<div class="breadcrumb">
+  <a href="/crm"><i class="bi bi-diagram-3"></i> CRM</a>
+  <i class="bi bi-chevron-right"></i>
+  <span id="bc-name">Lead</span>
+</div>
+
+<!-- ── Header ────────────────────────────────────────────────────────────── -->
+<div class="lead-header">
+  <div class="lead-avatar-lg" id="hd-avatar">?</div>
+  <div class="lead-meta">
+    <div class="lead-name-lg" id="hd-name">Cargando…</div>
+    <div class="lead-sub-row">
+      <span id="hd-email"></span>
+      <span id="hd-phone"></span>
+      <span id="hd-empresa"></span>
+      <span id="hd-temp"></span>
+    </div>
+  </div>
+  <div class="action-row">
+    <button class="btn btn-ghost" id="btn-email" onclick="togglePanel('email')" title="Enviar email">
+      <i class="bi bi-envelope"></i> Email
+    </button>
+    <button class="btn btn-ghost" id="btn-whatsapp" onclick="togglePanel('whatsapp')" title="Enviar WhatsApp" style="color:#25d366">
+      <i class="bi bi-whatsapp"></i> WhatsApp
+    </button>
+    <button class="btn btn-ghost" onclick="openModal('modal-task')" title="Nueva tarea">
+      <i class="bi bi-check2-square"></i> Tarea
+    </button>
+  </div>
+</div>
+
+<!-- ── Main layout ────────────────────────────────────────────────────────── -->
+<div class="lead-layout">
+  <!-- Left: info + timeline -->
+  <div>
+    <!-- Info -->
+    <div class="section-box">
+      <div class="section-head">
+        Datos del Lead
+        <button onclick="toggleEdit()">✏️ Editar</button>
+      </div>
+      <!-- View mode -->
+      <div id="view-mode">
+        <div class="info-grid" id="info-grid"></div>
+      </div>
+      <!-- Edit mode -->
+      <div id="edit-mode" style="display:none">
+        <div class="info-grid" id="edit-grid"></div>
+        <div class="info-save">
+          <button class="btn btn-primary" onclick="saveLead()">Guardar cambios</button>
+          <button class="btn btn-ghost" onclick="toggleEdit()" style="margin-left:.5rem">Cancelar</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Email compose -->
+    <div class="section-box" id="email-compose" style="display:none">
+      <div class="section-head">
+        <i class="bi bi-envelope" style="color:var(--accent)"></i> Enviar Email
+        <button onclick="togglePanel('email')">× Cerrar</button>
+      </div>
+      <div class="int-form">
+        <div class="form-group" style="margin:0">
+          <label class="form-label">Plantilla</label>
+          <select id="em-template" class="form-control" onchange="loadTemplate('email')" style="font-size:.82rem">
+            <option value="">— Sin plantilla —</option>
+          </select>
+        </div>
+        <div class="form-group" style="margin:0">
+          <label class="form-label">Asunto</label>
+          <input id="em-asunto" class="form-control" style="font-size:.82rem" placeholder="Asunto del correo" />
+        </div>
+        <div class="form-group" style="margin:0">
+          <label class="form-label">Cuerpo</label>
+          <textarea id="em-cuerpo" class="form-control" rows="5" style="font-size:.82rem;resize:vertical" placeholder="Escribe tu mensaje…"></textarea>
+        </div>
+        <div style="display:flex;align-items:center;gap:.5rem">
+          <button class="btn btn-primary" onclick="sendEmail()"><i class="bi bi-send"></i> Enviar</button>
+          <span id="em-dest" style="font-size:.75rem;color:var(--text-3)"></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- WhatsApp compose -->
+    <div class="section-box" id="wa-compose" style="display:none;border-color:#25d366">
+      <div class="section-head">
+        <i class="bi bi-whatsapp" style="color:#25d366"></i> WhatsApp
+        <button onclick="togglePanel('whatsapp')">× Cerrar</button>
+      </div>
+      <div class="int-form">
+        <div class="form-group" style="margin:0">
+          <label class="form-label">Plantilla</label>
+          <select id="wa-template" class="form-control" onchange="loadTemplate('whatsapp')" style="font-size:.82rem">
+            <option value="">— Sin plantilla —</option>
+          </select>
+        </div>
+        <div class="form-group" style="margin:0">
+          <label class="form-label">Mensaje</label>
+          <textarea id="wa-cuerpo" class="form-control" rows="5" style="font-size:.82rem;resize:vertical" placeholder="Escribe tu mensaje de WhatsApp…"></textarea>
+        </div>
+        <div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">
+          <button class="btn btn-primary" style="background:#25d366;border-color:#25d366" onclick="openWhatsApp()">
+            <i class="bi bi-whatsapp"></i> Abrir WhatsApp
+          </button>
+          <span id="wa-dest" style="font-size:.75rem;color:var(--text-3)"></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Timeline -->
+    <div class="section-box">
+      <div class="section-head">
+        Historial de interacciones
+        <button onclick="openModal('modal-int')">+ Registrar</button>
+      </div>
+      <div class="timeline" id="timeline"><p style="font-size:.78rem;color:var(--text-3)">Cargando…</p></div>
+    </div>
+  </div>
+
+  <!-- Right sidebar -->
+  <div>
+    <!-- Pipeline state -->
+    <div class="sidebar-box">
+      <div class="sidebar-head">Estado en pipeline</div>
+      <select id="stage-sel" class="stage-select" onchange="updateStage()"></select>
+      <div class="sidebar-head" style="margin-top:.75rem">Temperatura</div>
+      <div class="temp-btn-row">
+        <button class="temp-btn" id="tb-COLD" onclick="updateTemp('COLD')">❄️ Frío</button>
+        <button class="temp-btn" id="tb-WARM" onclick="updateTemp('WARM')">🌡️ Tibio</button>
+        <button class="temp-btn" id="tb-HOT"  onclick="updateTemp('HOT')">🔥 Caliente</button>
+      </div>
+    </div>
+
+    <!-- Tasks -->
+    <div class="sidebar-box">
+      <div class="sidebar-head" style="display:flex;justify-content:space-between">
+        Tareas
+        <button style="font-size:.72rem;color:var(--accent);background:none;border:none;cursor:pointer"
+                onclick="openModal('modal-task')">+ Nueva</button>
+      </div>
+      <div class="task-list-sm" id="task-list-sm"><p style="font-size:.75rem;color:var(--text-3)">Cargando…</p></div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Modal: registrar interacción ──────────────────────────────────────── -->
+<div class="modal-overlay" id="modal-int">
+  <div class="modal" style="max-width:440px">
+    <div class="modal-header"><h3>Registrar interacción</h3><button class="modal-close" onclick="closeModal('modal-int')">×</button></div>
+    <div class="modal-body">
+      <div class="int-form">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:.65rem">
+          <div class="form-group">
+            <label class="form-label">Tipo</label>
+            <select id="int-tipo" class="form-control">
+              <option value="nota">📝 Nota</option>
+              <option value="llamada">📞 Llamada</option>
+              <option value="whatsapp">💬 WhatsApp</option>
+              <option value="reunion">🤝 Reunión</option>
+              <option value="email">📧 Email</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Dirección</label>
+            <select id="int-dir" class="form-control">
+              <option value="saliente">↗ Saliente (yo contacté)</option>
+              <option value="entrante">↙ Entrante (me contactaron)</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Resumen</label>
+          <input id="int-desc" class="form-control" placeholder="Ej: Llamé para presentar Aurora Bakers" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Contenido / Respuesta</label>
+          <textarea id="int-notas" class="form-control" rows="3" placeholder="Qué se habló, qué respondieron, próximos pasos…" style="resize:vertical"></textarea>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Resultado</label>
+          <select id="int-resultado" class="form-control">
+            <option value="">— Sin resultado aún —</option>
+            <option value="interesado">✅ Interesado</option>
+            <option value="no_interesado">❌ No interesado</option>
+            <option value="callback">📅 Llamar más tarde</option>
+            <option value="enviado_info">📤 Info enviada</option>
+            <option value="muestra_pedida">🎁 Muestra pedida</option>
+            <option value="negociando">🤝 Negociando</option>
+          </select>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-int')">Cancelar</button>
+      <button class="btn btn-primary" onclick="saveInteraccion()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Modal: nueva tarea ─────────────────────────────────────────────────── -->
+<div class="modal-overlay" id="modal-task">
+  <div class="modal" style="max-width:380px">
+    <div class="modal-header"><h3>Nueva tarea</h3><button class="modal-close" onclick="closeModal('modal-task')">×</button></div>
+    <div class="modal-body">
+      <div class="int-form">
+        <div class="form-group">
+          <label class="form-label">Descripción *</label>
+          <input id="t-desc" class="form-control" placeholder="Ej: Llamar para seguimiento" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Vence</label>
+          <input id="t-due" type="datetime-local" class="form-control" />
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-task')">Cancelar</button>
+      <button class="btn btn-primary" onclick="saveTask()">Guardar</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const LEAD_ID = {{ lead_id }};
+
+const PIPELINE_LABELS = {
+  NUEVO_CONTACTO:'Nuevo Contacto', CALIFICADO:'Calificado', PRIMERA_COMPRA:'1ª Compra',
+  RECURRENTE:'Recurrente', SUSCRIPTOR_CLUB:'Club Suscriptor', INACTIVO:'Inactivo',
+  PROSPECTO:'Prospecto', CONTACTADO:'Contactado', MUESTRA_ENVIADA:'Muestra Enviada',
+  NEGOCIACION:'Negociación', CONTRATO_FIRMADO:'Contrato Firmado', ONBOARDING:'Onboarding',
+  CUENTA_ACTIVA:'Cuenta Activa', EN_RIESGO:'En Riesgo'
+};
+const STAGES = {
+  B2C:['NUEVO_CONTACTO','CALIFICADO','PRIMERA_COMPRA','RECURRENTE','SUSCRIPTOR_CLUB','INACTIVO'],
+  B2B:['PROSPECTO','CONTACTADO','MUESTRA_ENVIADA','NEGOCIACION','CONTRATO_FIRMADO','ONBOARDING','CUENTA_ACTIVA','EN_RIESGO']
+};
+const TL_ICONS = { nota:'📝', email:'📧', llamada:'📞', reunion:'🤝', etapa:'🔄', whatsapp:'💬' };
+const TEMP_LABEL = { HOT:'🔥 Caliente', WARM:'🌡️ Tibio', COLD:'❄️ Frío' };
+
+let lead = null;
+let templates = [];
+let editMode  = false;
+
+// ── Load ───────────────────────────────────────────────────────────────────
+async function init() {
+  await Promise.all([loadLead(), loadTemplates()]);
+}
+
+async function loadLead() {
+  try {
+    const d  = await api('GET', `/api/crm/leads/${LEAD_ID}`);
+    lead = d;
+    renderHeader();
+    renderInfoGrid();
+    renderPipelineControls();
+    await Promise.all([loadTimeline(), loadTasks()]);
+  } catch(e) { toast('Error al cargar lead: ' + e.message, 'error'); }
+}
+
+async function loadTimeline() {
+  try {
+    const d = await api('GET', `/api/crm/leads/${LEAD_ID}/interacciones`);
+    renderTimeline(Array.isArray(d) ? d : []);
+  } catch(e) { console.error(e); }
+}
+
+async function loadTasks() {
+  try {
+    const d = await api('GET', `/api/crm/tareas?lead_id=${LEAD_ID}&pendientes=0`);
+    renderTasks(Array.isArray(d) ? d : []);
+  } catch(e) { console.error(e); }
+}
+
+async function loadTemplates() {
+  try {
+    const d = await api('GET', '/api/crm/templates');
+    templates = Array.isArray(d) ? d : [...(d.B2C||[]), ...(d.B2B||[])];
+    ['em-template','wa-template'].forEach(id => {
+      const sel = document.getElementById(id);
+      const canal = id === 'wa-template' ? 'whatsapp' : 'email';
+      sel.innerHTML = '<option value="">— Sin plantilla —</option>';
+      templates.filter(t => t.canal === canal || !t.canal).forEach((t,i) => {
+        const o = document.createElement('option');
+        o.value = templates.indexOf(t); o.textContent = t.nombre;
+        sel.appendChild(o);
+      });
+    });
+  } catch(e) { console.error(e); }
+}
+
+// ── Render ─────────────────────────────────────────────────────────────────
+function renderHeader() {
+  document.getElementById('bc-name').textContent = lead.nombre;
+  document.getElementById('hd-name').textContent = lead.nombre;
+  document.getElementById('hd-avatar').textContent = lead.nombre.charAt(0).toUpperCase();
+  document.getElementById('hd-email').innerHTML  = lead.email  ? `<i class="bi bi-envelope"></i> <a href="mailto:${escHtml(lead.email)}">${escHtml(lead.email)}</a>` : '';
+  document.getElementById('hd-phone').innerHTML  = lead.telefono ? `<i class="bi bi-telephone"></i> ${escHtml(lead.telefono)}` : '';
+  document.getElementById('hd-empresa').textContent = lead.empresa||'';
+  document.getElementById('hd-temp').innerHTML   = `<span class="temp-badge temp-${lead.temperatura}">${TEMP_LABEL[lead.temperatura]||lead.temperatura}</span>`;
+}
+
+function renderInfoGrid() {
+  const fields = [
+    { label:'Nombre',   key:'nombre'   },
+    { label:'Email',    key:'email'    },
+    { label:'Teléfono', key:'telefono' },
+    { label:'Empresa',  key:'empresa'  },
+    { label:'Canal',    key:'canal_origen' },
+    { label:'Módulo',   key:'modulo'   },
+    { label:'Zona',     key:'zona'     },
+    { label:'Notas',    key:'notas',   wide:true },
+  ];
+
+  // View mode
+  document.getElementById('info-grid').innerHTML = fields.map(f => `
+    <div class="info-item${f.wide?' style="grid-column:1/-1"':''}">
+      <label>${f.label}</label>
+      <span>${escHtml(lead[f.key]||'—')}</span>
+    </div>`).join('');
+
+  // Edit mode
+  document.getElementById('edit-grid').innerHTML = fields.map(f => {
+    const val = escHtml(lead[f.key]||'');
+    if (f.key === 'notas') {
+      return `<div class="info-item" style="grid-column:1/-1"><label>${f.label}</label>
+               <textarea data-key="${f.key}" rows="2">${val}</textarea></div>`;
+    }
+    if (f.key === 'canal') {
+      const opts = ['local','online','referido','redes_sociales','feria','otro'].map(c =>
+        `<option${lead.canal===c?' selected':''}>${c}</option>`).join('');
+      return `<div class="info-item"><label>${f.label}</label>
+               <select data-key="${f.key}">${opts}</select></div>`;
+    }
+    return `<div class="info-item"><label>${f.label}</label>
+             <input data-key="${f.key}" value="${val}" /></div>`;
+  }).join('');
+}
+
+function renderPipelineControls() {
+  const stages = STAGES[lead.modulo] || [];
+  const sel = document.getElementById('stage-sel');
+  sel.innerHTML = '';
+  stages.forEach(s => {
+    const o = document.createElement('option');
+    o.value = s; o.textContent = PIPELINE_LABELS[s]||s;
+    if (s === lead.etapa) o.selected = true;
+    sel.appendChild(o);
+  });
+  // Temp buttons
+  ['HOT','WARM','COLD'].forEach(t => {
+    const btn = document.getElementById(`tb-${t}`);
+    btn.className = `temp-btn${lead.temperatura===t?' active-'+t:''}`;
+  });
+}
+
+const RESULTADO_LABEL = {
+  interesado:'✅ Interesado', no_interesado:'❌ No interesado',
+  callback:'📅 Callback', enviado_info:'📤 Info enviada',
+  muestra_pedida:'🎁 Muestra pedida', negociando:'🤝 Negociando'
+};
+
+function renderTimeline(items) {
+  const el = document.getElementById('timeline');
+  if (!items.length) { el.innerHTML = '<p style="font-size:.78rem;color:var(--text-3)">Sin interacciones registradas.</p>'; return; }
+  el.innerHTML = items.map(i => {
+    const d    = new Date(i.fecha).toLocaleDateString('es-CL',{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'});
+    const desc = i.asunto || '—';
+    const body = i.contenido || '';
+    const res  = i.resultado ? RESULTADO_LABEL[i.resultado] || i.resultado : '';
+    const dirLabel = i.direccion === 'entrante'
+      ? '<span class="tl-dir-in">↙ entrante</span>'
+      : '<span class="tl-dir-out">↗ saliente</span>';
+    return `
+      <div class="tl-item">
+        <div class="tl-dot tipo-${i.tipo}">${TL_ICONS[i.tipo]||'•'}</div>
+        <div class="tl-body">
+          <div class="tl-desc">${escHtml(desc)} ${dirLabel}</div>
+          ${body ? `<div class="tl-note-text">${escHtml(body)}</div>` : ''}
+          ${res  ? `<div style="margin-top:.25rem;font-size:.7rem;font-weight:600;color:var(--accent)">${res}</div>` : ''}
+          <div class="tl-meta">${d}</div>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function renderTasks(tasks) {
+  const el = document.getElementById('task-list-sm');
+  if (!tasks.length) { el.innerHTML = '<p style="font-size:.75rem;color:var(--text-3)">Sin tareas.</p>'; return; }
+  const now = new Date();
+  el.innerHTML = tasks.map(t => {
+    const due = t.fecha_vencimiento ? new Date(t.fecha_vencimiento) : null;
+    const past = due && due < now && !t.completada;
+    const dueStr = due ? due.toLocaleDateString('es-CL',{day:'numeric',month:'short'}) : '';
+    return `
+      <div class="task-sm">
+        <div class="task-check${t.completada?' done':''}" onclick="toggleTask(${t.id},this)"></div>
+        <span style="flex:1;${t.completada?'text-decoration:line-through;color:var(--text-3)':''}">${escHtml(t.titulo||t.descripcion)}</span>
+        ${dueStr ? `<span style="font-size:.68rem;color:${past?'#ef4444':'var(--text-3)'}">${dueStr}</span>` : ''}
+      </div>`;
+  }).join('');
+}
+
+// ── Actions ────────────────────────────────────────────────────────────────
+function togglePanel(tipo) {
+  const emailBox = document.getElementById('email-compose');
+  const waBox    = document.getElementById('wa-compose');
+  if (tipo === 'email') {
+    const open = emailBox.style.display === 'none';
+    emailBox.style.display = open ? '' : 'none';
+    waBox.style.display = 'none';
+    if (open && lead) {
+      document.getElementById('em-dest').textContent = lead.email ? `Para: ${lead.email}` : '⚠️ Sin email registrado';
+    }
+  } else {
+    const open = waBox.style.display === 'none';
+    waBox.style.display = open ? '' : 'none';
+    emailBox.style.display = 'none';
+    if (open && lead) {
+      document.getElementById('wa-dest').textContent = lead.telefono ? `Para: ${lead.telefono}` : '⚠️ Sin teléfono registrado';
+    }
+  }
+}
+
+function loadTemplate(canal) {
+  const selId   = canal === 'whatsapp' ? 'wa-template' : 'em-template';
+  const idx     = document.getElementById(selId).value;
+  if (idx === '' || !templates[idx]) return;
+  const t = templates[idx];
+  let cuerpo = t.cuerpo || '';
+  if (lead) {
+    cuerpo = cuerpo
+      .replace(/\{nombre\}/g, lead.nombre||'')
+      .replace(/\{empresa\}/g, lead.empresa||'')
+      .replace(/\{telefono\}/g, lead.telefono||'');
+  }
+  if (canal === 'whatsapp') {
+    document.getElementById('wa-cuerpo').value = cuerpo;
+  } else {
+    document.getElementById('em-asunto').value = t.asunto || '';
+    document.getElementById('em-cuerpo').value = cuerpo;
+  }
+}
+
+async function openWhatsApp() {
+  const telefono = lead?.telefono?.replace(/\D/g,'');
+  const msg      = document.getElementById('wa-cuerpo').value.trim();
+  if (!telefono) { toast('Este lead no tiene teléfono registrado','error'); return; }
+  // Registrar interacción
+  try {
+    await api('POST', `/api/crm/leads/${LEAD_ID}/interacciones`, {
+      tipo:'whatsapp', direccion:'saliente',
+      asunto:'WhatsApp enviado', contenido: msg, resultado:''
+    });
+    await loadTimeline();
+  } catch(e) { console.warn(e); }
+  // Normalizar número chileno
+  let num = telefono;
+  if (num.startsWith('0')) num = num.slice(1);
+  if (!num.startsWith('56')) num = '56' + num;
+  window.open(`https://wa.me/${num}?text=${encodeURIComponent(msg)}`, '_blank');
+  toast('WhatsApp abierto — recuerda registrar la respuesta');
+}
+
+function toggleEdit() {
+  editMode = !editMode;
+  document.getElementById('view-mode').style.display = editMode ? 'none' : '';
+  document.getElementById('edit-mode').style.display = editMode ? '' : 'none';
+}
+
+async function saveLead() {
+  const inputs = document.querySelectorAll('#edit-grid [data-key]');
+  const body = {};
+  inputs.forEach(el => { body[el.dataset.key] = el.value; });
+  try {
+    await api('PUT', `/api/crm/leads/${LEAD_ID}`, body);
+    Object.assign(lead, body);
+    renderHeader();
+    renderInfoGrid();
+    toggleEdit();
+    toast('Lead actualizado');
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function updateStage() {
+  const etapa = document.getElementById('stage-sel').value;
+  try {
+    await api('PUT', `/api/crm/leads/${LEAD_ID}`, { etapa });
+    lead.etapa = etapa;
+    toast('Etapa actualizada');
+    await loadTimeline();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function updateTemp(t) {
+  try {
+    await api('PUT', `/api/crm/leads/${LEAD_ID}`, { temperatura: t });
+    lead.temperatura = t;
+    renderHeader();
+    renderPipelineControls();
+    toast('Temperatura actualizada');
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function saveInteraccion() {
+  const tipo      = document.getElementById('int-tipo').value;
+  const direccion = document.getElementById('int-dir').value;
+  const desc      = document.getElementById('int-desc').value.trim();
+  const notas     = document.getElementById('int-notas').value.trim();
+  const resultado = document.getElementById('int-resultado').value;
+  if (!desc) { toast('El resumen es obligatorio','error'); return; }
+  try {
+    await api('POST', `/api/crm/leads/${LEAD_ID}/interacciones`, {
+      tipo, direccion, asunto: desc, contenido: notas, resultado
+    });
+    closeModal('modal-int');
+    document.getElementById('int-desc').value = '';
+    document.getElementById('int-notas').value = '';
+    await loadTimeline();
+    toast('Interacción registrada');
+  } catch(e) { toast(e.message,'error'); }
+}
+
+async function saveTask() {
+  const desc = document.getElementById('t-desc').value.trim();
+  if (!desc) { toast('La descripción es obligatoria','error'); return; }
+  try {
+    await api('POST', '/api/crm/tareas', {
+      lead_id    : LEAD_ID,
+      titulo     : desc,
+      descripcion: desc,
+      vence_en   : document.getElementById('t-due').value || null
+    });
+    closeModal('modal-task');
+    document.getElementById('t-desc').value = '';
+    document.getElementById('t-due').value  = '';
+    await loadTasks();
+    toast('Tarea creada');
+  } catch(e) { toast(e.message,'error'); }
+}
+
+async function toggleTask(id, el) {
+  try {
+    await api('POST', `/api/crm/tareas/${id}/completar`);
+    el.classList.toggle('done');
+    await loadTasks();
+  } catch(e) { toast(e.message,'error'); }
+}
+
+
+async function sendEmail() {
+  const asunto = document.getElementById('em-asunto').value.trim();
+  const cuerpo = document.getElementById('em-cuerpo').value.trim();
+  if (!asunto || !cuerpo) { toast('Completa asunto y cuerpo','error'); return; }
+  if (!lead.email) { toast('Este lead no tiene email registrado','error'); return; }
+  try {
+    await api('POST', `/api/crm/leads/${LEAD_ID}/email`, { asunto, cuerpo });
+    toggleEmail();
+    document.getElementById('em-asunto').value = '';
+    document.getElementById('em-cuerpo').value = '';
+    await loadTimeline();
+    toast('Email enviado correctamente');
+  } catch(e) { toast(e.message,'error'); }
+}
+
+function escHtml(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── Init ───────────────────────────────────────────────────────────────────
+init();
+</script>
+{% endblock %}

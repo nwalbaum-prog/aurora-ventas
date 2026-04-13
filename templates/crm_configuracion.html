@@ -1,0 +1,382 @@
+{% extends "base.html" %}
+{% block title %}Configuración · CRM — Aurora Bakers{% endblock %}
+{% block page_title %}CRM · Configuración de agentes{% endblock %}
+
+{% block content %}
+<style>
+.breadcrumb { display:flex; align-items:center; gap:.4rem; font-size:.8rem; color:var(--text-3); margin-bottom:1.25rem; }
+.breadcrumb a { color:var(--accent); text-decoration:none; }
+
+.cfg-layout { display:grid; grid-template-columns:1fr 1fr; gap:1.25rem; align-items:start; }
+@media(max-width:700px) { .cfg-layout { grid-template-columns:1fr; } }
+
+.cfg-card { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:1.25rem 1.4rem; }
+.cfg-head { font-size:.9rem; font-weight:700; color:var(--text-1); margin-bottom:1rem;
+             display:flex; align-items:center; gap:.5rem; }
+.cfg-head i { font-size:1.1rem; }
+
+.status-badge { display:inline-flex; align-items:center; gap:.35rem; font-size:.78rem;
+                 font-weight:700; padding:.25rem .65rem; border-radius:20px; }
+.badge-ok   { background:rgba(37,211,102,.15); color:#16a34a; }
+.badge-err  { background:#fee2e2; color:#991b1b; }
+.badge-warn { background:#fef3c7; color:#92400e; }
+
+/* QR code */
+.qr-wrap { background:#fff; border:2px solid var(--border); border-radius:10px;
+            padding:1rem; text-align:center; margin:1rem 0; }
+.qr-wrap img { max-width:240px; width:100%; }
+
+/* Steps */
+.steps { display:flex; flex-direction:column; gap:.55rem; margin:1rem 0; }
+.step  { display:flex; align-items:flex-start; gap:.65rem; font-size:.8rem; color:var(--text-2); }
+.step-num { width:22px; height:22px; border-radius:50%; background:var(--accent); color:#fff;
+             font-size:.7rem; font-weight:800; display:flex; align-items:center; justify-content:center;
+             flex-shrink:0; margin-top:.05rem; }
+code { background:var(--hover); padding:.1rem .35rem; border-radius:4px; font-size:.75rem; }
+</style>
+
+<!-- Breadcrumb -->
+<div class="breadcrumb">
+  <a href="/crm"><i class="bi bi-diagram-3"></i> CRM</a>
+  <i class="bi bi-chevron-right"></i>
+  <span>Configuración</span>
+</div>
+
+<div class="cfg-layout">
+
+  <!-- ── WhatsApp Agent ─────────────────────────────────────────────────── -->
+  <div>
+    <div class="cfg-card" style="margin-bottom:1rem">
+      <div class="cfg-head">
+        <i class="bi bi-whatsapp" style="color:#25d366"></i>
+        Agente WhatsApp (Evolution API)
+        <span class="status-badge" id="wa-badge">Verificando…</span>
+      </div>
+
+      <!-- Estado y QR -->
+      <div id="wa-status-section"></div>
+
+      <!-- Campos de config -->
+      <div style="display:flex;flex-direction:column;gap:.65rem;margin-top:1rem">
+        <div class="form-group" style="margin:0">
+          <label class="form-label">URL del servidor Evolution API</label>
+          <input id="wa-url" class="form-control" placeholder="http://localhost:8080" />
+        </div>
+        <div class="form-group" style="margin:0">
+          <label class="form-label">API Key</label>
+          <input id="wa-apikey" class="form-control" type="password" placeholder="Tu apikey de Evolution API" />
+        </div>
+        <div class="form-group" style="margin:0">
+          <label class="form-label">Nombre de instancia</label>
+          <input id="wa-instance" class="form-control" placeholder="aurora" />
+        </div>
+        <div style="display:flex;gap:.5rem">
+          <button class="btn btn-primary" onclick="saveWaConfig()"
+                  style="background:#25d366;border-color:#25d366;flex:1;justify-content:center">
+            <i class="bi bi-save"></i> Guardar y conectar
+          </button>
+          <button class="btn btn-ghost" onclick="refreshQR()" title="Obtener nuevo QR">
+            <i class="bi bi-qr-code"></i>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Instrucciones de instalación -->
+    <div class="cfg-card">
+      <div class="cfg-head"><i class="bi bi-book"></i> Cómo instalar Evolution API</div>
+      <p style="font-size:.8rem;color:var(--text-2);margin-bottom:.75rem">
+        Evolution API es un servidor gratuito y open-source que conecta tu número de WhatsApp
+        mediante QR (como WhatsApp Web) y expone una REST API.
+      </p>
+      <div class="steps">
+        <div class="step">
+          <div class="step-num">1</div>
+          <div>Instala <strong>Node.js 18+</strong> desde <a href="https://nodejs.org" target="_blank" style="color:var(--accent)">nodejs.org</a></div>
+        </div>
+        <div class="step">
+          <div class="step-num">2</div>
+          <div>
+            Descarga Evolution API:<br>
+            <code>npm install -g @evolution-api/server</code><br>
+            o usa Docker:<br>
+            <code>docker run -p 8080:8080 atendai/evolution-api:latest</code>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-num">3</div>
+          <div>
+            Crea la instancia "aurora":<br>
+            <code>POST http://localhost:8080/instance/create</code><br>
+            body: <code>{"instanceName":"aurora","integration":"WHATSAPP-BAILEYS"}</code>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-num">4</div>
+          <div>Ingresa la URL, API key e instancia arriba → Guardar y conectar → Escanea el QR con tu WhatsApp</div>
+        </div>
+        <div class="step">
+          <div class="step-num">5</div>
+          <div>Una vez conectado, Aurora Bakers enviará los mensajes directamente desde tu número</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Email SMTP ──────────────────────────────────────────────────────── -->
+  <div>
+    <div class="cfg-card" style="margin-bottom:1rem">
+      <div class="cfg-head">
+        <i class="bi bi-envelope-fill" style="color:var(--accent)"></i>
+        Correo electrónico (SMTP)
+        <span class="status-badge" id="smtp-badge">Verificando…</span>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:.65rem">
+        <div style="display:grid;grid-template-columns:1fr auto;gap:.65rem">
+          <div class="form-group" style="margin:0">
+            <label class="form-label">Servidor SMTP</label>
+            <input id="smtp-host" class="form-control" placeholder="smtp.gmail.com" />
+          </div>
+          <div class="form-group" style="margin:0">
+            <label class="form-label">Puerto</label>
+            <input id="smtp-port" class="form-control" placeholder="587" style="width:80px" />
+          </div>
+        </div>
+        <div class="form-group" style="margin:0">
+          <label class="form-label">Usuario (correo)</label>
+          <input id="smtp-user" class="form-control" type="email" placeholder="aurora@gmail.com" />
+        </div>
+        <div class="form-group" style="margin:0">
+          <label class="form-label">Contraseña / App Password</label>
+          <input id="smtp-pass" class="form-control" type="password" placeholder="••••••••••••" />
+        </div>
+        <div class="form-group" style="margin:0">
+          <label class="form-label">Nombre del remitente</label>
+          <input id="smtp-from" class="form-control" placeholder="Aurora Bakers" />
+        </div>
+        <button class="btn btn-primary" onclick="saveSmtpConfig()" style="justify-content:center">
+          <i class="bi bi-save"></i> Guardar configuración
+        </button>
+
+        <!-- Test email -->
+        <div style="border-top:1px solid var(--border);padding-top:.85rem;margin-top:.1rem">
+          <div style="font-size:.75rem;font-weight:600;color:var(--text-2);margin-bottom:.5rem">
+            Enviar correo de prueba
+          </div>
+          <div style="display:flex;gap:.5rem">
+            <input id="smtp-test-to" class="form-control" type="email"
+                   placeholder="tu@correo.com" style="flex:1" />
+            <button class="btn btn-ghost" onclick="testSmtp()">
+              <i class="bi bi-send"></i> Probar
+            </button>
+          </div>
+          <div id="smtp-test-result" style="font-size:.75rem;margin-top:.5rem"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Guía Gmail -->
+    <div class="cfg-card">
+      <div class="cfg-head"><i class="bi bi-google"></i> Configurar Gmail</div>
+      <p style="font-size:.8rem;color:var(--text-2);margin-bottom:.75rem">
+        Gmail requiere una <strong>Contraseña de aplicación</strong> (no tu contraseña normal).
+      </p>
+      <div class="steps">
+        <div class="step">
+          <div class="step-num">1</div>
+          <div>Activa verificación en 2 pasos en tu cuenta Google</div>
+        </div>
+        <div class="step">
+          <div class="step-num">2</div>
+          <div>Ve a <strong>Seguridad → Contraseñas de aplicación</strong></div>
+        </div>
+        <div class="step">
+          <div class="step-num">3</div>
+          <div>Crea una nueva contraseña para "Aurora CRM" y cópiala aquí</div>
+        </div>
+        <div class="step">
+          <div class="step-num">4</div>
+          <div>
+            Configuración:<br>
+            Host: <code>smtp.gmail.com</code><br>
+            Puerto: <code>587</code><br>
+            Usuario: tu correo Gmail completo
+          </div>
+        </div>
+      </div>
+      <div style="margin-top:.75rem;padding:.6rem .85rem;background:rgba(99,102,241,.08);border-radius:8px;font-size:.75rem;color:var(--text-2)">
+        <i class="bi bi-info-circle"></i> También funciona con Outlook (<code>smtp.office365.com</code>:587) o cualquier proveedor SMTP.
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ── Cargar estado actual ──────────────────────────────────────────────────
+async function loadStatus() {
+  try {
+    const r = await api('GET', '/api/crm/config/status');
+
+    // SMTP badge
+    const sb = document.getElementById('smtp-badge');
+    if (r.smtp.configurado) {
+      sb.className = 'status-badge badge-ok';
+      sb.textContent = 'Configurado';
+    } else {
+      sb.className = 'status-badge badge-warn';
+      sb.textContent = 'Sin configurar';
+    }
+
+    // Fill SMTP fields
+    if (r.smtp.host) document.getElementById('smtp-host').value = r.smtp.host;
+    if (r.smtp.port) document.getElementById('smtp-port').value = r.smtp.port;
+    if (r.smtp.user) document.getElementById('smtp-user').value = r.smtp.user;
+    if (r.smtp.from) document.getElementById('smtp-from').value = r.smtp.from;
+
+    // WhatsApp badge
+    const wb = document.getElementById('wa-badge');
+    if (r.whatsapp.conectado) {
+      wb.className = 'status-badge badge-ok';
+      wb.textContent = 'Conectado ✓';
+    } else if (r.whatsapp.configurado) {
+      wb.className = 'status-badge badge-warn';
+      wb.textContent = 'Desconectado';
+    } else {
+      wb.className = 'status-badge badge-err';
+      wb.textContent = 'Sin configurar';
+    }
+
+    // Fill WA fields
+    if (r.whatsapp.url)      document.getElementById('wa-url').value      = r.whatsapp.url;
+    if (r.whatsapp.instance) document.getElementById('wa-instance').value = r.whatsapp.instance;
+
+    // WA status section
+    renderWaStatus(r.whatsapp);
+
+  } catch(e) {
+    console.error(e);
+  }
+}
+
+function renderWaStatus(wa) {
+  const sec = document.getElementById('wa-status-section');
+  if (wa.conectado) {
+    sec.innerHTML = `
+      <div style="display:flex;align-items:center;gap:.5rem;padding:.65rem .85rem;
+                  background:rgba(37,211,102,.1);border-radius:8px;font-size:.82rem;color:#16a34a">
+        <span style="width:10px;height:10px;border-radius:50%;background:#25d366;display:inline-block;flex-shrink:0"></span>
+        <strong>WhatsApp conectado</strong> — los mensajes se enviarán automáticamente desde Aurora Bakers.
+      </div>`;
+  } else if (wa.qr) {
+    sec.innerHTML = `
+      <div style="font-size:.8rem;color:var(--text-2);margin-bottom:.5rem">
+        <strong>Escanea este QR con WhatsApp</strong> en tu teléfono (Ajustes → Dispositivos vinculados → Vincular dispositivo):
+      </div>
+      <div class="qr-wrap">
+        <img src="${wa.qr.startsWith('data:') ? wa.qr : 'data:image/png;base64,' + wa.qr}" alt="QR WhatsApp" />
+      </div>
+      <div style="font-size:.72rem;color:var(--text-3);text-align:center">El QR expira en ~60 segundos. <button class="btn btn-ghost" style="font-size:.72rem;padding:.15rem .5rem" onclick="refreshQR()">Actualizar QR</button></div>
+      <div id="qr-checking" style="font-size:.75rem;color:var(--text-3);text-align:center;margin-top:.35rem">Esperando conexión…</div>`;
+    startQRPolling();
+  } else if (wa.configurado) {
+    sec.innerHTML = `
+      <div style="padding:.65rem .85rem;background:#fef3c7;border-radius:8px;font-size:.8rem;color:#92400e">
+        <i class="bi bi-exclamation-triangle"></i> Agente configurado pero desconectado.
+        Haz clic en "Guardar y conectar" para obtener el QR.
+      </div>`;
+  } else {
+    sec.innerHTML = `
+      <div style="padding:.65rem .85rem;background:var(--bg);border-radius:8px;font-size:.8rem;color:var(--text-3)">
+        <i class="bi bi-info-circle"></i> Completa los campos y guarda para conectar.
+      </div>`;
+  }
+}
+
+// Polling QR hasta que conecte
+let _qrPoll = null;
+function startQRPolling() {
+  if (_qrPoll) clearInterval(_qrPoll);
+  _qrPoll = setInterval(async () => {
+    try {
+      const r = await api('GET', '/api/crm/config/wa-status');
+      if (r.conectado) {
+        clearInterval(_qrPoll);
+        document.getElementById('wa-badge').className = 'status-badge badge-ok';
+        document.getElementById('wa-badge').textContent = 'Conectado ✓';
+        document.getElementById('wa-status-section').innerHTML = `
+          <div style="display:flex;align-items:center;gap:.5rem;padding:.65rem .85rem;
+                      background:rgba(37,211,102,.1);border-radius:8px;font-size:.82rem;color:#16a34a">
+            <span style="width:10px;height:10px;border-radius:50%;background:#25d366;display:inline-block"></span>
+            <strong>¡WhatsApp conectado!</strong> Ya puedes enviar mensajes masivos.
+          </div>`;
+        toast('WhatsApp conectado correctamente');
+      }
+    } catch(e) {}
+  }, 5000);
+}
+
+async function refreshQR() {
+  try {
+    const r = await api('GET', '/api/crm/config/wa-qr');
+    renderWaStatus({ configurado: true, conectado: r.conectado, qr: r.qr });
+  } catch(e) {
+    toast(e.message, 'error');
+  }
+}
+
+// ── Guardar configs ───────────────────────────────────────────────────────
+async function saveWaConfig() {
+  const url      = document.getElementById('wa-url').value.trim()      || 'http://localhost:8080';
+  const apikey   = document.getElementById('wa-apikey').value.trim();
+  const instance = document.getElementById('wa-instance').value.trim() || 'aurora';
+  try {
+    await api('POST', '/api/crm/config/whatsapp', { url, apikey, instance });
+    toast('Configuración guardada — obteniendo QR…');
+    await loadStatus();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function saveSmtpConfig() {
+  const host = document.getElementById('smtp-host').value.trim() || 'smtp.gmail.com';
+  const port = parseInt(document.getElementById('smtp-port').value) || 587;
+  const user = document.getElementById('smtp-user').value.trim();
+  const pass = document.getElementById('smtp-pass').value;
+  const from = document.getElementById('smtp-from').value.trim() || user;
+  if (!user || !pass) { toast('Ingresa usuario y contraseña', 'error'); return; }
+  try {
+    await api('POST', '/api/crm/config/smtp', { host, port, user, pass, from });
+    toast('Configuración SMTP guardada');
+    const sb = document.getElementById('smtp-badge');
+    sb.className = 'status-badge badge-ok';
+    sb.textContent = 'Configurado';
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function testSmtp() {
+  const to   = document.getElementById('smtp-test-to').value.trim();
+  const host = document.getElementById('smtp-host').value.trim() || 'smtp.gmail.com';
+  const port = parseInt(document.getElementById('smtp-port').value) || 587;
+  const user = document.getElementById('smtp-user').value.trim();
+  const pass = document.getElementById('smtp-pass').value;
+  const from = document.getElementById('smtp-from').value.trim() || user;
+  if (!to) { toast('Ingresa un correo destinatario', 'error'); return; }
+  const res = document.getElementById('smtp-test-result');
+  res.textContent = 'Enviando…';
+  try {
+    const r = await api('POST', '/api/crm/config/smtp', { host, port, user, pass, from, test_to: to });
+    if (r.ok) {
+      res.innerHTML = `<span style="color:#16a34a"><i class="bi bi-check-circle-fill"></i> Correo enviado correctamente a ${to}</span>`;
+      toast('Correo de prueba enviado');
+    } else {
+      res.innerHTML = `<span style="color:#ef4444"><i class="bi bi-x-circle-fill"></i> Error: ${r.error||'desconocido'}</span>`;
+    }
+  } catch(e) { res.innerHTML = `<span style="color:#ef4444">${e.message}</span>`; }
+}
+
+loadStatus();
+</script>
+{% endblock %}

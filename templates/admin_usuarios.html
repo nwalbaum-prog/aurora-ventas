@@ -1,0 +1,217 @@
+{% extends "base.html" %}
+{% block title %}Usuarios · Aurora Bakers{% endblock %}
+{% block page_title %}Gestión de usuarios{% endblock %}
+
+{% block content %}
+<style>
+.u-card { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:1.25rem 1.4rem; margin-bottom:1rem; }
+.u-head { font-size:.9rem; font-weight:700; color:var(--text-1); margin-bottom:1rem; display:flex; align-items:center; justify-content:space-between; }
+.u-table { width:100%; border-collapse:collapse; font-size:.82rem; }
+.u-table th { text-align:left; font-size:.7rem; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:var(--text-3); padding:.5rem .75rem; border-bottom:2px solid var(--border); }
+.u-table td { padding:.6rem .75rem; border-bottom:1px solid var(--border); color:var(--text-1); vertical-align:middle; }
+.u-table tr:last-child td { border-bottom:none; }
+.u-table tr:hover td { background:var(--hover); }
+.rol-badge { font-size:.65rem; font-weight:700; padding:.15rem .45rem; border-radius:4px; }
+.rol-admin  { background:#ede9fe; color:#5b21b6; }
+.rol-usuario { background:#d1fae5; color:#065f46; }
+.activo-dot { width:8px; height:8px; border-radius:50%; display:inline-block; }
+.dot-on  { background:#22c55e; }
+.dot-off { background:#e2e8f0; }
+.btn-row { display:flex; gap:.3rem; }
+</style>
+
+<div class="u-card">
+  <div class="u-head">
+    <span><i class="bi bi-people-fill"></i> Equipo Aurora Bakers</span>
+    <button class="btn btn-primary" style="font-size:.8rem" onclick="openModal('modal-nuevo')">
+      <i class="bi bi-person-plus"></i> Agregar usuario
+    </button>
+  </div>
+  <table class="u-table" id="u-table">
+    <thead>
+      <tr>
+        <th>Nombre</th><th>Correo</th><th>Rol</th><th>Estado</th><th>Último acceso</th><th></th>
+      </tr>
+    </thead>
+    <tbody id="u-tbody"><tr><td colspan="6" style="color:var(--text-3)">Cargando…</td></tr></tbody>
+  </table>
+</div>
+
+<!-- Mi contraseña -->
+<div class="u-card" style="max-width:420px">
+  <div class="u-head"><i class="bi bi-key"></i> Cambiar mi contraseña</div>
+  <div style="display:flex;flex-direction:column;gap:.65rem">
+    <div class="form-group" style="margin:0">
+      <label class="form-label">Contraseña actual</label>
+      <input id="pw-actual" class="form-control" type="password" placeholder="••••••••" />
+    </div>
+    <div class="form-group" style="margin:0">
+      <label class="form-label">Nueva contraseña</label>
+      <input id="pw-nuevo" class="form-control" type="password" placeholder="Mínimo 6 caracteres" />
+    </div>
+    <button class="btn btn-primary" onclick="cambiarContrasena()" style="justify-content:center">
+      <i class="bi bi-check2-circle"></i> Cambiar contraseña
+    </button>
+  </div>
+</div>
+
+<!-- Modal nuevo usuario -->
+<div class="modal-overlay" id="modal-nuevo">
+  <div class="modal" style="max-width:460px">
+    <div class="modal-header">
+      <h3 id="modal-nuevo-title">Agregar usuario</h3>
+      <button class="modal-close" onclick="closeModal('modal-nuevo')">×</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="edit-uid" value="" />
+      <div style="display:flex;flex-direction:column;gap:.75rem">
+        <div class="form-group" style="margin:0">
+          <label class="form-label">Nombre completo *</label>
+          <input id="u-nombre" class="form-control" placeholder="Ej: María González" />
+        </div>
+        <div class="form-group" style="margin:0">
+          <label class="form-label">Correo electrónico *</label>
+          <input id="u-email" class="form-control" type="email" placeholder="maria@aurorabakers.cl" />
+        </div>
+        <div class="form-group" style="margin:0">
+          <label class="form-label" id="pw-label">Contraseña *</label>
+          <input id="u-pass" class="form-control" type="password" placeholder="Mínimo 6 caracteres" />
+          <div id="pw-hint" style="font-size:.7rem;color:var(--text-3);margin-top:.2rem"></div>
+        </div>
+        <div class="form-group" style="margin:0">
+          <label class="form-label">Rol</label>
+          <select id="u-rol" class="form-control">
+            <option value="usuario">Usuario — acceso a ventas y CRM</option>
+            <option value="admin">Admin — gestión completa + usuarios</option>
+          </select>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-nuevo')">Cancelar</button>
+      <button class="btn btn-primary" onclick="guardarUsuario()">Guardar</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let usuarios = [];
+
+async function loadUsuarios() {
+  usuarios = await api('GET', '/api/admin/usuarios');
+  renderTabla();
+}
+
+function renderTabla() {
+  const tb = document.getElementById('u-tbody');
+  const yo = {{ yo.id }};
+  if (!usuarios.length) { tb.innerHTML = '<tr><td colspan="6" style="color:var(--text-3)">Sin usuarios.</td></tr>'; return; }
+  tb.innerHTML = usuarios.map(u => `
+    <tr>
+      <td><strong>${escHtml(u.nombre)}</strong>${u.id===yo?' <span style="font-size:.65rem;color:var(--accent)">(tú)</span>':''}</td>
+      <td style="color:var(--text-2)">${escHtml(u.email)}</td>
+      <td><span class="rol-badge ${u.rol==='admin'?'rol-admin':'rol-usuario'}">${u.rol}</span></td>
+      <td><span class="activo-dot ${u.activo?'dot-on':'dot-off'}" title="${u.activo?'Activo':'Inactivo'}"></span> ${u.activo?'Activo':'Inactivo'}</td>
+      <td style="color:var(--text-3)">${u.ultimo_login || '—'}</td>
+      <td>
+        <div class="btn-row">
+          <button class="btn btn-ghost" style="font-size:.72rem;padding:.2rem .5rem" onclick="editarUsuario(${u.id})"><i class="bi bi-pencil"></i></button>
+          ${u.id!==yo ? `<button class="btn btn-ghost" style="font-size:.72rem;padding:.2rem .5rem;color:${u.activo?'#ef4444':'#22c55e'}"
+            onclick="toggleActivo(${u.id},${u.activo})" title="${u.activo?'Desactivar':'Activar'}">
+            <i class="bi bi-${u.activo?'person-x':'person-check'}"></i></button>` : ''}
+        </div>
+      </td>
+    </tr>`).join('');
+}
+
+function abrirNuevo() {
+  document.getElementById('edit-uid').value = '';
+  document.getElementById('modal-nuevo-title').textContent = 'Agregar usuario';
+  document.getElementById('u-nombre').value = '';
+  document.getElementById('u-email').value  = '';
+  document.getElementById('u-pass').value   = '';
+  document.getElementById('u-rol').value    = 'usuario';
+  document.getElementById('pw-label').textContent = 'Contraseña *';
+  document.getElementById('pw-hint').textContent  = '';
+  openModal('modal-nuevo');
+}
+
+function editarUsuario(id) {
+  const u = usuarios.find(u => u.id === id);
+  if (!u) return;
+  document.getElementById('edit-uid').value = id;
+  document.getElementById('modal-nuevo-title').textContent = 'Editar usuario';
+  document.getElementById('u-nombre').value = u.nombre;
+  document.getElementById('u-email').value  = u.email;
+  document.getElementById('u-pass').value   = '';
+  document.getElementById('u-rol').value    = u.rol;
+  document.getElementById('pw-label').textContent = 'Nueva contraseña (dejar vacío para no cambiar)';
+  document.getElementById('pw-hint').textContent  = '';
+  openModal('modal-nuevo');
+}
+
+async function guardarUsuario() {
+  const id     = document.getElementById('edit-uid').value;
+  const nombre = document.getElementById('u-nombre').value.trim();
+  const email  = document.getElementById('u-email').value.trim();
+  const pass   = document.getElementById('u-pass').value;
+  const rol    = document.getElementById('u-rol').value;
+  if (!nombre || !email) { toast('Nombre y correo son obligatorios', 'error'); return; }
+  if (!id && !pass) { toast('Ingresa una contraseña', 'error'); return; }
+  try {
+    if (id) {
+      const body = { nombre, email, rol };
+      if (pass) body.password = pass;
+      await api('PUT', `/api/admin/usuarios/${id}`, body);
+    } else {
+      await api('POST', '/api/admin/usuarios', { nombre, email, password: pass, rol });
+    }
+    closeModal('modal-nuevo');
+    await loadUsuarios();
+    toast(id ? 'Usuario actualizado' : 'Usuario creado');
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function toggleActivo(id, activo) {
+  const accion = activo ? 'desactivar' : 'activar';
+  if (!confirm(`¿${accion.charAt(0).toUpperCase()+accion.slice(1)} este usuario?`)) return;
+  try {
+    await api('PUT', `/api/admin/usuarios/${id}`, { activo: activo ? 0 : 1 });
+    await loadUsuarios();
+    toast(`Usuario ${accion}do`);
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function cambiarContrasena() {
+  const actual = document.getElementById('pw-actual').value;
+  const nuevo  = document.getElementById('pw-nuevo').value;
+  if (!actual || !nuevo) { toast('Completa ambos campos', 'error'); return; }
+  if (nuevo.length < 6) { toast('La nueva contraseña debe tener al menos 6 caracteres', 'error'); return; }
+  try {
+    await api('POST', '/api/admin/mi-perfil', { password_actual: actual, password_nuevo: nuevo });
+    document.getElementById('pw-actual').value = '';
+    document.getElementById('pw-nuevo').value  = '';
+    toast('Contraseña cambiada correctamente');
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+function escHtml(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// Override openModal para "Agregar usuario"
+const _origOpenModal = window.openModal;
+window.openModal = function(id) {
+  if (id === 'modal-nuevo') {
+    const eid = document.getElementById('edit-uid');
+    if (eid && !eid.value) abrirNuevo();
+    return;
+  }
+  if (_origOpenModal) _origOpenModal(id);
+};
+
+loadUsuarios();
+</script>
+{% endblock %}

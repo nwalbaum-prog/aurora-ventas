@@ -1,0 +1,784 @@
+{% extends "base.html" %}
+{% block title %}Ventas{% endblock %}
+{% block page_title %}Ventas{% endblock %}
+
+{% block content %}
+
+<!-- KPI cards -->
+<div class="kpi-grid" id="kpi-row">
+  <div class="kpi-card"><div class="kpi-label">Hoy</div><div class="kpi-value" id="k-hoy">—</div><div class="kpi-sub" id="k-hoy-c"></div></div>
+  <div class="kpi-card"><div class="kpi-label">Esta semana</div><div class="kpi-value" id="k-sem">—</div><div class="kpi-sub" id="k-sem-c"></div></div>
+  <div class="kpi-card"><div class="kpi-label">Este mes</div><div class="kpi-value" id="k-mes">—</div><div class="kpi-sub" id="k-mes-c"></div></div>
+  <div class="kpi-card"><div class="kpi-label" style="color:var(--warning)">Pagos pendientes</div><div class="kpi-value text-warning" id="k-pend-pago">—</div><div class="kpi-sub">ventas sin cobrar</div></div>
+  <div class="kpi-card"><div class="kpi-label" style="color:var(--info,#6b9fd4)">Despachos pendientes</div><div class="kpi-value" style="color:#6b9fd4" id="k-pend-desp">—</div><div class="kpi-sub">por entregar</div></div>
+</div>
+
+<!-- CRM shortcut banner -->
+<div style="background:linear-gradient(135deg,#6366f1,#8b5cf6);border-radius:10px;padding:.85rem 1.25rem;margin-bottom:1.25rem;display:flex;align-items:center;gap:1rem;flex-wrap:wrap">
+  <div style="flex:1;min-width:0">
+    <div style="font-size:.82rem;font-weight:700;color:#fff;margin-bottom:.15rem"><i class="bi bi-diagram-3"></i> CRM · Captación y Seguimiento</div>
+    <div style="font-size:.74rem;color:rgba(255,255,255,.75)">Gestiona tus leads, pipeline de ventas y busca clientes potenciales</div>
+  </div>
+  <a href="/crm" style="background:rgba(255,255,255,.2);color:#fff;border:1.5px solid rgba(255,255,255,.4);border-radius:7px;padding:.4rem 1rem;font-size:.8rem;font-weight:600;text-decoration:none;white-space:nowrap;transition:.15s" onmouseover="this.style.background='rgba(255,255,255,.3)'" onmouseout="this.style.background='rgba(255,255,255,.2)'">
+    <i class="bi bi-diagram-3"></i> Ir al CRM
+  </a>
+  <a href="/crm/buscar" style="background:#fff;color:#6366f1;border:1.5px solid #fff;border-radius:7px;padding:.4rem 1rem;font-size:.8rem;font-weight:600;text-decoration:none;white-space:nowrap;transition:.15s" onmouseover="this.style.opacity='.85'" onmouseout="this.style.opacity='1'">
+    <i class="bi bi-search"></i> Buscar Clientes
+  </a>
+</div>
+
+<!-- Tabs de página -->
+<div class="page-tabs mb-20">
+  <button class="page-tab active" id="ptab-ventas"  onclick="showPageTab('ventas')"><i class="bi bi-receipt"></i> Ventas</button>
+  <button class="page-tab"        id="ptab-stock"   onclick="showPageTab('stock')"><i class="bi bi-boxes"></i> Stock disponible</button>
+</div>
+
+<!-- ══════════════════ TAB: VENTAS ══════════════════ -->
+<div id="tab-ventas">
+<div class="grid-2" style="align-items:start">
+
+  <!-- ── Nueva venta ───────────────────────────────────────────────────────── -->
+  <div class="card">
+    <div class="card-title"><i class="bi bi-plus-circle"></i> Nueva Venta</div>
+
+    <div class="form-row fr-2">
+      <div class="form-group">
+        <label>Fecha venta</label>
+        <input type="date" id="v-fecha">
+      </div>
+      <div class="form-group">
+        <label>Tipo de cliente</label>
+        <select id="v-tipo-cliente" onchange="updateAllPrices()">
+          <option value="CLIENTE">🏠 Cliente particular</option>
+          <option value="HORECA">🍽️ HORECA / Mayorista</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="form-row fr-2">
+      <div class="form-group">
+        <label>Canal</label>
+        <select id="v-canal" onchange="onCanalChange()">
+          <option value="local">Local</option>
+          <option value="online">Online</option>
+          <option value="whatsapp">WhatsApp</option>
+          <option value="suscripcion">Suscripción</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Estado de pago</label>
+        <select id="v-estado-pago">
+          <option value="PENDIENTE">⏳ Pendiente</option>
+          <option value="PAGADO">✅ Pagado</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="form-row fr-2">
+      <div class="form-group">
+        <label>Modalidad entrega</label>
+        <select id="v-con-despacho" onchange="toggleDespacho()">
+          <option value="1">🚚 Con despacho a domicilio</option>
+          <option value="0">🏪 Retiro en tienda</option>
+        </select>
+      </div>
+      <div class="form-group" id="grupo-fecha-despacho">
+        <label>Fecha de despacho</label>
+        <input type="date" id="v-fecha-despacho">
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label>Cliente <span class="text-muted" style="text-transform:none;font-weight:400">(opcional)</span></label>
+      <select id="v-cliente" onchange="onClienteChange()"><option value="">Sin cliente registrado</option></select>
+    </div>
+
+    <div class="form-group">
+      <label>Productos</label>
+      <div class="items-header">
+        <span>Producto</span><span>Cant.</span><span>Precio unit.</span><span style="text-align:right">Subtotal</span><span></span>
+      </div>
+      <div class="items-box" id="items-box"></div>
+      <button class="btn btn-secondary btn-sm mt-8" onclick="addItem()">
+        <i class="bi bi-plus"></i> Agregar producto
+      </button>
+      <div class="items-total mt-12">Total: <span id="v-total">$0</span></div>
+    </div>
+
+    <div class="form-group">
+      <label>Notas <span class="text-muted" style="text-transform:none;font-weight:400">(opcional)</span></label>
+      <textarea id="v-notas" rows="2" placeholder="Observaciones..."></textarea>
+    </div>
+
+    <div id="sub-notice" style="display:none;padding:10px 14px;border-radius:10px;background:#6b9fd422;border:1px solid #6b9fd444;margin-bottom:12px;font-size:13px;color:#6b9fd4">
+      <i class="bi bi-info-circle"></i>
+      Si el cliente tiene una suscripción activa, se vinculará automáticamente.
+      Si no, se creará una nueva suscripción con los productos de esta venta.
+    </div>
+
+    <button class="btn btn-primary w-full" onclick="submitVenta()">
+      <i class="bi bi-check-lg"></i> Registrar Venta
+    </button>
+  </div>
+
+  <!-- ── Historial / Reporte ────────────────────────────────────────────────── -->
+  <div class="card">
+    <div class="sec-header mb-12">
+      <span class="card-title" style="margin:0"><i class="bi bi-funnel"></i> Reporte de Ventas</span>
+      <button class="btn btn-secondary btn-sm" onclick="exportarExcel()" title="Descargar Excel">
+        <i class="bi bi-file-earmark-excel"></i> Excel
+      </button>
+    </div>
+
+    <!-- Fila 1: Fechas venta + Canal -->
+    <div class="form-row fr-3 mb-8" style="align-items:end">
+      <div class="form-group" style="margin:0">
+        <label>Desde</label>
+        <input type="date" id="h-desde">
+      </div>
+      <div class="form-group" style="margin:0">
+        <label>Hasta</label>
+        <input type="date" id="h-hasta">
+      </div>
+      <div class="form-group" style="margin:0">
+        <label>Canal</label>
+        <select id="h-canal">
+          <option value="">Todos</option>
+          <option value="local">Local</option>
+          <option value="online">Online</option>
+          <option value="whatsapp">WhatsApp</option>
+          <option value="suscripcion">Suscripción</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Fila 2: Tipo cliente + Estado pago + Estado despacho -->
+    <div class="form-row fr-3 mb-8" style="align-items:end">
+      <div class="form-group" style="margin:0">
+        <label>Tipo cliente</label>
+        <select id="h-tipo-cliente">
+          <option value="">Todos</option>
+          <option value="CLIENTE">Cliente</option>
+          <option value="HORECA">HORECA / Mayorista</option>
+        </select>
+      </div>
+      <div class="form-group" style="margin:0">
+        <label>Estado pago</label>
+        <select id="h-estado-pago">
+          <option value="">Todos</option>
+          <option value="PENDIENTE">Pendiente</option>
+          <option value="PAGADO">Pagado</option>
+        </select>
+      </div>
+      <div class="form-group" style="margin:0">
+        <label>Estado despacho</label>
+        <select id="h-estado-despacho">
+          <option value="">Todos</option>
+          <option value="PENDIENTE">Pendiente</option>
+          <option value="DESPACHADO">Despachado</option>
+          <option value="RETIRO EN TIENDA">Retiro tienda</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Fila 3: Cliente + Modalidad entrega + Producto (texto) -->
+    <div class="form-row fr-3 mb-8" style="align-items:end">
+      <div class="form-group" style="margin:0">
+        <label>Cliente</label>
+        <select id="h-cliente-id">
+          <option value="">Todos</option>
+        </select>
+      </div>
+      <div class="form-group" style="margin:0">
+        <label>Modalidad entrega</label>
+        <select id="h-con-despacho">
+          <option value="">Todos</option>
+          <option value="1">Con despacho</option>
+          <option value="0">Retiro en tienda</option>
+        </select>
+      </div>
+      <div class="form-group" style="margin:0">
+        <label>Producto</label>
+        <input type="text" id="h-producto" placeholder="Filtrar por producto...">
+      </div>
+    </div>
+
+    <!-- Fila 4: Monto min + Monto max + Fechas despacho -->
+    <div class="form-row fr-4 mb-12" style="align-items:end">
+      <div class="form-group" style="margin:0">
+        <label>Monto mín. ($)</label>
+        <input type="number" id="h-min-total" min="0" step="100" placeholder="0">
+      </div>
+      <div class="form-group" style="margin:0">
+        <label>Monto máx. ($)</label>
+        <input type="number" id="h-max-total" min="0" step="100" placeholder="—">
+      </div>
+      <div class="form-group" style="margin:0">
+        <label>Despacho desde</label>
+        <input type="date" id="h-despacho-desde">
+      </div>
+      <div class="form-group" style="margin:0">
+        <label>Despacho hasta</label>
+        <input type="date" id="h-despacho-hasta">
+      </div>
+    </div>
+
+    <!-- Acciones -->
+    <div class="flex gap-8 mb-16" style="align-items:center">
+      <button class="btn btn-secondary btn-sm" onclick="loadVentas()">
+        <i class="bi bi-search"></i> Buscar
+      </button>
+      <button class="btn btn-secondary btn-sm" onclick="limpiarFiltros()">
+        <i class="bi bi-x-circle"></i> Limpiar
+      </button>
+      <span class="text-muted text-sm ml-auto" id="h-count"></span>
+    </div>
+
+    <!-- Tabla -->
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>Fecha</th>
+          <th>Cliente / Tipo</th>
+          <th>Productos</th>
+          <th>Despacho</th>
+          <th class="right">Total</th>
+          <th>Pago</th>
+          <th>Entrega</th>
+          <th></th>
+        </tr></thead>
+        <tbody id="ventas-tbody">
+          <tr><td colspan="8" class="text-center text-muted" style="padding:40px">Cargando...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div><!-- /grid-2 -->
+</div><!-- /tab-ventas -->
+
+
+<!-- ══════════════════ TAB: STOCK ══════════════════ -->
+<div id="tab-stock" style="display:none">
+  <div class="card">
+    <div class="sec-header mb-16">
+      <span class="card-title" style="margin:0"><i class="bi bi-boxes"></i> Stock disponible</span>
+      <div class="flex gap-8">
+        <input type="text" id="stock-search" placeholder="Buscar producto..." oninput="renderStock()" style="width:200px">
+        <button class="btn btn-secondary btn-sm" onclick="exportarStockExcel()" title="Descargar Excel">
+          <i class="bi bi-file-earmark-excel"></i> Excel
+        </button>
+      </div>
+    </div>
+
+    <!-- Mini KPIs de stock -->
+    <div class="stock-kpis mb-16">
+      <div class="stock-kpi"><span id="sk-total">—</span><label>productos</label></div>
+      <div class="stock-kpi text-danger"><span id="sk-critico">—</span><label>stock crítico (≤2)</label></div>
+      <div class="stock-kpi text-warning"><span id="sk-bajo">—</span><label>stock bajo (≤5)</label></div>
+      <div class="stock-kpi text-success"><span id="sk-ok">—</span><label>stock OK</label></div>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>Producto</th>
+          <th>Categoría</th>
+          <th>Unidad</th>
+          <th class="right">P. Retail</th>
+          <th class="right">P. Mayorista</th>
+          <th class="right">Stock</th>
+          <th class="center">Estado</th>
+        </tr></thead>
+        <tbody id="stock-tbody">
+          <tr><td colspan="7" class="text-center text-muted" style="padding:40px">Cargando...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div><!-- /tab-stock -->
+
+{% endblock %}
+
+{% block scripts %}
+<!-- SheetJS para exportar Excel (sin dependencias de servidor) -->
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+
+<script>
+let productos = [];
+let clientes  = [];
+let ventasData = [];   // última consulta cargada (para excel)
+
+// ── Tabs ──────────────────────────────────────────────────────────────────────
+function showPageTab(tab) {
+  ['ventas','stock'].forEach(t => {
+    document.getElementById(`tab-${t}`).style.display   = t === tab ? '' : 'none';
+    document.getElementById(`ptab-${t}`).classList.toggle('active', t === tab);
+  });
+  if (tab === 'stock') renderStock();
+}
+
+// ── Formulario nueva venta ────────────────────────────────────────────────────
+function onCanalChange() {
+  const canal = document.getElementById('v-canal').value;
+  document.getElementById('sub-notice').style.display = canal === 'suscripcion' ? 'block' : 'none';
+}
+
+function toggleDespacho() {
+  const val = document.getElementById('v-con-despacho').value;
+  document.getElementById('grupo-fecha-despacho').style.opacity = val === '1' ? '1' : '0.35';
+  document.getElementById('v-fecha-despacho').disabled = val !== '1';
+}
+
+async function init() {
+  const today = new Date().toISOString().split('T')[0];
+  document.getElementById('v-fecha').value          = today;
+  document.getElementById('v-fecha-despacho').value = today;
+  document.getElementById('h-desde').value          = today;
+  document.getElementById('h-hasta').value          = today;
+
+  [productos, clientes] = await Promise.all([
+    api('GET', '/api/productos'),
+    api('GET', '/api/clientes'),
+  ]);
+
+  // Poblar select cliente del formulario de venta
+  const selV = document.getElementById('v-cliente');
+  clientes.forEach(c => {
+    const o = document.createElement('option');
+    o.value = c.id;
+    o.dataset.tipo = c.tipo || 'CLIENTE';
+    o.textContent = c.nombre + (c.es_suscriptor ? ' ⭐' : '') + (c.tipo === 'MAYORISTA' ? ' 🏢' : '');
+    selV.appendChild(o);
+  });
+
+  // Poblar select cliente del historial
+  const selH = document.getElementById('h-cliente-id');
+  clientes.forEach(c => {
+    const o = document.createElement('option');
+    o.value = c.id;
+    o.textContent = c.nombre;
+    selH.appendChild(o);
+  });
+
+  addItem();
+  loadResumen();
+  loadVentas();
+}
+
+// ── Precios ───────────────────────────────────────────────────────────────────
+function isMayorista() {
+  return document.getElementById('v-tipo-cliente').value === 'HORECA';
+}
+
+function getPrecioForOption(opt) {
+  if (!opt || !opt.value) return '';
+  const precioMay = parseFloat(opt.dataset.precioMayorista) || 0;
+  if (isMayorista() && precioMay > 0) return precioMay;
+  return opt.dataset.precio || '';
+}
+
+function addItem() {
+  const box = document.getElementById('items-box');
+  const row = document.createElement('div');
+  row.className = 'item-row';
+  row.innerHTML = `
+    <select onchange="fillPrice(this)">
+      <option value="">— Producto —</option>
+      ${productos.map(p=>`<option value="${p.id}" data-precio="${p.precio}" data-precio-mayorista="${p.precio_mayorista||0}">${p.nombre}</option>`).join('')}
+    </select>
+    <input type="number" min="0.5" step="0.5" value="1" oninput="recalc()" placeholder="Cant.">
+    <input type="number" min="0" step="50" value="" oninput="recalc()" placeholder="Precio">
+    <div class="item-subtotal">$0</div>
+    <button class="btn btn-danger btn-icon btn-sm" onclick="removeItem(this)" title="Quitar"><i class="bi bi-trash3"></i></button>
+  `;
+  box.appendChild(row);
+}
+
+function fillPrice(sel) {
+  const opt = sel.selectedOptions[0];
+  const row = sel.closest('.item-row');
+  const precio = getPrecioForOption(opt);
+  if (precio !== '') row.querySelectorAll('input')[1].value = precio;
+  recalc();
+}
+
+function updateAllPrices() {
+  document.querySelectorAll('#items-box .item-row').forEach(row => {
+    const sel = row.querySelector('select');
+    const opt = sel.selectedOptions[0];
+    if (!opt || !opt.value) return;
+    const precio = getPrecioForOption(opt);
+    if (precio !== '') row.querySelectorAll('input')[1].value = precio;
+  });
+  recalc();
+}
+
+function onClienteChange() {
+  const sel = document.getElementById('v-cliente');
+  const opt = sel.selectedOptions[0];
+  if (!opt || !opt.value) return;
+  const tipo = opt.dataset.tipo || 'CLIENTE';
+  document.getElementById('v-tipo-cliente').value = tipo === 'MAYORISTA' ? 'HORECA' : 'CLIENTE';
+  updateAllPrices();
+}
+
+function removeItem(btn) { btn.closest('.item-row').remove(); recalc(); }
+
+function recalc() {
+  let total = 0;
+  document.querySelectorAll('#items-box .item-row').forEach(row => {
+    const qty   = parseFloat(row.querySelectorAll('input')[0].value) || 0;
+    const price = parseFloat(row.querySelectorAll('input')[1].value) || 0;
+    const sub   = qty * price;
+    row.querySelector('.item-subtotal').textContent = clp(sub);
+    total += sub;
+  });
+  document.getElementById('v-total').textContent = clp(total);
+}
+
+// ── Registrar venta ───────────────────────────────────────────────────────────
+async function submitVenta() {
+  const items = [];
+  let valid = true;
+  document.querySelectorAll('#items-box .item-row').forEach(row => {
+    const pid = row.querySelector('select').value;
+    const qty = parseFloat(row.querySelectorAll('input')[0].value);
+    const prc = parseFloat(row.querySelectorAll('input')[1].value);
+    if (!pid || !qty || !prc) { valid = false; return; }
+    items.push({ producto_id: parseInt(pid), cantidad: qty, precio_unitario: prc });
+  });
+  if (!valid || !items.length) { toast('Completa todos los productos', 'error'); return; }
+
+  const cid = document.getElementById('v-cliente').value;
+  const conDespacho = parseInt(document.getElementById('v-con-despacho').value);
+  try {
+    const res = await api('POST', '/api/ventas', {
+      fecha:           document.getElementById('v-fecha').value,
+      canal:           document.getElementById('v-canal').value,
+      tipo_cliente:    document.getElementById('v-tipo-cliente').value,
+      cliente_id:      cid ? parseInt(cid) : null,
+      notas:           document.getElementById('v-notas').value,
+      con_despacho:    conDespacho,
+      fecha_despacho:  conDespacho ? document.getElementById('v-fecha-despacho').value : '',
+      estado_pago:     document.getElementById('v-estado-pago').value,
+      estado_despacho: conDespacho ? 'PENDIENTE' : 'RETIRO EN TIENDA',
+      items
+    });
+    toast(res.suscripcion_id
+      ? `Venta registrada · Suscripción #${res.suscripcion_id} creada/vinculada`
+      : 'Venta registrada');
+    document.getElementById('items-box').innerHTML = '';
+    document.getElementById('v-notas').value = '';
+    document.getElementById('v-canal').value = 'local';
+    document.getElementById('sub-notice').style.display = 'none';
+    addItem();
+    loadResumen();
+    loadVentas();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+// ── KPIs ──────────────────────────────────────────────────────────────────────
+async function loadResumen() {
+  const r = await api('GET', '/api/ventas/resumen');
+  document.getElementById('k-hoy').textContent   = clp(r.hoy.total);
+  document.getElementById('k-sem').textContent   = clp(r.semana.total);
+  document.getElementById('k-mes').textContent   = clp(r.mes.total);
+  document.getElementById('k-hoy-c').textContent = `${r.hoy.count} venta${r.hoy.count!=1?'s':''}`;
+  document.getElementById('k-sem-c').textContent = `${r.semana.count} venta${r.semana.count!=1?'s':''}`;
+  document.getElementById('k-mes-c').textContent = `${r.mes.count} venta${r.mes.count!=1?'s':''}`;
+  document.getElementById('k-pend-pago').textContent = r.pendientes_pago;
+  document.getElementById('k-pend-desp').textContent = r.pendientes_despacho;
+}
+
+// ── Historial / Reporte ───────────────────────────────────────────────────────
+async function loadVentas() {
+  const params = new URLSearchParams({
+    desde:               document.getElementById('h-desde').value,
+    hasta:               document.getElementById('h-hasta').value,
+    canal:               document.getElementById('h-canal').value,
+    tipo_cliente:        document.getElementById('h-tipo-cliente').value,
+    estado_pago:         document.getElementById('h-estado-pago').value,
+    estado_despacho:     document.getElementById('h-estado-despacho').value,
+    cliente_id:          document.getElementById('h-cliente-id').value,
+    con_despacho:        document.getElementById('h-con-despacho').value,
+    min_total:           document.getElementById('h-min-total').value,
+    max_total:           document.getElementById('h-max-total').value,
+    fecha_despacho_desde:document.getElementById('h-despacho-desde').value,
+    fecha_despacho_hasta:document.getElementById('h-despacho-hasta').value,
+  });
+  // Eliminar params vacíos
+  [...params.keys()].forEach(k => { if (!params.get(k)) params.delete(k); });
+
+  let ventas = await api('GET', `/api/ventas?${params}`);
+
+  // Filtro client-side por nombre de producto
+  const prodQ = document.getElementById('h-producto').value.toLowerCase().trim();
+  if (prodQ) {
+    ventas = ventas.filter(v =>
+      v.items.some(i => (i.nombre||'').toLowerCase().includes(prodQ))
+    );
+  }
+
+  ventasData = ventas;
+  renderVentas(ventas);
+}
+
+function renderVentas(ventas) {
+  const tbody = document.getElementById('ventas-tbody');
+  const count = document.getElementById('h-count');
+  const total = ventas.reduce((s, v) => s + (v.total||0), 0);
+  count.textContent = ventas.length
+    ? `${ventas.length} venta${ventas.length!=1?'s':''} · ${clp(total)}`
+    : '';
+
+  if (!ventas.length) {
+    tbody.innerHTML = '<tr><td colspan="8"><div class="empty"><i class="bi bi-receipt"></i><p>Sin ventas en ese período</p></div></td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = ventas.map(v => {
+    const productosStr = v.items.map(i=>`${i.nombre} ×${i.cantidad}`).join(', ');
+    const tipoBadge = v.tipo_cliente === 'HORECA'
+      ? '<span class="badge badge-horeca">HORECA</span>'
+      : '<span class="badge badge-cliente">CLIENTE</span>';
+    const despachoInfo = v.con_despacho
+      ? `<span class="text-sm text-muted">🚚 ${v.fecha_despacho||'sin fecha'}</span>`
+      : `<span class="text-sm text-muted">🏪 Retiro</span>`;
+
+    return `<tr>
+      <td>
+        <div class="fw-600 text-white text-sm">${v.fecha}</div>
+        <div class="text-muted text-sm">${canal_badge(v.canal)}</div>
+      </td>
+      <td>
+        <div class="text-sm">${v.cliente_nombre || '<span class="text-muted">—</span>'}</div>
+        <div>${tipoBadge}</div>
+      </td>
+      <td class="text-muted text-sm" style="max-width:160px;white-space:normal;line-height:1.4">${productosStr}</td>
+      <td>${despachoInfo}</td>
+      <td class="right mono fw-600 text-white">${clp(v.total)}</td>
+      <td>
+        <select class="badge-select" onchange="updateEstado(${v.id},'estado_pago',this.value)"
+          style="background:${v.estado_pago==='PAGADO'?'var(--success-dim,#5ad47b22)':'var(--warning-dim,#d4a85a22)'}">
+          <option value="PENDIENTE" ${v.estado_pago==='PENDIENTE'?'selected':''}>⏳ Pendiente</option>
+          <option value="PAGADO"    ${v.estado_pago==='PAGADO'?'selected':''}>✅ Pagado</option>
+        </select>
+      </td>
+      <td>
+        <select class="badge-select" onchange="updateEstado(${v.id},'estado_despacho',this.value)"
+          style="background:${despachoColor(v.estado_despacho)}">
+          <option value="PENDIENTE"        ${v.estado_despacho==='PENDIENTE'?'selected':''}>⏳ Pendiente</option>
+          <option value="DESPACHADO"       ${v.estado_despacho==='DESPACHADO'?'selected':''}>✅ Despachado</option>
+          <option value="RETIRO EN TIENDA" ${v.estado_despacho==='RETIRO EN TIENDA'?'selected':''}>🏪 Retiro tienda</option>
+        </select>
+      </td>
+      <td>
+        <button class="btn btn-danger btn-icon btn-sm" onclick="deleteVenta(${v.id},this)" title="Eliminar"><i class="bi bi-trash3"></i></button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function limpiarFiltros() {
+  const today = new Date().toISOString().split('T')[0];
+  document.getElementById('h-desde').value          = today;
+  document.getElementById('h-hasta').value          = today;
+  document.getElementById('h-canal').value          = '';
+  document.getElementById('h-tipo-cliente').value   = '';
+  document.getElementById('h-estado-pago').value    = '';
+  document.getElementById('h-estado-despacho').value= '';
+  document.getElementById('h-cliente-id').value     = '';
+  document.getElementById('h-con-despacho').value   = '';
+  document.getElementById('h-producto').value       = '';
+  document.getElementById('h-min-total').value      = '';
+  document.getElementById('h-max-total').value      = '';
+  document.getElementById('h-despacho-desde').value = '';
+  document.getElementById('h-despacho-hasta').value = '';
+  loadVentas();
+}
+
+function despachoColor(estado) {
+  if (estado === 'DESPACHADO')       return 'var(--success-dim,#5ad47b22)';
+  if (estado === 'RETIRO EN TIENDA') return '#6b9fd422';
+  return 'var(--warning-dim,#d4a85a22)';
+}
+
+async function updateEstado(vid, campo, valor) {
+  try {
+    await api('PUT', `/api/ventas/${vid}`, { [campo]: valor });
+    toast('Estado actualizado');
+    loadResumen();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function deleteVenta(id, btn) {
+  if (!confirm('¿Eliminar esta venta? El stock se restaurará.')) return;
+  try {
+    await api('DELETE', `/api/ventas/${id}`);
+    btn.closest('tr').remove();
+    ventasData = ventasData.filter(v => v.id !== id);
+    loadResumen();
+    toast('Venta eliminada');
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+// ── Excel — Ventas ────────────────────────────────────────────────────────────
+function exportarExcel() {
+  if (!ventasData.length) { toast('No hay datos para exportar', 'error'); return; }
+
+  const filas = ventasData.map(v => ({
+    'Fecha':           v.fecha,
+    'Cliente':         v.cliente_nombre || '—',
+    'Tipo cliente':    v.tipo_cliente,
+    'Canal':           v.canal,
+    'Productos':       v.items.map(i=>`${i.nombre} ×${i.cantidad} @${clp(i.precio_unitario)}`).join(' | '),
+    'Total ($)':       v.total,
+    'Estado pago':     v.estado_pago,
+    'Estado despacho': v.estado_despacho,
+    'Con despacho':    v.con_despacho ? 'Sí' : 'No',
+    'Fecha despacho':  v.fecha_despacho || '—',
+    'Notas':           v.notas || '',
+  }));
+
+  const ws = XLSX.utils.json_to_sheet(filas);
+  // Ancho de columnas
+  ws['!cols'] = [14,20,14,12,50,12,14,16,13,15,20].map(w=>({wch:w}));
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Ventas');
+
+  const desde = document.getElementById('h-desde').value;
+  const hasta  = document.getElementById('h-hasta').value;
+  XLSX.writeFile(wb, `aurora_ventas_${desde}_${hasta}.xlsx`);
+  toast('Descargando Excel...');
+}
+
+// ── Tab Stock ─────────────────────────────────────────────────────────────────
+function renderStock() {
+  const q = (document.getElementById('stock-search')?.value || '').toLowerCase();
+  const lista = productos.filter(p =>
+    !q || p.nombre.toLowerCase().includes(q) || (p.descripcion||'').toLowerCase().includes(q)
+  );
+
+  // KPIs
+  const critico = productos.filter(p => p.stock <= 2).length;
+  const bajo    = productos.filter(p => p.stock > 2 && p.stock <= 5).length;
+  const ok      = productos.filter(p => p.stock > 5).length;
+  document.getElementById('sk-total').textContent   = productos.length;
+  document.getElementById('sk-critico').textContent = critico;
+  document.getElementById('sk-bajo').textContent    = bajo;
+  document.getElementById('sk-ok').textContent      = ok;
+
+  const tbody = document.getElementById('stock-tbody');
+  if (!lista.length) {
+    tbody.innerHTML = '<tr><td colspan="7"><div class="empty"><i class="bi bi-boxes"></i><p>Sin productos</p></div></td></tr>';
+    return;
+  }
+
+  // Ordenar: crítico primero
+  const sorted = [...lista].sort((a,b) => a.stock - b.stock);
+
+  tbody.innerHTML = sorted.map(p => {
+    const critico = p.stock <= 2;
+    const bajo    = p.stock > 2 && p.stock <= 5;
+    const stockColor = critico ? 'var(--danger)' : bajo ? 'var(--warning)' : 'var(--success)';
+    const estadoBadge = critico
+      ? '<span class="badge badge-danger">⚠️ Crítico</span>'
+      : bajo
+        ? '<span class="badge badge-warning">Bajo</span>'
+        : '<span class="badge badge-success">OK</span>';
+    const catBadge = p.categoria === 'suscripcion'
+      ? '<span class="badge" style="background:#6b9fd422;color:#6b9fd4">📦 Suscripción</span>'
+      : '<span class="badge" style="background:#d4a85a22;color:#d4a85a">🍞 Pan</span>';
+
+    return `<tr>
+      <td>
+        <div class="fw-600 text-white">${p.nombre}</div>
+        <div class="text-muted text-sm">${p.descripcion||''}</div>
+      </td>
+      <td>${catBadge}</td>
+      <td class="text-muted">${p.unidad}</td>
+      <td class="right mono">${clp(p.precio)}</td>
+      <td class="right mono">${p.precio_mayorista > 0 ? clp(p.precio_mayorista) : '<span class="text-muted">—</span>'}</td>
+      <td class="right mono fw-600" style="color:${stockColor}">${p.stock}</td>
+      <td class="center">${estadoBadge}</td>
+    </tr>`;
+  }).join('');
+}
+
+function exportarStockExcel() {
+  if (!productos.length) { toast('No hay productos para exportar', 'error'); return; }
+
+  const filas = productos.map(p => ({
+    'Producto':        p.nombre,
+    'Descripción':     p.descripcion || '',
+    'Categoría':       p.categoria || 'pan',
+    'Unidad':          p.unidad,
+    'Precio retail ($)':    p.precio,
+    'Precio mayorista ($)': p.precio_mayorista || 0,
+    'Costo ($)':       p.costo || 0,
+    'Stock':           p.stock,
+    'Estado':          p.stock <= 2 ? 'Crítico' : p.stock <= 5 ? 'Bajo' : 'OK',
+  }));
+
+  const ws = XLSX.utils.json_to_sheet(filas);
+  ws['!cols'] = [22,24,12,10,16,18,12,8,10].map(w=>({wch:w}));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Stock');
+  XLSX.writeFile(wb, `aurora_stock_${new Date().toISOString().split('T')[0]}.xlsx`);
+  toast('Descargando Excel...');
+}
+
+init();
+</script>
+
+<style>
+/* ── Page tabs ── */
+.page-tabs { display:flex; gap:4px; border-bottom:1px solid var(--border); padding-bottom:0; margin-bottom:20px; }
+.page-tab {
+  padding:8px 18px; border-radius:8px 8px 0 0; font-size:13px; font-weight:600;
+  border:1px solid transparent; border-bottom:none; cursor:pointer;
+  background:transparent; color:var(--muted); transition:.15s;
+}
+.page-tab:hover { color:var(--text); background:var(--surface2); }
+.page-tab.active { background:var(--surface); color:var(--text); border-color:var(--border); position:relative; bottom:-1px; }
+
+/* ── Badges ── */
+.badge { display:inline-block; padding:2px 8px; border-radius:10px; font-size:10px; font-weight:700; }
+.badge-horeca   { background:#d4a85a22; color:#d4a85a; }
+.badge-cliente  { background:#6b9fd422; color:#6b9fd4; }
+.badge-danger   { background:#e05a4422; color:#e05a44; }
+.badge-warning  { background:#d4a85a22; color:#d4a85a; }
+.badge-success  { background:#5ad47b22; color:#5ad47b; }
+
+/* ── Historial select inline ── */
+.badge-select {
+  border:none; border-radius:10px; padding:3px 8px; font-size:11px; font-weight:600;
+  cursor:pointer; outline:none; color:var(--text);
+  appearance:none; -webkit-appearance:none;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%237a776e'/%3E%3C/svg%3E");
+  background-repeat:no-repeat; background-position:right 6px center; padding-right:20px;
+}
+.badge-select option { background:#1a1916; }
+
+/* ── fr-4 grid ── */
+.fr-4 { grid-template-columns: repeat(4, 1fr) !important; }
+
+/* ── Stock KPIs ── */
+.stock-kpis { display:flex; gap:16px; }
+.stock-kpi {
+  display:flex; flex-direction:column; align-items:center;
+  background:var(--surface2); border-radius:10px; padding:12px 20px; min-width:90px;
+}
+.stock-kpi span { font-size:22px; font-weight:700; line-height:1; }
+.stock-kpi label { font-size:11px; color:var(--muted); margin-top:4px; text-align:center; }
+.text-danger { color:var(--danger) !important; }
+.text-warning { color:var(--warning) !important; }
+.text-success { color:var(--success) !important; }
+
+/* ── Misc ── */
+.mb-20 { margin-bottom:20px; }
+.ml-auto { margin-left:auto; }
+</style>
+{% endblock %}

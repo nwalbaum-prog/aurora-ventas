@@ -1,0 +1,10 @@
+[build]
+builder = "nixpacks"
+
+[deploy]
+# 1 worker: SQLite no soporta escrituras concurrentes con múltiples workers
+startCommand = "gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --timeout 120"
+healthcheckPath = "/health"
+healthcheckTimeout = 30
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3

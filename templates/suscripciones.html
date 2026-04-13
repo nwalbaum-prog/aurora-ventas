@@ -1,0 +1,414 @@
+{% extends "base.html" %}
+{% block title %}Suscripciones{% endblock %}
+{% block page_title %}Suscripciones{% endblock %}
+
+{% block content %}
+
+<div class="kpi-grid" id="sub-kpis">
+  <div class="kpi-card"><div class="kpi-label">Activas</div><div class="kpi-value text-success" id="sk-activas">—</div></div>
+  <div class="kpi-card"><div class="kpi-label">Pausadas</div><div class="kpi-value text-warning" id="sk-pausadas">—</div></div>
+  <div class="kpi-card"><div class="kpi-label" style="color:var(--danger)">Por renovar</div><div class="kpi-value" style="color:var(--danger)" id="sk-renovar">—</div></div>
+  <div class="kpi-card"><div class="kpi-label">Ingreso mensual est.</div><div class="kpi-value" id="sk-ingreso">—</div></div>
+</div>
+
+<div class="toolbar">
+  <div class="filter-tabs" id="estado-tabs">
+    <button class="filter-tab active" data-v="" onclick="setEstado(this,'')">Todas</button>
+    <button class="filter-tab" data-v="activo"    onclick="setEstado(this,'activo')">Activas</button>
+    <button class="filter-tab" data-v="pausado"   onclick="setEstado(this,'pausado')">Pausadas</button>
+    <button class="filter-tab" data-v="cancelado" onclick="setEstado(this,'cancelado')">Canceladas</button>
+  </div>
+  <div class="toolbar-right">
+    <button class="btn btn-primary" onclick="openAdd()">
+      <i class="bi bi-plus-lg"></i> Nueva Suscripción
+    </button>
+  </div>
+</div>
+
+<div class="card">
+  <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th>Cliente</th>
+        <th>Plan</th>
+        <th>Día despacho</th>
+        <th>Productos incluidos</th>
+        <th class="right">Precio</th>
+        <th class="center">Entregas</th>
+        <th>Próxima entrega</th>
+        <th>Estado</th>
+        <th></th>
+      </tr></thead>
+      <tbody id="sub-tbody">
+        <tr><td colspan="9" class="text-center text-muted" style="padding:40px">Cargando...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Modal suscripción -->
+<div class="modal-overlay" id="sub-modal">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <span class="modal-title" id="sub-modal-title">Nueva Suscripción</span>
+      <button class="modal-close" onclick="closeModal('sub-modal')"><i class="bi bi-x-lg"></i></button>
+    </div>
+    <input type="hidden" id="s-id">
+
+    <div class="form-row fr-2">
+      <div class="form-group">
+        <label>Cliente *</label>
+        <select id="s-cliente"><option value="">— Seleccionar —</option></select>
+      </div>
+      <div class="form-group">
+        <label>Estado</label>
+        <select id="s-estado">
+          <option value="activo">Activo</option>
+          <option value="pausado">Pausado</option>
+          <option value="cancelado">Cancelado</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Día de despacho -->
+    <div class="form-row fr-2">
+      <div class="form-group">
+        <label>Día de despacho *</label>
+        <select id="s-dia-despacho">
+          <option value="">— Sin especificar —</option>
+          <option value="lunes">Lunes</option>
+          <option value="martes">Martes</option>
+          <option value="miércoles">Miércoles</option>
+          <option value="jueves">Jueves</option>
+          <option value="viernes">Viernes</option>
+          <option value="sábado">Sábado</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Entregas realizadas <span class="text-muted" style="font-weight:400;text-transform:none">(en este ciclo)</span></label>
+        <input type="number" id="s-entregas" min="0" max="4" step="1" value="0" placeholder="0">
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label>Productos incluidos</label>
+      <div class="items-header" style="grid-template-columns:2fr 80px 30px">
+        <span>Producto</span><span>Cantidad</span><span></span>
+      </div>
+      <div id="s-items-box" class="items-box"></div>
+      <button class="btn btn-secondary btn-sm mt-8" onclick="addSubItem()">
+        <i class="bi bi-plus"></i> Agregar producto
+      </button>
+    </div>
+
+    <div class="form-row fr-3">
+      <div class="form-group">
+        <label>Precio del plan *</label>
+        <input type="number" id="s-precio" min="0" step="100" placeholder="0">
+      </div>
+      <div class="form-group">
+        <label>Fecha inicio *</label>
+        <input type="date" id="s-inicio">
+      </div>
+      <div class="form-group">
+        <label>Próxima entrega</label>
+        <input type="date" id="s-renovacion">
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label>Notas</label>
+      <input type="text" id="s-notas" placeholder="Observaciones, dirección, instrucciones de entrega...">
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('sub-modal')">Cancelar</button>
+      <button class="btn btn-primary" onclick="saveSub()"><i class="bi bi-check-lg"></i> Guardar</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let subs = [];
+let clientes = [];
+let productos = [];
+let filtroEstado = '';
+
+const DIA_LABELS = {
+  'lunes':'Lun','martes':'Mar','miércoles':'Mié',
+  'jueves':'Jue','viernes':'Vie','sábado':'Sáb',''
+:'—'};
+
+async function init() {
+  [clientes, productos] = await Promise.all([
+    api('GET', '/api/clientes'),
+    api('GET', '/api/productos'),
+  ]);
+  const sel = document.getElementById('s-cliente');
+  clientes.forEach(c => {
+    const o = document.createElement('option');
+    o.value = c.id; o.textContent = c.nombre;
+    sel.appendChild(o);
+  });
+  loadSubs();
+}
+
+async function loadSubs() {
+  subs = await api('GET', '/api/suscripciones' + (filtroEstado ? `?estado=${filtroEstado}` : ''));
+  renderKPIs();
+  renderTable();
+}
+
+function renderKPIs() {
+  api('GET','/api/suscripciones').then(all => {
+    const activas   = all.filter(s=>s.estado==='activo');
+    const pausadas  = all.filter(s=>s.estado==='pausado');
+    const porRenovar = activas.filter(s=>(s.entregas_realizadas||0)>=4);
+    document.getElementById('sk-activas').textContent   = activas.length;
+    document.getElementById('sk-pausadas').textContent  = pausadas.length;
+    document.getElementById('sk-renovar').textContent   = porRenovar.length;
+    const ing = activas.reduce((sum,s) => sum + s.precio, 0);
+    document.getElementById('sk-ingreso').textContent = clp(ing);
+  });
+}
+
+function renderTable() {
+  const tbody = document.getElementById('sub-tbody');
+  if (!subs.length) {
+    tbody.innerHTML = '<tr><td colspan="9"><div class="empty"><i class="bi bi-calendar-check"></i><p>Sin suscripciones en este estado</p></div></td></tr>';
+    return;
+  }
+  const today = new Date().toISOString().split('T')[0];
+  tbody.innerHTML = subs.map(s => {
+    let prods = [];
+    try { prods = JSON.parse(s.productos_json || '[]'); } catch(e) {}
+    const prodsStr = prods.length
+      ? prods.map(p=>`${p.nombre||p.producto_nombre||'Producto'} ×${p.cantidad||1}`).join(', ')
+      : '<span class="text-muted">—</span>';
+    const renovColor = s.fecha_renovacion && s.fecha_renovacion <= today && s.estado==='activo'
+      ? 'color:var(--warning);font-weight:700' : '';
+    const diaBadge = s.dia_despacho
+      ? `<span class="dia-badge">${s.dia_despacho}</span>`
+      : '<span class="text-muted text-sm">—</span>';
+
+    const entregas = s.entregas_realizadas || 0;
+    const cicloCompleto = entregas >= 4;
+    const entregasBadge = `
+      <div class="entregas-wrap">
+        <div class="entregas-dots">
+          ${[1,2,3,4].map(n=>`<span class="entrega-dot ${n<=entregas?'done':''}" title="Entrega ${n}"></span>`).join('')}
+        </div>
+        <span class="text-sm text-muted">${entregas}/4</span>
+        ${cicloCompleto ? '<span class="badge badge-renovar">Renovar</span>' : ''}
+      </div>`;
+
+    const acciones = s.estado === 'activo' ? `
+      <button class="btn btn-secondary btn-sm" onclick="registrarEntrega(${s.id})"
+        title="Registrar entrega" ${cicloCompleto ? 'style="opacity:.5" disabled' : ''}>
+        <i class="bi bi-check-circle"></i> Entrega
+      </button>
+      ${cicloCompleto ? `<button class="btn btn-aurora btn-sm" onclick="renovarCiclo(${s.id})">
+        <i class="bi bi-arrow-repeat"></i> Renovar
+      </button>` : ''}
+    ` : '';
+
+    return `<tr ${cicloCompleto && s.estado==='activo' ? 'class="row-renovar"' : ''}>
+      <td>
+        <div class="fw-600 text-white">${s.cliente_nombre}</div>
+        <div class="text-muted text-sm">${s.cliente_telefono||''}</div>
+      </td>
+      <td class="text-sm fw-600">${planLabel(s.plan)}</td>
+      <td>${diaBadge}</td>
+      <td class="text-muted text-sm" style="max-width:180px">${prodsStr}</td>
+      <td class="right mono fw-600 text-white">${clp(s.precio)}</td>
+      <td class="center">${entregasBadge}</td>
+      <td class="text-sm" style="${renovColor}">${s.fecha_renovacion||'—'}</td>
+      <td>${estado_badge(s.estado)}</td>
+      <td>
+        <div class="flex gap-4" style="flex-wrap:wrap">
+          ${acciones}
+          <button class="btn btn-secondary btn-icon btn-sm" onclick="openEdit(${s.id})" title="Editar"><i class="bi bi-pencil"></i></button>
+          <button class="btn btn-danger btn-icon btn-sm" onclick="deleteSub(${s.id})" title="Eliminar"><i class="bi bi-trash3"></i></button>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function planLabel(p) {
+  return {semanal:'Semanal',quincenal:'Quincenal',mensual:'Mensual'}[p]||p;
+}
+
+function setEstado(btn, v) {
+  document.querySelectorAll('#estado-tabs .filter-tab').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  filtroEstado = v;
+  loadSubs();
+}
+
+async function registrarEntrega(sid) {
+  const s = subs.find(x=>x.id===sid);
+  if (!s) return;
+  const entregas = (s.entregas_realizadas||0);
+  if (entregas >= 4) { toast('Ciclo completo — debe renovarse primero','error'); return; }
+  if (!confirm(`¿Registrar entrega ${entregas+1}/4 para ${s.cliente_nombre}?`)) return;
+  try {
+    const res = await api('POST', `/api/suscripciones/${sid}/registrar_entrega`, {});
+    if (res.ciclo_completo) {
+      const msg = res.email_sent
+        ? `✅ Entrega 4/4 registrada. Ciclo completo — correo de renovación enviado a ${s.cliente_nombre}.`
+        : `✅ Entrega 4/4 registrada. Ciclo completo — configura el email para enviar aviso automático.`;
+      toast(msg, 'success');
+    } else {
+      toast(`Entrega ${res.entregas_realizadas}/4 registrada`);
+    }
+    loadSubs();
+  } catch(e) { toast(e.message,'error'); }
+}
+
+async function renovarCiclo(sid) {
+  const s = subs.find(x=>x.id===sid);
+  if (!s) return;
+  if (!confirm(`¿Renovar suscripción de ${s.cliente_nombre}? Se reiniciará el contador a 0/4.`)) return;
+  try {
+    await api('POST', `/api/suscripciones/${sid}/renovar`, {});
+    toast('Ciclo renovado — 0/4 entregas');
+    loadSubs();
+  } catch(e) { toast(e.message,'error'); }
+}
+
+function addSubItem(prod_id='', cantidad=1) {
+  const box = document.getElementById('s-items-box');
+  const row = document.createElement('div');
+  row.className = 'item-row';
+  row.style.gridTemplateColumns = '2fr 80px 30px';
+  row.innerHTML = `
+    <select>
+      <option value="">— Producto —</option>
+      ${productos.map(p=>`<option value="${p.id}" ${prod_id==p.id?'selected':''}>${p.nombre}</option>`).join('')}
+    </select>
+    <input type="number" min="1" step="1" value="${cantidad}" placeholder="Qty">
+    <button class="btn btn-danger btn-icon btn-sm" onclick="this.closest('.item-row').remove()"><i class="bi bi-trash3"></i></button>
+  `;
+  box.appendChild(row);
+}
+
+function openAdd() {
+  document.getElementById('s-id').value = '';
+  document.getElementById('sub-modal-title').textContent = 'Nueva Suscripción';
+  document.getElementById('s-cliente').value      = '';
+  document.getElementById('s-dia-despacho').value = '';
+  document.getElementById('s-precio').value       = '';
+  document.getElementById('s-notas').value        = '';
+  document.getElementById('s-estado').value       = 'activo';
+  document.getElementById('s-entregas').value     = '0';
+  const today = new Date().toISOString().split('T')[0];
+  const proxima = new Date(Date.now() + 7*86400000).toISOString().split('T')[0];
+  document.getElementById('s-inicio').value    = today;
+  document.getElementById('s-renovacion').value = proxima;
+  document.getElementById('s-items-box').innerHTML = '';
+  addSubItem();
+  openModal('sub-modal');
+}
+
+function openEdit(id) {
+  const s = subs.find(x=>x.id===id);
+  if (!s) return;
+  document.getElementById('s-id').value          = id;
+  document.getElementById('sub-modal-title').textContent = 'Editar Suscripción';
+  document.getElementById('s-cliente').value     = s.cliente_id;
+  document.getElementById('s-dia-despacho').value= s.dia_despacho||'';
+  document.getElementById('s-precio').value      = s.precio;
+  document.getElementById('s-inicio').value      = s.fecha_inicio;
+  document.getElementById('s-renovacion').value  = s.fecha_renovacion||'';
+  document.getElementById('s-estado').value      = s.estado;
+  document.getElementById('s-notas').value       = s.notas||'';
+  document.getElementById('s-entregas').value    = s.entregas_realizadas||0;
+  document.getElementById('s-items-box').innerHTML = '';
+  let prods = [];
+  try { prods = JSON.parse(s.productos_json||'[]'); } catch(e){}
+  if (prods.length) prods.forEach(p=>addSubItem(p.producto_id||p.id, p.cantidad||1));
+  else addSubItem();
+  openModal('sub-modal');
+}
+
+async function saveSub() {
+  const cliente_id = document.getElementById('s-cliente').value;
+  const precio     = parseFloat(document.getElementById('s-precio').value);
+  const inicio     = document.getElementById('s-inicio').value;
+  if (!cliente_id || !precio || !inicio) { toast('Cliente, precio y fecha son obligatorios','error'); return; }
+
+  const prodItems = [];
+  document.querySelectorAll('#s-items-box .item-row').forEach(row => {
+    const pid = row.querySelector('select').value;
+    const qty = parseFloat(row.querySelector('input').value)||1;
+    if (pid) {
+      const p = productos.find(x=>x.id==pid);
+      prodItems.push({ producto_id:parseInt(pid), nombre:p?.nombre||'', cantidad:qty });
+    }
+  });
+
+  const body = {
+    cliente_id:        parseInt(cliente_id),
+    plan:              'semanal',
+    dia_despacho:      document.getElementById('s-dia-despacho').value,
+    precio,
+    productos:         prodItems,
+    fecha_inicio:      inicio,
+    fecha_renovacion:  document.getElementById('s-renovacion').value,
+    estado:            document.getElementById('s-estado').value,
+    notas:             document.getElementById('s-notas').value,
+    entregas_realizadas: parseInt(document.getElementById('s-entregas').value)||0,
+  };
+  const id = document.getElementById('s-id').value;
+  try {
+    if (id) await api('PUT', `/api/suscripciones/${id}`, body);
+    else    await api('POST', '/api/suscripciones', body);
+    closeModal('sub-modal');
+    toast(id ? 'Suscripción actualizada' : 'Suscripción creada');
+    loadSubs();
+  } catch(e) { toast(e.message,'error'); }
+}
+
+async function deleteSub(id) {
+  if (!confirm('¿Eliminar esta suscripción?')) return;
+  try {
+    await api('DELETE',`/api/suscripciones/${id}`);
+    toast('Suscripción eliminada');
+    loadSubs();
+  } catch(e){ toast(e.message,'error'); }
+}
+
+init();
+</script>
+
+<style>
+.dia-badge {
+  display:inline-block; padding:3px 10px; border-radius:10px;
+  background:#6b9fd422; color:#6b9fd4;
+  font-size:11px; font-weight:700; text-transform:capitalize;
+}
+.badge-renovar {
+  background:#e05a4422; color:#e05a44;
+  font-size:10px; font-weight:700; padding:2px 7px; border-radius:8px;
+}
+/* Delivery dots */
+.entregas-wrap { display:flex; align-items:center; gap:6px; justify-content:center; }
+.entregas-dots { display:flex; gap:4px; }
+.entrega-dot {
+  width:10px; height:10px; border-radius:50%;
+  background:var(--border); transition:.2s;
+}
+.entrega-dot.done { background:var(--success,#5ad47b); }
+/* Row highlight when cycle complete */
+tr.row-renovar { background:#e05a4408; }
+/* Renovar button */
+.btn-aurora {
+  background:#d4845a22; border:1.5px solid var(--aurora);
+  color:var(--aurora); font-weight:600; font-size:12px;
+}
+.btn-aurora:hover { background:#d4845a40; }
+</style>
+{% endblock %}

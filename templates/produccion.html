@@ -1,0 +1,188 @@
+{% extends "base.html" %}
+{% block title %}Producción — Aurora Bakers{% endblock %}
+{% block page_title %}Plan de Producción{% endblock %}
+{% block content %}
+
+<div style="display:flex;gap:1rem;margin-bottom:1.5rem;flex-wrap:wrap;align-items:center">
+  <div style="display:flex;align-items:center;gap:.5rem">
+    <label class="label" style="margin:0;white-space:nowrap">Fecha:</label>
+    <input id="fecha-sel" type="date" class="input" style="width:160px" />
+  </div>
+  <button class="btn btn-primary" onclick="openModal()"><i class="bi bi-plus-lg"></i> Agregar producto</button>
+  <button class="btn btn-ghost" onclick="copiarDesdeAyer()"><i class="bi bi-copy"></i> Copiar de ayer</button>
+  <div id="resumen-badge" style="margin-left:auto;font-size:.85rem;color:var(--muted)"></div>
+</div>
+
+<div class="card" style="margin-bottom:1rem">
+  <table class="table" id="tabla-plan">
+    <thead><tr>
+      <th>Código</th>
+      <th>Producto</th>
+      <th>Cantidad</th>
+      <th>Estado</th>
+      <th>Notas</th>
+      <th>Acciones</th>
+    </tr></thead>
+    <tbody id="tbody"></tbody>
+  </table>
+  <div id="empty-msg" style="display:none;padding:2rem;text-align:center;color:var(--muted)">
+    <i class="bi bi-clipboard-x" style="font-size:2rem"></i>
+    <p>Sin plan para esta fecha. Agrega productos o copia de otro día.</p>
+  </div>
+</div>
+
+<div class="card" id="card-ingredientes" style="display:none">
+  <div class="card-header"><h3>Ingredientes necesarios</h3></div>
+  <div id="ingredientes-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:.5rem;padding:1rem"></div>
+</div>
+
+<!-- Modal agregar/editar -->
+<div id="modal" class="modal-overlay" style="display:none">
+  <div class="modal-box" style="max-width:440px">
+    <div class="modal-header"><h3 id="modal-title">Agregar producto</h3><button class="btn-icon" onclick="closeModal()"><i class="bi bi-x-lg"></i></button></div>
+    <div class="modal-body" style="display:grid;gap:.75rem">
+      <div>
+        <label class="label">Producto</label>
+        <select id="f-codigo" class="input" onchange="fillNombre()">
+          <option value="">— Seleccionar —</option>
+          <option value="HC">HC — Hogaza Campesina</option>
+          <option value="HCN">HCN — Hogaza Nueces</option>
+          <option value="HI">HI — Hogaza Integral</option>
+          <option value="HIM">HIM — Hogaza Integral Multisemilla</option>
+          <option value="PMB">PMB — Pan Molde Blanco</option>
+          <option value="PMI">PMI — Pan Molde Integral</option>
+          <option value="PMIM">PMIM — Pan Molde Integral Multisemilla</option>
+          <option value="CIA">CIA — Ciabatta</option>
+          <option value="OTRO">OTRO — Producto personalizado</option>
+        </select>
+      </div>
+      <div id="custom-nombre-row" style="display:none">
+        <label class="label">Nombre producto</label>
+        <input id="f-nombre" class="input" placeholder="Nombre personalizado" />
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem">
+        <div><label class="label">Cantidad (unidades)</label><input id="f-cantidad" type="number" min="1" class="input" value="1" /></div>
+        <div>
+          <label class="label">Estado</label>
+          <select id="f-estado" class="input">
+            <option value="pendiente">Pendiente</option>
+            <option value="en_proceso">En proceso</option>
+            <option value="listo">Listo</option>
+          </select>
+        </div>
+      </div>
+      <div><label class="label">Notas</label><input id="f-notas" class="input" placeholder="Opcional" /></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-primary" onclick="guardar()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const NOMBRES = {HC:'Hogaza Campesina',HCN:'Hogaza Nueces',HI:'Hogaza Integral',HIM:'Hogaza Integral Multisemilla',PMB:'Pan Molde Blanco',PMI:'Pan Molde Integral',PMIM:'Pan Molde Integral Multisemilla',CIA:'Ciabatta'};
+let editId = null;
+
+const fechaInput = document.getElementById('fecha-sel');
+fechaInput.value = new Date().toISOString().split('T')[0];
+fechaInput.addEventListener('change', load);
+
+function fillNombre() {
+  const v = document.getElementById('f-codigo').value;
+  document.getElementById('custom-nombre-row').style.display = v === 'OTRO' ? 'block' : 'none';
+  if (v !== 'OTRO') document.getElementById('f-nombre').value = NOMBRES[v] || '';
+}
+
+async function load() {
+  const fecha = fechaInput.value;
+  const res = await fetch(`/api/agentes/produccion/${fecha}`);
+  const data = await res.json();
+  const plan = data.plan || [];
+  const ing = data.ingredientes_necesarios || {};
+
+  document.getElementById('empty-msg').style.display = plan.length ? 'none' : 'block';
+  document.getElementById('tabla-plan').style.display = plan.length ? '' : 'none';
+  document.getElementById('resumen-badge').textContent = plan.length ? `${plan.length} productos · ${data.total_piezas} piezas totales` : '';
+
+  const statusColor = {pendiente:'badge-yellow', en_proceso:'badge-blue', listo:'badge-green'};
+  document.getElementById('tbody').innerHTML = plan.map(p => `<tr>
+    <td><code>${p.codigo_producto}</code></td>
+    <td><strong>${p.nombre_producto}</strong></td>
+    <td>${p.cantidad}</td>
+    <td><span class="badge ${statusColor[p.estado]||'badge-yellow'}">${p.estado}</span></td>
+    <td style="color:var(--muted);font-size:.8rem">${p.notas||'—'}</td>
+    <td>
+      <button class="btn-icon" onclick='openEdit(${JSON.stringify(p).replace(/"/g,"&quot;")})' title="Editar"><i class="bi bi-pencil"></i></button>
+      <button class="btn-icon text-danger" onclick="eliminar(${p.id})" title="Eliminar"><i class="bi bi-trash"></i></button>
+    </td>
+  </tr>`).join('');
+
+  // Ingredientes
+  const ingEntries = Object.entries(ing);
+  document.getElementById('card-ingredientes').style.display = ingEntries.length ? '' : 'none';
+  document.getElementById('ingredientes-list').innerHTML = ingEntries.map(([k,v]) => `
+    <div style="background:var(--bg-2);border-radius:var(--r);padding:.6rem .9rem">
+      <div style="font-size:.75rem;color:var(--muted)">${k}</div>
+      <div style="font-weight:600;color:var(--text)">${v >= 1000 ? (v/1000).toFixed(2)+' kg' : v+' g'}</div>
+    </div>`).join('');
+}
+
+function openModal() {
+  editId=null;
+  document.getElementById('modal-title').textContent='Agregar producto';
+  document.getElementById('f-codigo').value='';
+  document.getElementById('f-nombre').value='';
+  document.getElementById('f-cantidad').value=1;
+  document.getElementById('f-estado').value='pendiente';
+  document.getElementById('f-notas').value='';
+  document.getElementById('custom-nombre-row').style.display='none';
+  document.getElementById('modal').style.display='flex';
+}
+function closeModal() { document.getElementById('modal').style.display='none'; }
+function openEdit(p) {
+  editId=p.id;
+  document.getElementById('modal-title').textContent='Editar';
+  document.getElementById('f-codigo').value=p.codigo_producto;
+  document.getElementById('f-nombre').value=p.nombre_producto;
+  document.getElementById('f-cantidad').value=p.cantidad;
+  document.getElementById('f-estado').value=p.estado;
+  document.getElementById('f-notas').value=p.notas||'';
+  document.getElementById('custom-nombre-row').style.display='block';
+  document.getElementById('modal').style.display='flex';
+}
+
+async function guardar() {
+  const codigo = document.getElementById('f-codigo').value;
+  const nombre = codigo === 'OTRO' ? document.getElementById('f-nombre').value : (NOMBRES[codigo] || document.getElementById('f-nombre').value);
+  if (!codigo || !nombre) return showToast('Selecciona un producto','error');
+  const body = {
+    fecha: fechaInput.value,
+    codigo_producto: codigo,
+    nombre_producto: nombre,
+    cantidad: parseInt(document.getElementById('f-cantidad').value)||1,
+    estado: document.getElementById('f-estado').value,
+    notas: document.getElementById('f-notas').value,
+  };
+  const url = editId ? `/api/plan-produccion/${editId}` : '/api/plan-produccion';
+  await fetch(url, {method: editId ? 'PUT' : 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+  closeModal(); load(); showToast('Guardado','success');
+}
+
+async function eliminar(id) {
+  if(!confirm('¿Eliminar?')) return;
+  await fetch(`/api/plan-produccion/${id}`, {method:'DELETE'});
+  load(); showToast('Eliminado','success');
+}
+
+async function copiarDesdeAyer() {
+  const hasta = fechaInput.value;
+  const d = new Date(hasta); d.setDate(d.getDate()-1);
+  const desde = d.toISOString().split('T')[0];
+  await fetch('/api/plan-produccion/copiar', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({desde, hasta})});
+  load(); showToast('Plan copiado de '+desde,'success');
+}
+
+load();
+</script>
+{% endblock %}

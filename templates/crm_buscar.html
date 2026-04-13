@@ -1,0 +1,560 @@
+{% extends "base.html" %}
+{% block title %}Buscar Clientes · CRM — Aurora Bakers{% endblock %}
+{% block page_title %}CRM · Buscar Clientes Potenciales{% endblock %}
+
+{% block content %}
+<style>
+.breadcrumb { display:flex; align-items:center; gap:.4rem; font-size:.8rem;
+               color:var(--text-3); margin-bottom:1.25rem; }
+.breadcrumb a { color:var(--accent); text-decoration:none; }
+
+/* ── Hero ──────────────────────────────────────────────────────────────── */
+.hero-card {
+  background: linear-gradient(135deg,#6366f1,#8b5cf6);
+  border-radius:12px; padding:1.5rem 1.75rem; margin-bottom:1.25rem;
+}
+.hero-top { display:flex; align-items:flex-start; gap:1.25rem; flex-wrap:wrap; margin-bottom:1.1rem; }
+.hero-text { flex:1; min-width:200px; }
+.hero-title { font-size:1.05rem; font-weight:800; color:#fff; margin-bottom:.3rem; }
+.hero-sub   { font-size:.8rem; color:rgba(255,255,255,.8); line-height:1.5; }
+
+/* Address row */
+.addr-row { display:flex; gap:.65rem; align-items:center; flex-wrap:wrap; }
+.addr-label { font-size:.72rem; font-weight:700; color:rgba(255,255,255,.7);
+               text-transform:uppercase; letter-spacing:.04em; white-space:nowrap; }
+.addr-input { flex:1; min-width:220px; background:rgba(255,255,255,.15);
+               border:1.5px solid rgba(255,255,255,.35); border-radius:8px;
+               padding:.45rem .85rem; font-size:.83rem; color:#fff;
+               outline:none; transition:.15s; }
+.addr-input::placeholder { color:rgba(255,255,255,.5); }
+.addr-input:focus { border-color:rgba(255,255,255,.7); background:rgba(255,255,255,.22); }
+
+/* Category chips */
+.cat-chips { display:flex; flex-wrap:wrap; gap:.45rem; margin-top:.9rem; }
+.cat-chip  { display:flex; align-items:center; gap:.35rem;
+              background:rgba(255,255,255,.15); border:1.5px solid rgba(255,255,255,.25);
+              border-radius:20px; padding:.25rem .7rem; font-size:.73rem; font-weight:600;
+              color:#fff; cursor:pointer; transition:.15s; user-select:none; }
+.cat-chip:hover { background:rgba(255,255,255,.25); }
+.cat-chip.active { background:rgba(255,255,255,.9); color:#6366f1; border-color:transparent; }
+.cat-chip input[type=checkbox] { display:none; }
+
+.btn-smart { background:#fff; color:#6366f1; border:none; border-radius:9px;
+              padding:.65rem 1.4rem; font-size:.88rem; font-weight:800;
+              cursor:pointer; white-space:nowrap; transition:.15s; flex-shrink:0;
+              display:flex; align-items:center; gap:.5rem; }
+.btn-smart:hover { opacity:.9; transform:translateY(-1px); }
+.btn-smart:disabled { opacity:.55; cursor:not-allowed; transform:none; }
+
+/* ── Progress ──────────────────────────────────────────────────────────── */
+.progress-wrap { background:var(--surface); border:1px solid var(--border);
+                  border-radius:10px; padding:1.1rem 1.25rem; margin-bottom:1.25rem;
+                  display:none; }
+.progress-wrap.show { display:block; }
+.progress-label { font-size:.82rem; color:var(--text-2); margin-bottom:.55rem;
+                   display:flex; justify-content:space-between; }
+.progress-bar-wrap { background:var(--border); border-radius:20px; height:6px; overflow:hidden; }
+.progress-bar { height:100%; border-radius:20px; background:var(--accent); transition:width .35s ease; }
+.progress-steps { display:flex; gap:.45rem; flex-wrap:wrap; margin-top:.7rem; }
+.step-pill { font-size:.7rem; padding:.18rem .55rem; border-radius:20px;
+              border:1.5px solid var(--border); color:var(--text-3); }
+.step-pill.done   { background:#d1fae5; color:#065f46; border-color:#6ee7b7; }
+.step-pill.active { background:#ede9fe; color:#5b21b6; border-color:#a78bfa; }
+
+/* ── Manual search ─────────────────────────────────────────────────────── */
+.manual-card { background:var(--surface); border:1px solid var(--border);
+                border-radius:10px; padding:1rem 1.25rem; margin-bottom:1.25rem; }
+.manual-head { font-size:.75rem; font-weight:700; text-transform:uppercase;
+                letter-spacing:.05em; color:var(--text-2);
+                display:flex; justify-content:space-between; cursor:pointer; }
+.search-grid { display:grid; grid-template-columns:1fr 150px 165px auto; gap:.7rem; align-items:end; margin-top:.85rem; }
+
+/* ── Section headers ───────────────────────────────────────────────────── */
+.section-title { font-size:.75rem; font-weight:700; text-transform:uppercase;
+                  letter-spacing:.05em; color:var(--text-2);
+                  display:flex; align-items:center; gap:.6rem; margin:1.25rem 0 .75rem; }
+.section-title::after { content:''; flex:1; height:1px; background:var(--border); }
+.section-count { background:var(--accent); color:#fff; border-radius:20px;
+                  font-size:.65rem; font-weight:700; padding:.1rem .45rem; }
+.sel-all-btn { font-size:.7rem; color:var(--accent); background:none; border:none;
+                cursor:pointer; font-weight:600; margin-left:auto; }
+
+/* ── Result cards ──────────────────────────────────────────────────────── */
+.results-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(265px,1fr));
+                 gap:.8rem; margin-bottom:1.25rem; }
+.result-card  { background:var(--surface); border:1.5px solid var(--border);
+                 border-radius:10px; padding:.9rem 1rem; cursor:pointer;
+                 transition:.15s; position:relative; }
+.result-card:hover    { border-color:var(--accent);
+                         box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 12%,transparent); }
+.result-card.selected { border-color:var(--accent);
+                         background:color-mix(in srgb,var(--accent) 6%,var(--surface)); }
+.result-card.imported { opacity:.4; pointer-events:none; }
+.rc-check  { position:absolute; top:.6rem; right:.6rem; width:18px; height:18px;
+              border-radius:50%; border:2px solid var(--border); background:var(--bg);
+              display:flex; align-items:center; justify-content:center; font-size:.7rem;
+              color:#fff; }
+.result-card.selected .rc-check { background:var(--accent); border-color:var(--accent); }
+.rc-name   { font-size:.87rem; font-weight:700; color:var(--text-1);
+              margin-bottom:.12rem; padding-right:1.6rem; }
+.rc-tipo   { font-size:.7rem; color:var(--text-3); margin-bottom:.45rem; }
+.rc-meta   { display:flex; flex-direction:column; gap:.18rem; }
+.rc-meta span { font-size:.72rem; color:var(--text-2);
+                 display:flex; align-items:center; gap:.35rem; overflow:hidden;
+                 white-space:nowrap; text-overflow:ellipsis; }
+.rc-score  { display:inline-block; font-size:.65rem; font-weight:700; padding:.12rem .4rem;
+              border-radius:4px; background:var(--bg); color:var(--text-2);
+              border:1px solid var(--border); margin-top:.4rem; }
+.rc-reason { margin-top:.4rem; font-size:.69rem; color:var(--text-3); font-style:italic;
+              border-top:1px solid var(--border); padding-top:.32rem;
+              white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.badge-b2b { background:#ede9fe; color:#5b21b6; font-size:.62rem; font-weight:700;
+              padding:.1rem .4rem; border-radius:4px; display:inline-block; margin-top:.3rem; }
+.badge-b2c { background:#d1fae5; color:#065f46; font-size:.62rem; font-weight:700;
+              padding:.1rem .4rem; border-radius:4px; display:inline-block; margin-top:.3rem; }
+
+/* ── Import bar ────────────────────────────────────────────────────────── */
+.import-bar { position:sticky; bottom:1rem; background:var(--surface);
+               border:1.5px solid var(--accent); border-radius:10px;
+               padding:.8rem 1.2rem; margin-top:1rem;
+               display:none; align-items:center; gap:.8rem; flex-wrap:wrap;
+               box-shadow:0 4px 20px color-mix(in srgb,var(--accent) 20%,transparent); }
+.import-bar.show { display:flex; }
+.import-count { font-weight:800; color:var(--accent); font-size:1rem; }
+
+.state-box { background:var(--surface); border:1px solid var(--border);
+              border-radius:10px; padding:2.5rem; text-align:center;
+              color:var(--text-3); font-size:.85rem; }
+.zona-chip { padding:.22rem .6rem; border-radius:20px; font-size:.72rem; font-weight:600;
+              border:1.5px solid var(--border); background:var(--bg); color:var(--text-2);
+              cursor:pointer; transition:.15s; }
+.zona-chip:hover { border-color:var(--accent); color:var(--accent); }
+.zona-chip.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+.spin { animation:spin 1s linear infinite; display:inline-block; }
+@keyframes spin { to { transform:rotate(360deg); } }
+</style>
+
+<!-- Breadcrumb -->
+<div class="breadcrumb">
+  <a href="/crm"><i class="bi bi-diagram-3"></i> CRM</a>
+  <i class="bi bi-chevron-right"></i>
+  <span>Buscar Clientes</span>
+</div>
+
+<!-- ── Hero ──────────────────────────────────────────────────────────────── -->
+<div class="hero-card">
+  <div class="hero-top">
+    <div class="hero-text">
+      <div class="hero-title"><i class="bi bi-stars"></i> Búsqueda Inteligente de Clientes</div>
+      <div class="hero-sub">
+        Busca en Google Maps y con IA los negocios y personas más cerca de tu local
+        que podrían comprar pan artesanal Aurora Bakers.
+      </div>
+    </div>
+    <button class="btn-smart" id="btn-smart" onclick="buscarInteligente()">
+      <i class="bi bi-search"></i> Buscar
+    </button>
+  </div>
+
+  <!-- Dirección del local -->
+  <div class="addr-row" style="margin-bottom:.85rem">
+    <span class="addr-label"><i class="bi bi-geo-alt-fill"></i> Tu local:</span>
+    <input class="addr-input" id="s-direccion"
+           placeholder="Ej: Av. Italia 1234, Ñuñoa, Santiago"
+           value="" />
+  </div>
+
+  <!-- Categorías a buscar -->
+  <div style="font-size:.72rem;color:rgba(255,255,255,.65);font-weight:600;text-transform:uppercase;letter-spacing:.04em;margin-bottom:.45rem">Buscar en:</div>
+  <div class="cat-chips">
+    <label class="cat-chip active" id="chip-restaurantes">
+      <input type="checkbox" checked> 🍽️ Restaurantes
+    </label>
+    <label class="cat-chip active" id="chip-cafeterias">
+      <input type="checkbox" checked> ☕ Cafeterías
+    </label>
+    <label class="cat-chip active" id="chip-almacenes">
+      <input type="checkbox" checked> 🏪 Almacenes
+    </label>
+    <label class="cat-chip active" id="chip-hoteles">
+      <input type="checkbox" checked> 🏨 Hoteles
+    </label>
+    <label class="cat-chip active" id="chip-personas">
+      <input type="checkbox" checked> 🏠 Personas Naturales
+    </label>
+  </div>
+</div>
+
+<!-- ── Progress ──────────────────────────────────────────────────────────── -->
+<div class="progress-wrap" id="progress-wrap">
+  <div class="progress-label">
+    <span id="progress-text">Iniciando…</span>
+    <span id="progress-pct">0%</span>
+  </div>
+  <div class="progress-bar-wrap"><div class="progress-bar" id="progress-bar" style="width:0%"></div></div>
+  <div class="progress-steps" id="progress-steps"></div>
+</div>
+
+<!-- ── Manual search ─────────────────────────────────────────────────────── -->
+<div class="manual-card">
+  <div class="manual-head" onclick="toggleManual()">
+    <span><i class="bi bi-sliders"></i> Búsqueda Manual Avanzada</span>
+    <i class="bi bi-chevron-down" id="manual-chevron"></i>
+  </div>
+  <div id="manual-body" style="display:none">
+    <div class="search-grid">
+      <div class="form-group" style="margin:0">
+        <label class="form-label">Descripción</label>
+        <input id="s-desc" class="form-control" placeholder="Ej: cafeterías de especialidad"
+               onkeydown="if(event.key==='Enter')buscarManual()" />
+      </div>
+      <div class="form-group" style="margin:0">
+        <label class="form-label">Módulo</label>
+        <select id="s-mod" class="form-control">
+          <option value="B2B">B2B · HORECA</option>
+          <option value="B2C">B2C · Personas</option>
+        </select>
+      </div>
+      <div class="form-group" style="margin:0">
+        <label class="form-label">Zona</label>
+        <input id="s-zona" class="form-control" value="Santiago" />
+      </div>
+      <button class="btn btn-primary" onclick="buscarManual()" style="height:38px;align-self:end">
+        <i class="bi bi-search"></i> Buscar
+      </button>
+    </div>
+    <div style="display:flex;gap:.75rem;align-items:center;margin-top:.6rem;flex-wrap:wrap">
+      <span style="font-size:.73rem;color:var(--text-3)">Fuentes:</span>
+      <label style="font-size:.78rem;color:var(--text-2);display:flex;align-items:center;gap:.3rem;cursor:pointer">
+        <input type="checkbox" id="ch-google" checked> <i class="bi bi-geo-alt"></i> Google Places
+      </label>
+      <label style="font-size:.78rem;color:var(--text-2);display:flex;align-items:center;gap:.3rem;cursor:pointer">
+        <input type="checkbox" id="ch-ia" checked> <i class="bi bi-stars"></i> IA
+      </label>
+    </div>
+  </div>
+</div>
+
+<!-- ── Zona filter (aparece después de buscar) ─────────────────────────── -->
+<div id="zona-filter-wrap" style="display:none;margin-bottom:1rem">
+  <div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">
+    <span style="font-size:.72rem;font-weight:700;color:var(--text-3);text-transform:uppercase;letter-spacing:.04em">Filtrar zona:</span>
+    <div id="zona-filter-chips" style="display:flex;gap:.35rem;flex-wrap:wrap"></div>
+  </div>
+</div>
+
+<!-- ── Results ────────────────────────────────────────────────────────────── -->
+<div id="results-wrap">
+  <div class="state-box" style="padding:3rem">
+    <i class="bi bi-search" style="font-size:2.5rem;opacity:.2;display:block;margin-bottom:1rem"></i>
+    Ingresa la dirección de tu local y haz clic en <strong>Buscar</strong>
+    para encontrar clientes potenciales cerca.
+  </div>
+</div>
+
+<!-- ── Import bar ─────────────────────────────────────────────────────────── -->
+<div class="import-bar" id="import-bar">
+  <div style="flex:1;font-size:.82rem;color:var(--text-1)">
+    <span class="import-count" id="import-count">0</span> seleccionados para importar al CRM
+  </div>
+  <div style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center">
+    <select id="import-temp" class="form-control" style="width:auto;font-size:.8rem">
+      <option value="COLD">❄️ Frío</option>
+      <option value="WARM" selected>🌡️ Tibio</option>
+      <option value="HOT">🔥 Caliente</option>
+    </select>
+    <button class="btn btn-primary" onclick="importarSeleccionados()">
+      <i class="bi bi-download"></i> Importar al CRM
+    </button>
+    <button class="btn btn-ghost" onclick="clearSelection()">Limpiar</button>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ── Config de búsqueda por categoría ────────────────────────────────────────
+const CATEGORIAS = [
+  { id:'restaurantes', label:'Restaurantes',       emoji:'🍽️', modulo:'B2B', q:'restaurantes bistro gastronomía', canales:['google','ia'] },
+  { id:'cafeterias',   label:'Cafeterías',          emoji:'☕', modulo:'B2B', q:'cafeterías café de especialidad coffee shop', canales:['google','ia'] },
+  { id:'almacenes',    label:'Almacenes / Tiendas', emoji:'🏪', modulo:'B2B', q:'almacenes tiendas gourmet minimarket deli', canales:['google','ia'] },
+  { id:'hoteles',      label:'Hoteles',             emoji:'🏨', modulo:'B2B', q:'hoteles apart hotel hospedaje boutique', canales:['google','ia'] },
+  { id:'personas',     label:'Personas Naturales',  emoji:'🏠', modulo:'B2C', q:'familias perfil saludable pan artesanal masa madre consumidores', canales:['ia'] },
+];
+
+const PIPELINES = {
+  B2C:['NUEVO_CONTACTO','CALIFICADO','PRIMERA_COMPRA','RECURRENTE','SUSCRIPTOR_CLUB','INACTIVO'],
+  B2B:['PROSPECTO','CONTACTADO','MUESTRA_ENVIADA','NEGOCIACION','CONTRATO_FIRMADO','ONBOARDING','CUENTA_ACTIVA','EN_RIESGO']
+};
+
+let allResultados = [];
+let seleccionados = new Set();
+let filtroZona    = '';
+
+// ── Chip toggle ──────────────────────────────────────────────────────────────
+document.querySelectorAll('.cat-chip').forEach(chip => {
+  chip.addEventListener('click', () => {
+    chip.classList.toggle('active');
+    chip.querySelector('input').checked = chip.classList.contains('active');
+  });
+});
+
+function categoriasActivas() {
+  return CATEGORIAS.filter(c => {
+    const chip = document.getElementById(`chip-${c.id}`);
+    return chip && chip.classList.contains('active');
+  });
+}
+
+// ── Smart search ─────────────────────────────────────────────────────────────
+async function buscarInteligente() {
+  const direccion = document.getElementById('s-direccion').value.trim();
+  const activas   = categoriasActivas();
+  if (!activas.length) { toast('Selecciona al menos una categoría', 'error'); return; }
+
+  const btn = document.getElementById('btn-smart');
+  btn.disabled = true;
+  btn.innerHTML = '<i class="bi bi-arrow-repeat spin"></i> Buscando…';
+
+  allResultados = [];
+  seleccionados.clear();
+  updateImportBar();
+
+  const pw = document.getElementById('progress-wrap');
+  pw.classList.add('show');
+  renderProgressSteps(activas.map(c => c.emoji + ' ' + c.label));
+
+  document.getElementById('results-wrap').innerHTML =
+    `<div class="state-box"><i class="bi bi-stars" style="font-size:2rem;opacity:.3;display:block;margin-bottom:.75rem"></i>Buscando clientes potenciales…</div>`;
+
+  for (let i = 0; i < activas.length; i++) {
+    const cat = activas[i];
+    setStep(i, 'active');
+    setProgress(Math.round(i / activas.length * 100), `Buscando: ${cat.label}…`);
+    try {
+      const res = await api('POST', '/api/crm/buscar', {
+        descripcion     : cat.q,
+        modulo          : cat.modulo,
+        zona            : direccion || 'Santiago',
+        direccion_local : direccion,
+        canales         : cat.canales,
+      });
+      res.forEach(r => {
+        r._modulo    = cat.modulo;
+        r._categoria = cat.label;
+        r._emoji     = cat.emoji;
+        r._idx       = allResultados.length;
+        allResultados.push(r);
+      });
+    } catch(e) { console.warn(cat.label, e.message); }
+    setStep(i, 'done');
+  }
+
+  setProgress(100, `Listo — ${allResultados.length} resultados encontrados`);
+  setTimeout(() => pw.classList.remove('show'), 1800);
+
+  btn.disabled = false;
+  btn.innerHTML = '<i class="bi bi-arrow-repeat"></i> Buscar de nuevo';
+  renderAllResultados();
+}
+
+// ── Manual search ─────────────────────────────────────────────────────────────
+async function buscarManual() {
+  const desc = document.getElementById('s-desc').value.trim();
+  if (!desc) { toast('Ingresa una descripción', 'error'); return; }
+  const mod    = document.getElementById('s-mod').value;
+  const zona   = document.getElementById('s-zona').value.trim() || 'Santiago';
+  const dir    = document.getElementById('s-direccion').value.trim();
+  const canales = [];
+  if (document.getElementById('ch-google').checked) canales.push('google');
+  if (document.getElementById('ch-ia').checked) canales.push('ia');
+
+  document.getElementById('results-wrap').innerHTML =
+    `<div class="state-box"><i class="bi bi-arrow-repeat spin" style="font-size:2rem;opacity:.3;display:block;margin-bottom:.75rem"></i>Buscando…</div>`;
+  seleccionados.clear(); updateImportBar();
+
+  try {
+    const res = await api('POST', '/api/crm/buscar', {
+      descripcion: desc, modulo: mod, zona, direccion_local: dir, canales
+    });
+    allResultados = res.map((r, i) => ({ ...r, _modulo: mod, _categoria: 'Manual', _emoji: '🔍', _idx: i }));
+    renderAllResultados();
+  } catch(e) {
+    document.getElementById('results-wrap').innerHTML =
+      `<div class="state-box" style="color:#ef4444"><i class="bi bi-x-circle"></i> ${escHtml(e.message)}</div>`;
+  }
+}
+
+// ── Zona filter ───────────────────────────────────────────────────────────────
+function extraerZona(dir) {
+  const m = dir.match(/,\s*([^,]+),\s*Regi[oó]n/i);
+  return m ? m[1].trim() : '';
+}
+function renderZonaFilter() {
+  const zonas = [...new Set(allResultados.map(r => extraerZona(r.direccion||'')).filter(Boolean))].sort();
+  const wrap  = document.getElementById('zona-filter-wrap');
+  const chips = document.getElementById('zona-filter-chips');
+  if (!zonas.length) { wrap.style.display='none'; return; }
+  wrap.style.display = '';
+  chips.innerHTML = `<button class="zona-chip${filtroZona===''?' active':''}" onclick="setFiltroZona('',this)">Todas</button>`
+    + zonas.map(z=>`<button class="zona-chip${filtroZona===z?' active':''}" onclick="setFiltroZona('${z}',this)">${escHtml(z)}</button>`).join('');
+}
+function setFiltroZona(z, btn) {
+  filtroZona = z;
+  document.querySelectorAll('#zona-filter-chips .zona-chip').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  renderResultados();
+}
+function resultadosFiltrados() {
+  return filtroZona ? allResultados.filter(r => extraerZona(r.direccion||'')===filtroZona) : allResultados;
+}
+
+// ── Render ────────────────────────────────────────────────────────────────────
+function renderAllResultados() {
+  renderZonaFilter();
+  renderResultados();
+}
+function renderResultados() {
+  const wrap  = document.getElementById('results-wrap');
+  const lista = resultadosFiltrados();
+  if (!lista.length) {
+    wrap.innerHTML = '<div class="state-box">Sin resultados para esta zona.</div>';
+    return;
+  }
+  const b2b = lista.filter(r => r._modulo === 'B2B');
+  const b2c = lista.filter(r => r._modulo === 'B2C');
+  let html = '';
+  if (b2b.length) html += `
+    <div class="section-title"><i class="bi bi-building"></i> HORECA · Negocios
+      <span class="section-count">${b2b.length}</span>
+      <button class="sel-all-btn" onclick="selectGroup('B2B')">Seleccionar todos</button>
+    </div>
+    <div class="results-grid">${b2b.map(cardHtml).join('')}</div>`;
+  if (b2c.length) html += `
+    <div class="section-title"><i class="bi bi-person-heart"></i> Personas Naturales
+      <span class="section-count">${b2c.length}</span>
+      <button class="sel-all-btn" onclick="selectGroup('B2C')">Seleccionar todos</button>
+    </div>
+    <div class="results-grid">${b2c.map(cardHtml).join('')}</div>`;
+  wrap.innerHTML = html;
+}
+
+function cardHtml(r) {
+  const sel   = seleccionados.has(r._idx);
+  const waRaw = (r.telefono||'').replace(/\D/g,'');
+  const waNum = waRaw ? (waRaw.startsWith('56') ? waRaw : '56'+waRaw) : '';
+  const waUrl = waNum ? `https://wa.me/${waNum}` : '';
+  return `
+    <div class="result-card${sel?' selected':''}" id="rc-${r._idx}" onclick="toggleCard(${r._idx})">
+      <div class="rc-check">${sel?'✓':''}</div>
+      <div class="rc-name">${escHtml(r.nombre||r.empresa||'Sin nombre')}</div>
+      <div class="rc-tipo">${r._emoji||''} ${escHtml(r._categoria||'')}${r.tipo_negocio?' · '+escHtml(r.tipo_negocio):''}</div>
+      <div class="rc-meta">
+        ${r.direccion?`<span><i class="bi bi-geo-alt"></i>${escHtml(r.direccion)}</span>`:''}
+        ${r.telefono ?`<span><i class="bi bi-telephone"></i>${escHtml(r.telefono)}</span>`:''}
+        ${r.email    ?`<span><i class="bi bi-envelope"></i>${escHtml(r.email)}</span>`:''}
+      </div>
+      <div style="display:flex;gap:.35rem;margin-top:.5rem;flex-wrap:wrap" onclick="event.stopPropagation()">
+        <span class="${r._modulo==='B2B'?'badge-b2b':'badge-b2c'}">${r._modulo==='B2B'?'HORECA':'Persona'}</span>
+        ${r.score?`<span class="rc-score">${r.score}%</span>`:''}
+        ${r.email ?`<a href="mailto:${escHtml(r.email)}" style="font-size:.68rem;padding:.15rem .45rem;border-radius:4px;background:#ede9fe;color:#5b21b6;text-decoration:none"><i class="bi bi-envelope"></i> Email</a>`:''}
+        ${waUrl   ?`<a href="${waUrl}" target="_blank" style="font-size:.68rem;padding:.15rem .45rem;border-radius:4px;background:#dcfce7;color:#15803d;text-decoration:none"><i class="bi bi-whatsapp"></i> WA</a>`:''}
+        ${r.telefono&&!waUrl?`<a href="tel:${escHtml(r.telefono)}" style="font-size:.68rem;padding:.15rem .45rem;border-radius:4px;background:#f1f5f9;color:#475569;text-decoration:none"><i class="bi bi-telephone"></i> Llamar</a>`:''}
+      </div>
+      ${r.razon?`<div class="rc-reason">${escHtml(r.razon)}</div>`:''}
+    </div>`;
+}
+
+// ── Selection ─────────────────────────────────────────────────────────────────
+function toggleCard(idx) {
+  if (seleccionados.has(idx)) seleccionados.delete(idx);
+  else seleccionados.add(idx);
+  const card = document.getElementById(`rc-${idx}`);
+  if (card) {
+    card.classList.toggle('selected', seleccionados.has(idx));
+    card.querySelector('.rc-check').textContent = seleccionados.has(idx) ? '✓' : '';
+  }
+  updateImportBar();
+}
+
+function selectGroup(modulo) {
+  allResultados.filter(r => r._modulo === modulo).forEach(r => {
+    seleccionados.add(r._idx);
+    const c = document.getElementById(`rc-${r._idx}`);
+    if (c) { c.classList.add('selected'); c.querySelector('.rc-check').textContent = '✓'; }
+  });
+  updateImportBar();
+}
+
+function clearSelection() {
+  seleccionados.forEach(idx => {
+    const c = document.getElementById(`rc-${idx}`);
+    if (c) { c.classList.remove('selected'); c.querySelector('.rc-check').textContent = ''; }
+  });
+  seleccionados.clear();
+  updateImportBar();
+}
+
+function updateImportBar() {
+  document.getElementById('import-count').textContent = seleccionados.size;
+  document.getElementById('import-bar').classList.toggle('show', seleccionados.size > 0);
+}
+
+// ── Import ─────────────────────────────────────────────────────────────────────
+async function importarSeleccionados() {
+  if (!seleccionados.size) return;
+  const temp  = document.getElementById('import-temp').value;
+  const leads = [...seleccionados].map(i => allResultados[i]);
+  let ok = 0, fail = 0;
+
+  for (const r of leads) {
+    const mod   = r._modulo || 'B2B';
+    const etapa = PIPELINES[mod][0];
+    try {
+      await api('POST', '/api/crm/leads', {
+        modulo: mod, nombre: r.nombre||r.empresa||'Sin nombre',
+        empresa: r.empresa||'', email: r.email||'', telefono: r.telefono||'',
+        direccion: r.direccion||'', zona: r.zona||'Santiago',
+        canal_origen: r.canal_origen||'busqueda',
+        etapa, temperatura: temp,
+        notas: [r._categoria, r.razon].filter(Boolean).join(' · '),
+      });
+      ok++;
+      document.getElementById(`rc-${r._idx}`)?.classList.add('imported');
+    } catch(e) { fail++; }
+  }
+
+  if (ok)   toast(`${ok} lead(s) importados al CRM`);
+  if (fail) toast(`${fail} no pudieron importarse`, 'error');
+  clearSelection();
+}
+
+// ── Progress helpers ──────────────────────────────────────────────────────────
+function renderProgressSteps(labels) {
+  document.getElementById('progress-steps').innerHTML =
+    labels.map((l,i) => `<span class="step-pill" id="step-${i}">${l}</span>`).join('');
+}
+function setStep(i, state) {
+  const el = document.getElementById(`step-${i}`);
+  if (el) el.className = `step-pill ${state}`;
+}
+function setProgress(pct, text) {
+  document.getElementById('progress-bar').style.width = pct + '%';
+  document.getElementById('progress-text').textContent = text;
+  document.getElementById('progress-pct').textContent = pct + '%';
+}
+
+// ── Manual toggle ─────────────────────────────────────────────────────────────
+function toggleManual() {
+  const body = document.getElementById('manual-body');
+  const icon = document.getElementById('manual-chevron');
+  const open = body.style.display === 'none';
+  body.style.display = open ? '' : 'none';
+  icon.className = open ? 'bi bi-chevron-up' : 'bi bi-chevron-down';
+}
+
+function escHtml(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+</script>
+{% endblock %}

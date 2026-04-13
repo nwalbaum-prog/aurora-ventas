@@ -1,0 +1,226 @@
+{% extends "base.html" %}
+{% block title %}Reportes{% endblock %}
+{% block page_title %}Reportes{% endblock %}
+
+{% block content %}
+
+<!-- Selector de período -->
+<div class="toolbar mb-24">
+  <div class="filter-tabs" id="periodo-tabs">
+    <button class="filter-tab" data-v="semana"  onclick="setPeriodo(this,'semana')">Semana</button>
+    <button class="filter-tab active" data-v="mes" onclick="setPeriodo(this,'mes')">Mes</button>
+    <button class="filter-tab" data-v="3meses" onclick="setPeriodo(this,'3meses')">3 meses</button>
+    <button class="filter-tab" data-v="año"    onclick="setPeriodo(this,'año')">Año</button>
+  </div>
+</div>
+
+<!-- KPIs -->
+<div class="kpi-grid mb-24">
+  <div class="kpi-card">
+    <div class="kpi-label">Ventas totales</div>
+    <div class="kpi-value" id="r-total">—</div>
+    <div class="kpi-sub" id="r-total-d"></div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Número de ventas</div>
+    <div class="kpi-value" id="r-count">—</div>
+    <div class="kpi-sub" id="r-count-d"></div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Ticket promedio</div>
+    <div class="kpi-value" id="r-ticket">—</div>
+    <div class="kpi-sub" id="r-ticket-d"></div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Suscripciones activas</div>
+    <div class="kpi-value text-success" id="r-subs">—</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Total clientes</div>
+    <div class="kpi-value" id="r-cli">—</div>
+    <div class="kpi-sub" id="r-cli-new"></div>
+  </div>
+</div>
+
+<!-- Gráficos row 1: ventas por día -->
+<div class="card mb-24">
+  <div class="card-title"><i class="bi bi-graph-up"></i> Ventas por día</div>
+  <div class="chart-wrap"><canvas id="chart-linea"></canvas></div>
+</div>
+
+<!-- Gráficos row 2: productos + canales -->
+<div class="grid-2">
+  <div class="card">
+    <div class="card-title"><i class="bi bi-bar-chart"></i> Por producto</div>
+    <div class="chart-wrap"><canvas id="chart-productos"></canvas></div>
+  </div>
+  <div class="card">
+    <div class="card-title"><i class="bi bi-pie-chart"></i> Por canal</div>
+    <div class="chart-wrap" style="height:220px"><canvas id="chart-canales"></canvas></div>
+    <div id="canal-detalle" class="mt-16"></div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+let periodo = 'mes';
+let chartLinea, chartProd, chartCanal;
+
+const COLORS = {
+  accent:  '#a855f7',
+  success: '#3fb950',
+  info:    '#58a6ff',
+  warning: '#e3b341',
+  danger:  '#f85149',
+};
+
+const chartDefaults = {
+  responsive: true,
+  maintainAspectRatio: false,
+  plugins: { legend: { display: false } },
+  scales: {
+    x: { grid: { color: 'rgba(48,54,61,.6)' }, ticks: { color: '#8b949e', font:{size:11} } },
+    y: { grid: { color: 'rgba(48,54,61,.6)' }, ticks: { color: '#8b949e', font:{size:11},
+      callback: v => '$' + (v/1000).toFixed(0) + 'k' } }
+  }
+};
+
+function setPeriodo(btn, v) {
+  document.querySelectorAll('#periodo-tabs .filter-tab').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  periodo = v;
+  loadAll();
+}
+
+function pctChange(curr, prev) {
+  if (!prev) return null;
+  const pct = ((curr - prev) / prev * 100).toFixed(1);
+  const up = curr >= prev;
+  return `<span class="${up?'up':'down'}">${up?'▲':'▼'} ${Math.abs(pct)}% vs período anterior</span>`;
+}
+
+async function loadAll() {
+  const [kpis, ventasData, prodsData, canalesData] = await Promise.all([
+    api('GET', `/api/reportes/kpis?periodo=${periodo}`),
+    api('GET', `/api/reportes/ventas?periodo=${periodo}`),
+    api('GET', `/api/reportes/productos?periodo=${periodo}`),
+    api('GET', `/api/reportes/canales?periodo=${periodo}`),
+  ]);
+
+  // KPIs
+  document.getElementById('r-total').textContent  = clp(kpis.ventas_total);
+  document.getElementById('r-count').textContent  = kpis.ventas_count;
+  document.getElementById('r-ticket').textContent = clp(kpis.ticket);
+  document.getElementById('r-subs').textContent   = kpis.subs_activas;
+  document.getElementById('r-cli').textContent    = kpis.total_clientes;
+  document.getElementById('r-cli-new').innerHTML  = `+${kpis.clientes_nuevos} nuevos en el período`;
+
+  const chTotal  = pctChange(kpis.ventas_total, kpis.prev_total);
+  const chCount  = pctChange(kpis.ventas_count, kpis.prev_count);
+  const chTicket = pctChange(kpis.ticket,       kpis.prev_ticket);
+  if (chTotal)  document.getElementById('r-total-d').innerHTML  = chTotal;
+  if (chCount)  document.getElementById('r-count-d').innerHTML  = chCount;
+  if (chTicket) document.getElementById('r-ticket-d').innerHTML = chTicket;
+
+  // Línea: ventas por día
+  const labels = ventasData.labels.map(l => {
+    const d = new Date(l+'T00:00:00');
+    return d.toLocaleDateString('es-CL', {day:'numeric',month:'short'});
+  });
+  if (chartLinea) chartLinea.destroy();
+  chartLinea = new Chart(document.getElementById('chart-linea'), {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        data: ventasData.values,
+        borderColor: COLORS.accent,
+        backgroundColor: 'rgba(168,85,247,.1)',
+        borderWidth: 2,
+        pointRadius: ventasData.values.length > 30 ? 0 : 3,
+        pointBackgroundColor: COLORS.accent,
+        fill: true,
+        tension: 0.35,
+      }]
+    },
+    options: { ...chartDefaults, responsive:true, maintainAspectRatio:false,
+      plugins: { legend:{display:false}, tooltip:{
+        callbacks:{ label: ctx => ' ' + clp(ctx.raw) }
+      }},
+      scales: chartDefaults.scales
+    }
+  });
+
+  // Barras: por producto
+  if (chartProd) chartProd.destroy();
+  const prodColors = [COLORS.accent, COLORS.success, COLORS.info, COLORS.warning, COLORS.danger];
+  chartProd = new Chart(document.getElementById('chart-productos'), {
+    type: 'bar',
+    data: {
+      labels: prodsData.map(p=>p.nombre),
+      datasets: [{
+        data:            prodsData.map(p=>p.total),
+        backgroundColor: prodsData.map((_,i)=>prodColors[i%prodColors.length]+'99'),
+        borderColor:     prodsData.map((_,i)=>prodColors[i%prodColors.length]),
+        borderWidth: 1, borderRadius: 4,
+      }]
+    },
+    options: { ...chartDefaults, responsive:true, maintainAspectRatio:false,
+      plugins: { legend:{display:false}, tooltip:{
+        callbacks:{ label: ctx => ' ' + clp(ctx.raw) + ` (${prodsData[ctx.dataIndex].cantidad} und)` }
+      }},
+      scales: chartDefaults.scales
+    }
+  });
+
+  // Dónut: por canal
+  const canalNames = { local:'Local', online:'Online', suscripcion:'Suscripción' };
+  const canalColors = { local: COLORS.info, online: COLORS.accent, suscripcion: COLORS.success };
+  if (chartCanal) chartCanal.destroy();
+  chartCanal = new Chart(document.getElementById('chart-canales'), {
+    type: 'doughnut',
+    data: {
+      labels:   canalesData.map(c=>canalNames[c.canal]||c.canal),
+      datasets: [{
+        data:            canalesData.map(c=>c.total),
+        backgroundColor: canalesData.map(c=>(canalColors[c.canal]||COLORS.warning)+'99'),
+        borderColor:     canalesData.map(c=>canalColors[c.canal]||COLORS.warning),
+        borderWidth: 2,
+      }]
+    },
+    options: {
+      responsive:true, maintainAspectRatio:false,
+      cutout: '65%',
+      plugins: {
+        legend: { display:true, position:'bottom',
+          labels:{ color:'#c9d1d9', font:{size:12}, padding:16, boxWidth:12 }
+        },
+        tooltip: { callbacks:{ label: ctx => ' '+clp(ctx.raw) } }
+      }
+    }
+  });
+
+  // Detalle canales
+  const totalCanal = canalesData.reduce((s,c)=>s+c.total, 0);
+  document.getElementById('canal-detalle').innerHTML = canalesData.map(c => {
+    const pct = totalCanal ? (c.total/totalCanal*100).toFixed(1) : 0;
+    const color = canalColors[c.canal] || COLORS.warning;
+    return `<div class="flex-between mb-8">
+      <span class="flex-center gap-8">
+        <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${color}"></span>
+        ${canalNames[c.canal]||c.canal}
+      </span>
+      <span class="flex-center gap-8">
+        <span class="text-muted text-sm">${c.count} ventas</span>
+        <span class="fw-600">${clp(c.total)}</span>
+        <span class="text-muted text-sm">${pct}%</span>
+      </span>
+    </div>`;
+  }).join('') || '<div class="text-muted text-sm">Sin datos</div>';
+}
+
+loadAll();
+</script>
+{% endblock %}
