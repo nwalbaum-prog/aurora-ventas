@@ -2434,6 +2434,82 @@ def api_plan_delete(pid):
         c.execute("DELETE FROM plan_produccion WHERE id=?", (pid,))
     return jsonify({'ok': True})
 
+@app.route('/api/plan-produccion/<fecha>/confirmar', methods=['POST'])
+def api_plan_confirmar(fecha):
+    """
+    Confirma la producción de una fecha:
+    1. Calcula ingredientes usados según recetas
+    2. Descuenta del inventario
+    3. Marca todos los ítems del plan como 'listo'
+    4. Retorna resumen de descuentos y alertas de stock bajo
+    Accesible por UI (login_required) y por agentes (X-Agent-Key).
+    """
+    import json as _j
+    with db() as c:
+        plan = c.execute(
+            "SELECT * FROM plan_produccion WHERE fecha=? AND estado != 'listo'", (fecha,)
+        ).fetchall()
+
+        if not plan:
+            ya_listos = c.execute(
+                "SELECT COUNT(*) FROM plan_produccion WHERE fecha=? AND estado='listo'", (fecha,)
+            ).fetchone()[0]
+            if ya_listos:
+                return jsonify({'ok': False, 'error': f'Producción del {fecha} ya fue confirmada anteriormente'})
+            return jsonify({'ok': False, 'error': f'Sin plan de producción pendiente para {fecha}'})
+
+        config_row = c.execute("SELECT valor FROM config_negocio WHERE clave='recetas'").fetchone()
+
+    recetas = {}
+    if config_row:
+        try:
+            recetas = _j.loads(config_row['valor'])
+        except Exception:
+            pass
+
+    # Calcular ingredientes totales a descontar
+    descuentos: dict[str, float] = {}
+    for item in plan:
+        codigo   = item['codigo_producto'].upper()
+        cantidad = item['cantidad']
+        if codigo in recetas:
+            for ing, gramos in recetas[codigo].get('ingredientes', {}).items():
+                descuentos[ing] = descuentos.get(ing, 0) + (gramos * cantidad / 1000)  # → kg
+
+    # Descontar inventario y recoger alertas
+    alertas = []
+    with db() as c:
+        for ing, kg in descuentos.items():
+            row = c.execute(
+                "SELECT id, stock_kg, alerta_minimo_kg FROM inventario WHERE ingrediente=?", (ing,)
+            ).fetchone()
+            if row:
+                nuevo_stock = max(0, row['stock_kg'] - kg)
+                c.execute(
+                    "UPDATE inventario SET stock_kg=?, ultima_actualizacion=date('now') WHERE id=?",
+                    (round(nuevo_stock, 3), row['id'])
+                )
+                if nuevo_stock <= row['alerta_minimo_kg']:
+                    alertas.append({
+                        'ingrediente': ing,
+                        'stock_kg':    round(nuevo_stock, 3),
+                        'minimo_kg':   row['alerta_minimo_kg'],
+                    })
+
+        # Marcar plan como listo
+        c.execute(
+            "UPDATE plan_produccion SET estado='listo' WHERE fecha=? AND estado != 'listo'", (fecha,)
+        )
+
+    return jsonify({
+        'ok':        True,
+        'fecha':     fecha,
+        'items_confirmados': len(plan),
+        'descuentos': {k: round(v, 3) for k, v in descuentos.items()},
+        'alertas_stock': alertas,
+    })
+
+
 @app.route('/api/plan-produccion/copiar', methods=['POST'])
 @login_required
 def api_plan_copiar():

@@ -10,6 +10,10 @@
   </div>
   <button class="btn btn-primary" onclick="openModal()"><i class="bi bi-plus-lg"></i> Agregar producto</button>
   <button class="btn btn-ghost" onclick="copiarDesdeAyer()"><i class="bi bi-copy"></i> Copiar de ayer</button>
+  <button class="btn" id="btn-confirmar" onclick="confirmarProduccion()"
+    style="background:var(--success,#22c55e);color:#fff;display:none">
+    <i class="bi bi-check2-all"></i> Confirmar producción
+  </button>
   <div id="resumen-badge" style="margin-left:auto;font-size:.85rem;color:var(--muted)"></div>
 </div>
 
@@ -104,6 +108,8 @@ async function load() {
   document.getElementById('empty-msg').style.display = plan.length ? 'none' : 'block';
   document.getElementById('tabla-plan').style.display = plan.length ? '' : 'none';
   document.getElementById('resumen-badge').textContent = plan.length ? `${plan.length} productos · ${data.total_piezas} piezas totales` : '';
+  const pendientes = plan.filter(p => p.estado !== 'listo');
+  document.getElementById('btn-confirmar').style.display = pendientes.length ? '' : 'none';
 
   const statusColor = {pendiente:'badge-yellow', en_proceso:'badge-blue', listo:'badge-green'};
   document.getElementById('tbody').innerHTML = plan.map(p => `<tr>
@@ -181,6 +187,33 @@ async function copiarDesdeAyer() {
   const desde = d.toISOString().split('T')[0];
   await fetch('/api/plan-produccion/copiar', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({desde, hasta})});
   load(); showToast('Plan copiado de '+desde,'success');
+}
+
+async function confirmarProduccion() {
+  const fecha = fechaInput.value;
+  if (!fecha) return showToast('Selecciona una fecha','error');
+  if (!confirm(`¿Confirmar producción del ${fecha}?\nEsto descontará los ingredientes del inventario.`)) return;
+  const btn = document.getElementById('btn-confirmar');
+  btn.disabled = true; btn.textContent = 'Procesando...';
+  try {
+    const r = await fetch(`/api/plan-produccion/${fecha}/confirmar`, {method:'POST'});
+    const d = await r.json();
+    if (!d.ok) { showToast(d.error || 'Error al confirmar', 'error'); return; }
+
+    let msg = `✅ Producción del ${fecha} confirmada. ${d.items_confirmados} ítem(s) marcados como listos.`;
+    const desc = Object.entries(d.descuentos || {});
+    if (desc.length) msg += '\n\nDescuentos:\n' + desc.map(([k,v]) => `  ${k}: -${v} kg`).join('\n');
+    if (d.alertas_stock?.length) {
+      msg += '\n\n⚠️ Stock bajo mínimo:\n' + d.alertas_stock.map(a => `  ${a.ingrediente}: ${a.stock_kg} kg`).join('\n');
+      showToast('⚠️ Stock bajo en ' + d.alertas_stock.map(a=>a.ingrediente).join(', '), 'error');
+    } else {
+      showToast('Producción confirmada e inventario actualizado','success');
+    }
+    alert(msg);
+    load();
+  } finally {
+    btn.disabled = false; btn.textContent = '✓ Confirmar producción';
+  }
 }
 
 load();
