@@ -2412,13 +2412,13 @@ def api_plan_list():
 def api_plan_create():
     d = request.get_json(silent=True) or {}
     with db() as c:
-        c.execute(
+        cur = c.execute(
             "INSERT INTO plan_produccion (fecha, codigo_producto, nombre_producto, cantidad, estado, notas) VALUES (?,?,?,?,?,?)",
             (d.get('fecha', date.today().isoformat()), d.get('codigo_producto',''),
              d.get('nombre_producto',''), int(d.get('cantidad',0)),
              d.get('estado','pendiente'), d.get('notas',''))
         )
-        rid = c.lastrowid
+        rid = cur.lastrowid
     return jsonify({'ok': True, 'id': rid})
 
 @app.route('/api/plan-produccion/<int:pid>', methods=['PUT'])
@@ -2560,13 +2560,13 @@ def api_gastos_list():
 def api_gastos_create():
     d = request.get_json(silent=True) or {}
     with db() as c:
-        c.execute(
+        cur = c.execute(
             "INSERT INTO gastos (fecha, descripcion, categoria, monto, proveedor, comprobante) VALUES (?,?,?,?,?,?)",
             (d.get('fecha', date.today().isoformat()), d.get('descripcion',''),
              d.get('categoria','General'), float(d.get('monto',0)),
              d.get('proveedor',''), d.get('comprobante',''))
         )
-        rid = c.lastrowid
+        rid = cur.lastrowid
     return jsonify({'ok': True, 'id': rid})
 
 @app.route('/api/gastos/<int:gid>', methods=['PUT'])
@@ -2639,13 +2639,13 @@ def api_agenda_list():
 def api_agenda_create():
     d = request.get_json(silent=True) or {}
     with db() as c:
-        c.execute(
+        cur = c.execute(
             "INSERT INTO agenda (tipo, titulo, descripcion, fecha, hora, completado, prioridad) VALUES (?,?,?,?,?,?,?)",
             (d.get('tipo','tarea'), d.get('titulo',''), d.get('descripcion',''),
              d.get('fecha', date.today().isoformat()), d.get('hora',''),
              0, d.get('prioridad','media'))
         )
-        rid = c.lastrowid
+        rid = cur.lastrowid
     return jsonify({'ok': True, 'id': rid})
 
 @app.route('/api/agenda/<int:aid>', methods=['PUT'])
@@ -2840,13 +2840,13 @@ def api_agentes_agenda_crear():
     """Permite a los agentes crear tareas/eventos en la agenda del dueño."""
     d = request.get_json(silent=True) or {}
     with db() as c:
-        c.execute(
+        cur = c.execute(
             "INSERT INTO agenda (tipo, titulo, descripcion, fecha, hora, prioridad) VALUES (?,?,?,?,?,?)",
             (d.get('tipo','tarea'), d.get('titulo',''), d.get('descripcion',''),
              d.get('fecha', date.today().isoformat()), d.get('hora',''),
              d.get('prioridad','media'))
         )
-        rid = c.lastrowid
+        rid = cur.lastrowid
     return jsonify({'ok': True, 'id': rid})
 
 @app.route('/api/agentes/gastos', methods=['POST'])
@@ -2854,12 +2854,12 @@ def api_agentes_gastos_crear():
     """Permite a los agentes registrar un gasto."""
     d = request.get_json(silent=True) or {}
     with db() as c:
-        c.execute(
+        cur = c.execute(
             "INSERT INTO gastos (fecha, descripcion, categoria, monto, proveedor) VALUES (?,?,?,?,?)",
             (d.get('fecha', date.today().isoformat()), d.get('descripcion',''),
              d.get('categoria','General'), float(d.get('monto',0)), d.get('proveedor',''))
         )
-        rid = c.lastrowid
+        rid = cur.lastrowid
     return jsonify({'ok': True, 'id': rid})
 
 @app.route('/api/agentes/inventario/descontar', methods=['POST'])
@@ -2907,7 +2907,7 @@ def api_agentes_crm_leads_crear():
     modulo = d.get('modulo', 'B2B')
     etapa_default = PIPELINES[modulo][0] if modulo in PIPELINES else 'PROSPECTO'
     with db() as c:
-        c.execute("""
+        cur = c.execute("""
             INSERT INTO crm_leads
             (modulo,nombre,email,telefono,empresa,cargo,rut,zona,direccion,canal_origen,etapa,temperatura,notas,valor_potencial,fecha_creacion)
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
@@ -2928,7 +2928,7 @@ def api_agentes_crm_leads_crear():
             float(d.get('valor_potencial',0)),
             str(date.today()),
         ))
-        lid = c.lastrowid
+        lid = cur.lastrowid
     return jsonify({'ok': True, 'id': lid})
 
 
