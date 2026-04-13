@@ -31,6 +31,8 @@
     <a href="/gastos"        class="nav-item {% if active=='gastos'        %}active{% endif %}"><i class="bi bi-cash-coin"></i> Gastos</a>
     <a href="/agenda"        class="nav-item {% if active=='agenda'        %}active{% endif %}"><i class="bi bi-calendar3"></i> Agenda</a>
     <a href="/configuracion-negocio" class="nav-item {% if active=='config_negocio' %}active{% endif %}"><i class="bi bi-gear"></i> Configuración</a>
+    <div class="nav-divider">SISTEMA</div>
+    <a href="/agentes"        class="nav-item {% if active=='agentes'        %}active{% endif %}"><i class="bi bi-robot"></i> Agentes</a>
     {% if session.get('user_rol') == 'admin' %}
     <a href="/admin/usuarios" class="nav-item {% if active=='admin' %}active{% endif %}"><i class="bi bi-people-fill"></i> Usuarios</a>
     {% endif %}

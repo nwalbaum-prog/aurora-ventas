@@ -1,0 +1,195 @@
+{% extends "base.html" %}
+{% block title %}Agentes — Aurora Bakers{% endblock %}
+{% block page_title %}Dashboard Agentes{% endblock %}
+{% block content %}
+
+<!-- KPIs rápidos -->
+<div id="kpi-row" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:1rem;margin-bottom:1.5rem"></div>
+
+<!-- Fila principal: actividad + métricas -->
+<div style="display:grid;grid-template-columns:1fr 340px;gap:1rem;align-items:start">
+
+  <!-- Feed de actividad -->
+  <div class="card">
+    <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+      <h3><i class="bi bi-activity"></i> Actividad reciente</h3>
+      <span id="last-update" style="font-size:.75rem;color:var(--muted)"></span>
+    </div>
+    <div id="feed" style="max-height:480px;overflow-y:auto"></div>
+  </div>
+
+  <!-- Panel derecho -->
+  <div style="display:flex;flex-direction:column;gap:1rem">
+
+    <!-- Estado sistema -->
+    <div class="card">
+      <div class="card-header"><h3><i class="bi bi-hdd-network"></i> Sistema</h3></div>
+      <div style="padding:.75rem;display:flex;flex-direction:column;gap:.6rem">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <span style="font-size:.85rem">Aurora Ventas (local)</span>
+          <span class="badge badge-green">● online</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <span style="font-size:.85rem">Aurora Bakers (Railway)</span>
+          <span id="railway-status" class="badge badge-yellow">verificando…</span>
+        </div>
+        <div style="margin-top:.25rem;font-size:.75rem;color:var(--muted)">
+          <a href="{{ railway_url }}/health" target="_blank" style="color:var(--muted)">
+            <i class="bi bi-box-arrow-up-right"></i> {{ railway_url.replace('https://','') }}
+          </a>
+        </div>
+      </div>
+    </div>
+
+    <!-- Cron schedule -->
+    <div class="card">
+      <div class="card-header"><h3><i class="bi bi-clock-history"></i> Crons (hora Chile)</h3></div>
+      <div style="padding:.5rem .75rem">
+        <table style="width:100%;font-size:.8rem;border-collapse:collapse">
+          <tr><td style="padding:.3rem 0;color:var(--muted)">L-V 07:00</td><td>Plan producción</td></tr>
+          <tr><td style="padding:.3rem 0;color:var(--muted)">diario 08:00</td><td>Agenda diaria</td></tr>
+          <tr><td style="padding:.3rem 0;color:var(--muted)">L-V 16:00</td><td>Recordatorio prod.</td></tr>
+          <tr><td style="padding:.3rem 0;color:var(--muted)">Mar/Jue 10:00</td><td>Reactivación clientes</td></tr>
+          <tr><td style="padding:.3rem 0;color:var(--muted)">Lun 09:00</td><td>Reporte CRM semanal</td></tr>
+          <tr><td style="padding:.3rem 0;color:var(--muted)">Lun 09:30</td><td>Reporte financiero</td></tr>
+        </table>
+      </div>
+    </div>
+
+    <!-- Alertas inventario -->
+    <div class="card" id="card-alertas" style="display:none">
+      <div class="card-header" style="background:rgba(239,68,68,.08)">
+        <h3 style="color:#ef4444"><i class="bi bi-exclamation-triangle-fill"></i> Stock bajo mínimo</h3>
+      </div>
+      <div id="lista-alertas" style="padding:.5rem .75rem"></div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+const RAILWAY_URL = '{{ railway_url }}';
+const AGENTE_ICONS = {
+  sophie:      'bi-whatsapp',
+  orquestador: 'bi-diagram-3',
+  finanzas:    'bi-currency-dollar',
+  produccion:  'bi-fire',
+  agenda:      'bi-calendar3',
+  analista:    'bi-graph-up',
+  crm:         'bi-people',
+};
+const AGENTE_COLORS = {
+  sophie:      '#25D366',
+  orquestador: '#6366f1',
+  finanzas:    '#f59e0b',
+  produccion:  '#ef4444',
+  agenda:      '#3b82f6',
+  analista:    '#8b5cf6',
+  crm:         '#10b981',
+};
+
+function fmtDate(s) {
+  if (!s) return '';
+  return s.slice(0, 16).replace('T', ' ');
+}
+
+function renderKpis(d) {
+  const kpis = [
+    { label:'Leads CRM',       val: d.crm.total,                   icon:'bi-people',           color:'#6366f1' },
+    { label:'Follow-up hoy',   val: d.crm.seguimientos_hoy,        icon:'bi-bell',             color: d.crm.seguimientos_hoy > 0 ? '#ef4444' : '#22c55e' },
+    { label:'Piezas hoy',      val: d.produccion.piezas_hoy || '—', icon:'bi-fire',            color:'#f97316' },
+    { label:'Alertas stock',   val: d.inventario.alertas.length,   icon:'bi-exclamation-triangle', color: d.inventario.alertas.length > 0 ? '#ef4444' : '#22c55e' },
+    { label:'Tareas pendientes',val:d.agenda.total_pendientes,     icon:'bi-calendar3',        color:'#3b82f6' },
+    { label:'Gastos mes',      val:'$'+Math.round(d.finanzas.gastos_mes||0).toLocaleString('es-CL'), icon:'bi-cash-coin', color:'#f59e0b' },
+  ];
+  document.getElementById('kpi-row').innerHTML = kpis.map(k => `
+    <div class="card" style="padding:1rem;text-align:center">
+      <i class="bi ${k.icon}" style="font-size:1.4rem;color:${k.color}"></i>
+      <div style="font-size:1.4rem;font-weight:700;margin:.25rem 0">${k.val}</div>
+      <div style="font-size:.75rem;color:var(--muted)">${k.label}</div>
+    </div>`).join('');
+}
+
+function renderFeed(actividad) {
+  if (!actividad.length) {
+    document.getElementById('feed').innerHTML = '<div style="padding:2rem;text-align:center;color:var(--muted)"><i class="bi bi-inbox" style="font-size:2rem"></i><p>Sin actividad registrada aún</p></div>';
+    return;
+  }
+  document.getElementById('feed').innerHTML = actividad.map(ep => {
+    const agente  = (ep.agente || '').toLowerCase();
+    const icon    = AGENTE_ICONS[agente]  || 'bi-robot';
+    const color   = AGENTE_COLORS[agente] || '#64748b';
+    const res_ok  = ep.resultado === 'ok';
+    return `
+    <div style="display:flex;gap:.75rem;padding:.85rem 1rem;border-bottom:1px solid var(--border)">
+      <div style="width:32px;height:32px;border-radius:50%;background:${color}22;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+        <i class="bi ${icon}" style="color:${color};font-size:.9rem"></i>
+      </div>
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.2rem">
+          <span style="font-weight:600;font-size:.82rem;text-transform:capitalize">${agente}</span>
+          <span style="font-size:.72rem;color:var(--muted)">${fmtDate(ep.fecha)}</span>
+        </div>
+        <div style="font-size:.8rem;color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"
+             title="${(ep.pregunta||'').replace(/"/g,'&quot;')}">${ep.pregunta || '—'}</div>
+        ${ep.aprendizaje ? `<div style="font-size:.75rem;color:var(--muted);margin-top:.2rem;font-style:italic">${ep.aprendizaje}</div>` : ''}
+      </div>
+      <div style="flex-shrink:0">
+        <span style="font-size:.7rem;padding:.15rem .4rem;border-radius:4px;background:${res_ok?'#22c55e22':'#ef444422'};color:${res_ok?'#22c55e':'#ef4444'}">${ep.resultado||'ok'}</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function renderAlertas(alertas) {
+  const card = document.getElementById('card-alertas');
+  if (!alertas.length) { card.style.display = 'none'; return; }
+  card.style.display = '';
+  document.getElementById('lista-alertas').innerHTML = alertas.map(a =>
+    `<div style="display:flex;justify-content:space-between;padding:.35rem 0;font-size:.82rem;border-bottom:1px solid var(--border)">
+      <span>🔴 ${a.ingrediente}</span>
+      <span>${a.stock_kg} kg / mín ${a.alerta_minimo_kg} kg</span>
+    </div>`
+  ).join('');
+}
+
+async function checkRailway() {
+  try {
+    const r = await fetch(RAILWAY_URL + '/health', {signal: AbortSignal.timeout(5000)});
+    const d = r.ok ? await r.json() : null;
+    const el = document.getElementById('railway-status');
+    if (r.ok) {
+      const crons = d.cron ? Object.keys(d.cron).length : 0;
+      el.textContent = `● online (${crons} crons)`;
+      el.className = 'badge badge-green';
+    } else {
+      el.textContent = `● error ${r.status}`;
+      el.className = 'badge badge-red';
+    }
+  } catch {
+    document.getElementById('railway-status').textContent = '● offline';
+    document.getElementById('railway-status').className = 'badge badge-red';
+  }
+}
+
+async function load() {
+  try {
+    const r = await fetch('/api/agentes/estado');
+    const d = await r.json();
+    renderKpis(d);
+    renderFeed(d.actividad);
+    renderAlertas(d.inventario.alertas);
+    document.getElementById('last-update').textContent =
+      'Actualizado: ' + new Date().toLocaleTimeString('es-CL');
+  } catch(e) {
+    console.error('Error cargando estado agentes:', e);
+  }
+}
+
+load();
+checkRailway();
+// Auto-refresh cada 30 segundos
+setInterval(load, 30000);
+setInterval(checkRailway, 60000);
+</script>
+{% endblock %}

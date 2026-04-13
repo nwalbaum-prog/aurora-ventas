@@ -610,10 +610,15 @@ def health():
 
 @app.before_request
 def _validate_agent_key():
-    """Valida X-Agent-Key en todas las rutas /api/agentes/*"""
+    """Valida X-Agent-Key en rutas /api/agentes/*.
+    Permite acceso si: key correcta O sesión web activa (admin en navegador)."""
     if request.path.startswith('/api/agentes/'):
         key = request.headers.get('X-Agent-Key', '')
-        if AGENT_API_KEY and key != AGENT_API_KEY:
+        if key == AGENT_API_KEY:
+            return  # key correcta
+        if session.get('user_id'):
+            return  # sesión web activa
+        if AGENT_API_KEY:
             return jsonify({'error': 'Unauthorized'}), 401
 
 
@@ -3085,6 +3090,90 @@ def api_agentes_memoria_leer(agente):
             (agente, limit)
         ).fetchall()
     return jsonify([dict(r) for r in rows])
+
+
+@app.route('/api/agentes/estado')
+def api_agentes_estado():
+    """Dashboard unificado: actividad reciente, métricas clave, estado del sistema."""
+    import json as _j
+    with db() as c:
+        # Actividad reciente (últimas 30 interacciones)
+        actividad = [dict(r) for r in c.execute(
+            "SELECT * FROM agente_memoria ORDER BY id DESC LIMIT 30"
+        ).fetchall()]
+
+        # CRM métricas
+        crm_total   = c.execute("SELECT COUNT(*) FROM crm_leads").fetchone()[0]
+        crm_hoy     = c.execute(
+            "SELECT COUNT(*) FROM crm_leads WHERE date(fecha_proximo_contacto)<=date('now')"
+            " AND etapa NOT IN ('GANADO','PERDIDO')"
+        ).fetchone()[0]
+        crm_etapas  = {r['etapa']: r['cnt'] for r in c.execute(
+            "SELECT etapa, COUNT(*) as cnt FROM crm_leads GROUP BY etapa"
+        ).fetchall()}
+
+        # Inventario alertas
+        inv_alertas = [dict(r) for r in c.execute(
+            "SELECT ingrediente, stock_kg, alerta_minimo_kg FROM inventario"
+            " WHERE stock_kg <= alerta_minimo_kg"
+        ).fetchall()]
+        inv_total   = c.execute("SELECT COUNT(*) FROM inventario").fetchone()[0]
+
+        # Agenda tareas pendientes
+        agenda_hoy  = c.execute(
+            "SELECT COUNT(*) FROM agenda WHERE completado=0 AND date(fecha)=date('now')"
+        ).fetchone()[0]
+        agenda_tot  = c.execute(
+            "SELECT COUNT(*) FROM agenda WHERE completado=0"
+        ).fetchone()[0]
+
+        # Producción hoy
+        plan_hoy    = [dict(r) for r in c.execute(
+            "SELECT codigo_producto, nombre_producto, cantidad, estado"
+            " FROM plan_produccion WHERE fecha=date('now')"
+        ).fetchall()]
+        plan_piezas = sum(p['cantidad'] for p in plan_hoy)
+        plan_listos = sum(1 for p in plan_hoy if p['estado'] == 'listo')
+
+        # Gastos del mes
+        mes_actual  = datetime.now().strftime('%Y-%m')
+        gastos_mes  = c.execute(
+            "SELECT COALESCE(SUM(monto),0) FROM gastos WHERE strftime('%Y-%m',fecha)=?",
+            (mes_actual,)
+        ).fetchone()[0]
+
+    return jsonify({
+        'ts': datetime.now().isoformat(),
+        'actividad': actividad,
+        'crm': {
+            'total': crm_total,
+            'seguimientos_hoy': crm_hoy,
+            'por_etapa': crm_etapas,
+        },
+        'inventario': {
+            'total_items': inv_total,
+            'alertas': inv_alertas,
+        },
+        'agenda': {
+            'pendientes_hoy': agenda_hoy,
+            'total_pendientes': agenda_tot,
+        },
+        'produccion': {
+            'items_hoy': len(plan_hoy),
+            'piezas_hoy': plan_piezas,
+            'listos': plan_listos,
+        },
+        'finanzas': {
+            'gastos_mes': round(gastos_mes, 0),
+        },
+    })
+
+
+@app.route('/agentes')
+@login_required
+def page_agentes():
+    railway_url = os.environ.get('RAILWAY_BAKERS_URL', 'https://web-production-40d5b.up.railway.app')
+    return render_template('agentes.html', active='agentes', railway_url=railway_url)
 
 
 @app.route('/api/agentes/crm/leads/<int:lid>/proximo-contacto', methods=['POST'])
