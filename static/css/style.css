@@ -1,26 +1,38 @@
-/* Aurora Bakers — dark mode dashboard */
+/* Aurora Bakers — dark mode dashboard — paleta oficial */
 :root {
-  --bg:          #0d1117;
-  --bg-card:     #161b22;
-  --bg-input:    #21262d;
-  --border:      #30363d;
-  --text:        #c9d1d9;
-  --muted:       #8b949e;
-  --accent:      #a855f7;
-  --accent-h:    #9333ea;
-  --accent-dim:  rgba(168,85,247,.15);
-  --success:     #3fb950;
-  --success-dim: rgba(63,185,80,.15);
-  --warning:     #e3b341;
-  --warning-dim: rgba(227,179,65,.15);
-  --danger:      #f85149;
-  --danger-dim:  rgba(248,81,73,.15);
-  --info:        #58a6ff;
-  --info-dim:    rgba(88,166,255,.15);
-  --sw:          220px;
-  --th:          58px;
-  --r:           8px;
-  --rl:          12px;
+  /* Fondos — espresso oscuro cálido */
+  --bg:          #0f0c0a;
+  --bg-card:     #1a1512;
+  --bg-input:    #251d16;
+  --border:      #3d3028;
+
+  /* Texto — crema cálida */
+  --text:        #ecd9c4;
+  --muted:       #9e8878;
+
+  /* Aurora Bakers rojo — color principal del logo */
+  --accent:      #C8312E;
+  --accent-h:    #a82826;
+  --accent-dim:  rgba(200,49,46,.15);
+
+  /* Trigo dorado — color secundario de la web */
+  --aurora:      #C8956B;
+  --aurora-dim:  rgba(200,149,107,.15);
+
+  /* Estados funcionales */
+  --success:     #4ab870;
+  --success-dim: rgba(74,184,112,.15);
+  --warning:     #e0a832;
+  --warning-dim: rgba(224,168,50,.15);
+  --danger:      #e85555;
+  --danger-dim:  rgba(232,85,85,.15);
+  --info:        #6aade8;
+  --info-dim:    rgba(106,173,232,.15);
+
+  --sw:  220px;
+  --th:  58px;
+  --r:   8px;
+  --rl:  12px;
 }
 
 *,*::before,*::after { box-sizing:border-box; margin:0; padding:0; }
@@ -44,13 +56,20 @@ a { color:inherit; text-decoration:none; }
 
 .sidebar-logo {
   display:flex; align-items:center; gap:12px;
-  padding:20px 20px 16px;
+  padding:18px 16px 14px;
   border-bottom:1px solid var(--border);
+  background:linear-gradient(135deg, rgba(200,49,46,.12) 0%, transparent 70%);
 }
 
-.logo-icon { font-size:26px; }
-.logo-title { font-size:14px; font-weight:700; color:#fff; letter-spacing:-.3px; }
-.logo-sub   { font-size:11px; color:var(--muted); }
+.logo-icon {
+  width:36px; height:36px; border-radius:50%;
+  background:var(--accent);
+  display:flex; align-items:center; justify-content:center;
+  font-size:18px; flex-shrink:0;
+  box-shadow:0 2px 8px rgba(200,49,46,.4);
+}
+.logo-title { font-size:14px; font-weight:800; color:#fff; letter-spacing:-.3px; }
+.logo-sub   { font-size:10.5px; color:var(--aurora); font-weight:500; }
 
 .sidebar-nav {
   flex:1; padding:12px 10px;
@@ -64,8 +83,8 @@ a { color:inherit; text-decoration:none; }
   color:var(--muted); font-size:13.5px; font-weight:500;
   transition:all .15s; cursor:pointer;
 }
-.nav-item:hover { background:rgba(255,255,255,.06); color:var(--text); }
-.nav-item.active { background:var(--accent-dim); color:var(--accent); }
+.nav-item:hover { background:rgba(200,49,46,.08); color:var(--text); }
+.nav-item.active { background:var(--accent-dim); color:var(--accent); border-left:2px solid var(--accent); padding-left:10px; }
 .nav-item i { font-size:16px; width:18px; text-align:center; flex-shrink:0; }
 .nav-divider { font-size:10px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:var(--text-3); padding:12px 12px 4px; margin-top:4px; }
 
@@ -84,8 +103,9 @@ a { color:inherit; text-decoration:none; }
   border-bottom:1px solid var(--border);
   display:flex; align-items:center; justify-content:space-between;
   padding:0 24px; z-index:50;
+  box-shadow:0 1px 0 rgba(200,49,46,.12);
 }
-.topbar h1 { font-size:17px; font-weight:700; color:#fff; }
+.topbar h1 { font-size:17px; font-weight:800; color:#fff; letter-spacing:-.3px; }
 .topbar-meta { font-size:12px; color:var(--muted); }
 
 .content { padding:24px; }
@@ -169,8 +189,8 @@ thead th {
   border-bottom:1px solid var(--border);
   white-space:nowrap; text-align:left;
 }
-tbody tr { border-bottom:1px solid rgba(48,54,61,.5); transition:background .12s; }
-tbody tr:hover { background:rgba(255,255,255,.025); }
+tbody tr { border-bottom:1px solid rgba(61,48,40,.6); transition:background .12s; }
+tbody tr:hover { background:rgba(200,49,46,.04); }
 tbody td { padding:11px 14px; }
 td.mono { font-family:'SF Mono',Consolas,monospace; font-size:13px; }
 td.right,th.right { text-align:right; }
@@ -218,12 +238,12 @@ input[type="date"] { color-scheme:dark; }
 .btn-primary:hover { background:var(--accent-h); }
 .btn-secondary { background:var(--bg-input); color:var(--text); border:1px solid var(--border); }
 .btn-secondary:hover { border-color:var(--muted); }
-.btn-success  { background:var(--success-dim); color:var(--success); border:1px solid rgba(63,185,80,.25); }
-.btn-success:hover { background:rgba(63,185,80,.25); }
-.btn-danger   { background:var(--danger-dim); color:var(--danger); border:1px solid rgba(248,81,73,.2); }
-.btn-danger:hover { background:rgba(248,81,73,.25); }
-.btn-warning  { background:var(--warning-dim); color:var(--warning); border:1px solid rgba(227,179,65,.25); }
-.btn-warning:hover { background:rgba(227,179,65,.25); }
+.btn-success  { background:var(--success-dim); color:var(--success); border:1px solid rgba(74,184,112,.25); }
+.btn-success:hover { background:rgba(74,184,112,.25); }
+.btn-danger   { background:var(--danger-dim); color:var(--danger); border:1px solid rgba(232,85,85,.2); }
+.btn-danger:hover { background:rgba(232,85,85,.25); }
+.btn-warning  { background:var(--warning-dim); color:var(--warning); border:1px solid rgba(224,168,50,.25); }
+.btn-warning:hover { background:rgba(224,168,50,.25); }
 .btn-sm { padding:5px 10px; font-size:12px; }
 .btn-icon { padding:6px; width:30px; height:30px; display:inline-flex; align-items:center; justify-content:center; }
 .btn:disabled { opacity:.5; cursor:not-allowed; }
@@ -247,12 +267,13 @@ input[type="date"] { color-scheme:dark; }
 .badge-yellow      { background:var(--warning-dim); color:var(--warning); }
 .badge-blue        { background:var(--info-dim);    color:var(--info); }
 .badge-gray        { background:rgba(255,255,255,.06); color:var(--muted); }
-.badge-purple      { background:var(--accent-dim);  color:var(--accent); }
+.badge-purple      { background:var(--aurora-dim);   color:var(--aurora); }
+.badge-aurora      { background:var(--accent-dim);   color:var(--accent); }
 
 /* ── Modal ────────────────────────────────────────────────── */
 .modal-overlay {
   position:fixed; inset:0;
-  background:rgba(0,0,0,.75);
+  background:rgba(5,3,2,.82);
   z-index:200;
   display:flex; align-items:center; justify-content:center;
   opacity:0; pointer-events:none; transition:opacity .2s;

@@ -69,11 +69,12 @@ let periodo = 'mes';
 let chartLinea, chartProd, chartCanal;
 
 const COLORS = {
-  accent:  '#a855f7',
-  success: '#3fb950',
-  info:    '#58a6ff',
-  warning: '#e3b341',
-  danger:  '#f85149',
+  accent:  '#C8312E',
+  aurora:  '#C8956B',
+  success: '#4ab870',
+  info:    '#6aade8',
+  warning: '#e0a832',
+  danger:  '#e85555',
 };
 
 const chartDefaults = {
@@ -137,7 +138,7 @@ async function loadAll() {
       datasets: [{
         data: ventasData.values,
         borderColor: COLORS.accent,
-        backgroundColor: 'rgba(168,85,247,.1)',
+        backgroundColor: 'rgba(200,49,46,.1)',
         borderWidth: 2,
         pointRadius: ventasData.values.length > 30 ? 0 : 3,
         pointBackgroundColor: COLORS.accent,
@@ -177,7 +178,7 @@ async function loadAll() {
 
   // Dónut: por canal
   const canalNames = { local:'Local', online:'Online', suscripcion:'Suscripción' };
-  const canalColors = { local: COLORS.info, online: COLORS.accent, suscripcion: COLORS.success };
+  const canalColors = { local: COLORS.info, online: COLORS.aurora, suscripcion: COLORS.success };
   if (chartCanal) chartCanal.destroy();
   chartCanal = new Chart(document.getElementById('chart-canales'), {
     type: 'doughnut',
