@@ -253,7 +253,6 @@ def init_db():
             ("productos",     "precio_mayorista",   "ALTER TABLE productos ADD COLUMN precio_mayorista REAL NOT NULL DEFAULT 0"),
             ("productos",     "categoria",          "ALTER TABLE productos ADD COLUMN categoria TEXT NOT NULL DEFAULT 'pan'"),
             ("suscripciones", "entregas_realizadas","ALTER TABLE suscripciones ADD COLUMN entregas_realizadas INTEGER NOT NULL DEFAULT 0"),
-            ("crm_leads",    "direccion",           "ALTER TABLE crm_leads ADD COLUMN direccion TEXT NOT NULL DEFAULT ''"),
         ]
         for table, col, sql in migrations:
             if not _col_exists(c, table, col):
@@ -413,6 +412,10 @@ Aurora Bakers | panypasta.cl""",
                     ),
                 ]
             )
+
+        # Migración crm_leads (debe correr después de que la tabla exista)
+        if not _col_exists(c, 'crm_leads', 'direccion'):
+            c.execute("ALTER TABLE crm_leads ADD COLUMN direccion TEXT NOT NULL DEFAULT ''")
 
         # ── Tabla memoria episódica agentes ──────────────────────────────────
         c.execute("""
