@@ -5,23 +5,27 @@
 
 <!-- Filtros -->
 <div class="card mb-24" style="padding:1rem 1.25rem">
-  <div style="display:flex;flex-wrap:wrap;gap:.75rem;align-items:flex-end">
+  <!-- Fila 1: período -->
+  <div style="display:flex;flex-wrap:wrap;gap:.75rem;align-items:flex-end;margin-bottom:.75rem">
     <div>
       <label class="label">Período</label>
       <div class="filter-tabs" id="tabs-periodo">
-        <button class="filter-tab" onclick="setPeriodo(this,'semana')">Semana</button>
+        <button class="filter-tab" onclick="setPeriodo(this,'semana')">Esta semana</button>
         <button class="filter-tab active" onclick="setPeriodo(this,'mes')">Mes actual</button>
         <button class="filter-tab" onclick="setPeriodo(this,'mes_anterior')">Mes anterior</button>
         <button class="filter-tab" onclick="setPeriodo(this,'personalizado')">Personalizado</button>
       </div>
     </div>
-    <div id="custom-range" style="display:none;gap:.5rem;align-items:center;display:none">
+    <div id="custom-range" style="display:none;gap:.5rem;align-items:flex-end">
       <div><label class="label">Desde</label><input id="f-desde" type="date" class="input" style="width:140px" /></div>
       <div><label class="label">Hasta</label><input id="f-hasta" type="date" class="input" style="width:140px" /></div>
     </div>
+  </div>
+  <!-- Fila 2: filtros específicos -->
+  <div style="display:flex;flex-wrap:wrap;gap:.75rem;align-items:flex-end">
     <div>
       <label class="label">Canal</label>
-      <select id="f-canal" class="input" style="width:140px" onchange="load()">
+      <select id="f-canal" class="input" style="width:130px">
         <option value="">Todos</option>
         <option value="local">Local</option>
         <option value="online">Online</option>
@@ -29,19 +33,35 @@
       </select>
     </div>
     <div>
+      <label class="label">Tipo cliente</label>
+      <select id="f-tipo-cliente" class="input" style="width:140px">
+        <option value="">Todos</option>
+        <option value="CLIENTE">Cliente</option>
+        <option value="MAYORISTA">Mayorista</option>
+        <option value="SUSCRIPTOR">Suscriptor</option>
+      </select>
+    </div>
+    <div>
       <label class="label">Estado pago</label>
-      <select id="f-pago" class="input" style="width:140px" onchange="load()">
+      <select id="f-pago" class="input" style="width:130px">
         <option value="">Todos</option>
         <option value="PAGADO">Pagado</option>
         <option value="PENDIENTE">Pendiente</option>
       </select>
     </div>
+    <div>
+      <label class="label">Cliente</label>
+      <select id="f-cliente" class="input" style="width:180px">
+        <option value="">Todos los clientes</option>
+      </select>
+    </div>
     <button class="btn btn-primary" onclick="load()"><i class="bi bi-search"></i> Buscar</button>
+    <button class="btn btn-secondary" onclick="limpiarFiltros()"><i class="bi bi-x"></i> Limpiar</button>
   </div>
 </div>
 
 <!-- KPIs -->
-<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:1rem;margin-bottom:1.5rem" id="kpi-row"></div>
+<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:1rem;margin-bottom:1.5rem" id="kpi-row"></div>
 
 <!-- Tabla detalle -->
 <div class="card">
@@ -54,6 +74,7 @@
       <thead><tr>
         <th>Fecha</th>
         <th>Cliente</th>
+        <th>Tipo</th>
         <th>Canal</th>
         <th>Productos</th>
         <th class="right">Total</th>
@@ -68,27 +89,33 @@
 
 <script>
 let periodo = 'mes';
-let desde = '', hasta = '';
+let clientes = [];
+
+const CANAL      = { local:'Local', online:'Online', suscripcion:'Suscripción' };
+const CANAL_CLS  = { local:'badge-blue', online:'badge-purple', suscripcion:'badge-green' };
+const TIPO_CLS   = { CLIENTE:'badge-gray', MAYORISTA:'badge-blue', SUSCRIPTOR:'badge-green' };
+
+// Cargar clientes para el selector
+async function cargarClientes() {
+  clientes = await api('GET', '/api/clientes');
+  const sel = document.getElementById('f-cliente');
+  sel.innerHTML = '<option value="">Todos los clientes</option>' +
+    clientes.map(c => `<option value="${c.id}">${c.nombre}${c.es_suscriptor?' ⭐':''}</option>`).join('');
+}
 
 function calcRango(p) {
   const hoy = new Date();
   const y = hoy.getFullYear(), m = hoy.getMonth(), d = hoy.getDate();
   const pad = n => String(n).padStart(2,'0');
-  const fmt = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
-
+  const fmt = dt => `${dt.getFullYear()}-${pad(dt.getMonth()+1)}-${pad(dt.getDate())}`;
   if (p === 'semana') {
-    const lun = new Date(hoy); lun.setDate(d - hoy.getDay() + 1);
+    const lun = new Date(hoy); lun.setDate(d - (hoy.getDay()||7) + 1);
     return [fmt(lun), fmt(hoy)];
   }
-  if (p === 'mes') {
-    return [`${y}-${pad(m+1)}-01`, fmt(hoy)];
-  }
+  if (p === 'mes') return [`${y}-${pad(m+1)}-01`, fmt(hoy)];
   if (p === 'mes_anterior') {
-    const ini = new Date(y, m-1, 1);
-    const fin = new Date(y, m, 0);
-    return [fmt(ini), fmt(fin)];
+    return [fmt(new Date(y, m-1, 1)), fmt(new Date(y, m, 0))];
   }
-  // personalizado
   return [
     document.getElementById('f-desde').value,
     document.getElementById('f-hasta').value,
@@ -104,14 +131,28 @@ function setPeriodo(btn, p) {
   if (p !== 'personalizado') load();
 }
 
+function limpiarFiltros() {
+  document.getElementById('f-canal').value = '';
+  document.getElementById('f-tipo-cliente').value = '';
+  document.getElementById('f-pago').value = '';
+  document.getElementById('f-cliente').value = '';
+  load();
+}
+
 async function load() {
-  [desde, hasta] = calcRango(periodo);
+  const [desde, hasta] = calcRango(periodo);
   if (!desde || !hasta) return;
-  const canal = document.getElementById('f-canal').value;
-  const pago  = document.getElementById('f-pago').value;
+
+  const canal      = document.getElementById('f-canal').value;
+  const tipoCliente= document.getElementById('f-tipo-cliente').value;
+  const pago       = document.getElementById('f-pago').value;
+  const clienteId  = document.getElementById('f-cliente').value;
+
   let url = `/api/ventas?desde=${desde}&hasta=${hasta}`;
-  if (canal) url += `&canal=${canal}`;
-  if (pago)  url += `&estado_pago=${pago}`;
+  if (canal)       url += `&canal=${canal}`;
+  if (tipoCliente) url += `&tipo_cliente=${tipoCliente}`;
+  if (pago)        url += `&estado_pago=${pago}`;
+  if (clienteId)   url += `&cliente_id=${clienteId}`;
 
   const ventas = await api('GET', url);
 
@@ -119,19 +160,18 @@ async function load() {
   const total     = ventas.reduce((s,v) => s + v.total, 0);
   const count     = ventas.length;
   const ticket    = count ? total/count : 0;
-  const pagado    = ventas.filter(v => v.estado_pago === 'PAGADO').reduce((s,v) => s+v.total, 0);
-  const pendiente = ventas.filter(v => v.estado_pago === 'PENDIENTE').reduce((s,v) => s+v.total, 0);
-  const uniqs     = new Set(ventas.filter(v => v.cliente_id).map(v => v.cliente_id)).size;
+  const pagado    = ventas.filter(v => v.estado_pago==='PAGADO').reduce((s,v)=>s+v.total,0);
+  const pendiente = ventas.filter(v => v.estado_pago==='PENDIENTE').reduce((s,v)=>s+v.total,0);
+  const uniqs     = new Set(ventas.filter(v=>v.cliente_id).map(v=>v.cliente_id)).size;
 
-  const kpis = [
-    { label:'Total ventas',     val: clp(total),          icon:'bi-cash-stack',      color:'#a855f7' },
-    { label:'N° ventas',        val: count,                icon:'bi-receipt',         color:'#58a6ff' },
-    { label:'Ticket promedio',  val: clp(ticket),          icon:'bi-calculator',      color:'#e3b341' },
-    { label:'Cobrado',          val: clp(pagado),          icon:'bi-check-circle',    color:'#3fb950' },
-    { label:'Por cobrar',       val: clp(pendiente),       icon:'bi-clock-history',   color: pendiente > 0 ? '#f85149' : '#3fb950' },
-    { label:'Clientes únicos',  val: uniqs,                icon:'bi-people',          color:'#10b981' },
-  ];
-  document.getElementById('kpi-row').innerHTML = kpis.map(k => `
+  document.getElementById('kpi-row').innerHTML = [
+    { label:'Total ventas',    val:clp(total),    icon:'bi-cash-stack',    color:'#a855f7' },
+    { label:'N° ventas',       val:count,          icon:'bi-receipt',       color:'#58a6ff' },
+    { label:'Ticket promedio', val:clp(ticket),    icon:'bi-calculator',    color:'#e3b341' },
+    { label:'Cobrado',         val:clp(pagado),    icon:'bi-check-circle',  color:'#3fb950' },
+    { label:'Por cobrar',      val:clp(pendiente), icon:'bi-clock-history', color:pendiente>0?'#f85149':'#3fb950' },
+    { label:'Clientes únicos', val:uniqs,          icon:'bi-people',        color:'#10b981' },
+  ].map(k => `
     <div class="card" style="padding:1rem;text-align:center">
       <i class="bi ${k.icon}" style="font-size:1.3rem;color:${k.color}"></i>
       <div style="font-size:1.3rem;font-weight:700;margin:.25rem 0">${k.val}</div>
@@ -140,33 +180,31 @@ async function load() {
 
   document.getElementById('count-badge').textContent = count + ' registros';
 
-  const CANAL = { local:'Local', online:'Online', suscripcion:'Suscripción' };
-  const CANAL_CLASS = { local:'badge-blue', online:'badge-purple', suscripcion:'badge-green' };
-
   document.getElementById('tbody').innerHTML = ventas.map(v => {
-    const items = (v.items || []).map(i => `${i.cantidad} ${i.nombre}`).join(', ');
-    const pagoBadge = v.estado_pago === 'PAGADO'
+    const items = (v.items||[]).map(i=>`${Math.round(i.cantidad)}×${i.nombre}`).join(', ');
+    const pagoBadge = v.estado_pago==='PAGADO'
       ? '<span class="badge badge-green">Pagado</span>'
       : '<span class="badge badge-red">Pendiente</span>';
-    const despBadge = v.estado_despacho === 'RETIRO EN TIENDA'
-      ? '<span class="badge badge-blue">Retiro</span>'
-      : v.estado_despacho === 'DESPACHADO' ? '<span class="badge badge-green">Despachado</span>'
-      : v.estado_despacho === 'EN PREPARACION' ? '<span class="badge badge-yellow">Preparando</span>'
+    const despBadge = v.estado_despacho==='RETIRO EN TIENDA' ? '<span class="badge badge-blue">Retiro</span>'
+      : v.estado_despacho==='DESPACHADO'      ? '<span class="badge badge-green">Despachado</span>'
+      : v.estado_despacho==='EN PREPARACION'  ? '<span class="badge badge-yellow">Preparando</span>'
       : '<span class="badge badge-gray">Pendiente</span>';
+    const tipoBadge = `<span class="badge ${TIPO_CLS[v.tipo_cliente]||'badge-gray'}" style="font-size:.68rem">${v.tipo_cliente||'—'}</span>`;
     return `<tr>
       <td style="white-space:nowrap">${v.fecha}</td>
       <td>${v.cliente_nombre || '<span style="color:var(--muted)">Sin cliente</span>'}</td>
-      <td><span class="badge ${CANAL_CLASS[v.canal]||'badge-gray'}">${CANAL[v.canal]||v.canal}</span></td>
-      <td style="font-size:.8rem;max-width:240px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${items}">${items || '—'}</td>
+      <td>${tipoBadge}</td>
+      <td><span class="badge ${CANAL_CLS[v.canal]||'badge-gray'}">${CANAL[v.canal]||v.canal}</span></td>
+      <td style="font-size:.78rem;max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${items}">${items||'—'}</td>
       <td class="right"><strong>${clp(v.total)}</strong></td>
       <td>${pagoBadge}</td>
       <td>${despBadge}</td>
-      <td style="color:var(--muted);font-size:.8rem">${v.fecha_despacho || '—'}</td>
+      <td style="color:var(--muted);font-size:.78rem;white-space:nowrap">${v.fecha_despacho||'—'}</td>
     </tr>`;
-  }).join('') || '<tr><td colspan="8"><div class="empty"><i class="bi bi-receipt"></i><p>Sin ventas en el período</p></div></td></tr>';
+  }).join('') || '<tr><td colspan="9"><div class="empty"><i class="bi bi-receipt"></i><p>Sin ventas en el período seleccionado</p></div></td></tr>';
 }
 
-// Inicializar fechas personalizadas con el mes actual
+// Init fechas personalizadas
 (function(){
   const hoy = new Date();
   const y = hoy.getFullYear(), m = String(hoy.getMonth()+1).padStart(2,'0');
@@ -174,6 +212,7 @@ async function load() {
   document.getElementById('f-hasta').value = hoy.toISOString().split('T')[0];
 })();
 
+cargarClientes();
 load();
 </script>
 {% endblock %}
