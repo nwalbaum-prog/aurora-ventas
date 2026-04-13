@@ -790,6 +790,18 @@ def page_suscripciones(): return render_template('suscripciones.html', active='s
 @login_required
 def page_reportes():      return render_template('reportes.html',       active='reportes')
 
+@app.route('/reporte-ventas')
+@login_required
+def page_reporte_ventas(): return render_template('reporte_ventas.html', active='reporte_ventas')
+
+@app.route('/finanzas')
+@login_required
+def page_finanzas():      return render_template('finanzas.html',        active='finanzas')
+
+@app.route('/despacho')
+@login_required
+def page_despacho():      return render_template('despacho.html',        active='despacho')
+
 # ── API: Productos ────────────────────────────────────────────────────────────
 
 @app.route('/api/productos', methods=['GET'])
@@ -3183,6 +3195,93 @@ def api_agentes_crm_proximo_contacto(lid):
     fecha = d.get('fecha', '')
     with db() as c:
         c.execute("UPDATE crm_leads SET fecha_proximo_contacto=? WHERE id=?", (fecha, lid))
+    return jsonify({'ok': True})
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# FINANZAS
+# ════════════════════════════════════════════════════════════════════════════
+
+@app.route('/api/finanzas/pl')
+@login_required
+def api_finanzas_pl():
+    """P&L mensual: ingresos vs gastos de los últimos N meses."""
+    meses = int(request.args.get('meses', 6))
+    with db() as c:
+        # Ingresos (ventas pagadas)
+        ingresos_rows = c.execute("""
+            SELECT strftime('%Y-%m', fecha) as mes, COALESCE(SUM(total),0) as total
+            FROM ventas
+            WHERE fecha >= date('now', ? || ' months')
+            GROUP BY mes ORDER BY mes
+        """, (f'-{meses}',)).fetchall()
+        # Todos los ingresos (pagados + pendientes) para ver facturación
+        facturacion_rows = c.execute("""
+            SELECT strftime('%Y-%m', fecha) as mes, COALESCE(SUM(total),0) as total
+            FROM ventas
+            WHERE fecha >= date('now', ? || ' months')
+              AND estado_pago = 'PAGADO'
+            GROUP BY mes ORDER BY mes
+        """, (f'-{meses}',)).fetchall()
+        # Gastos
+        gastos_rows = c.execute("""
+            SELECT strftime('%Y-%m', fecha) as mes, COALESCE(SUM(monto),0) as total
+            FROM gastos
+            WHERE fecha >= date('now', ? || ' months')
+            GROUP BY mes ORDER BY mes
+        """, (f'-{meses}',)).fetchall()
+        # Cobros pendientes
+        pendientes = c.execute("""
+            SELECT v.id, v.fecha, v.total, v.notas, v.fecha_despacho,
+                   c.nombre as cliente_nombre, c.telefono as cliente_telefono
+            FROM ventas v LEFT JOIN clientes c ON c.id=v.cliente_id
+            WHERE v.estado_pago='PENDIENTE'
+            ORDER BY v.fecha DESC
+        """).fetchall()
+        # Márgenes por producto (ventas del mes actual)
+        mes_ini = date.today().replace(day=1).isoformat()
+        margenes = c.execute("""
+            SELECT p.nombre, p.precio, p.costo,
+                   CASE WHEN p.precio>0 THEN ROUND((p.precio-p.costo)*100.0/p.precio,1) ELSE 0 END as margen_pct,
+                   COUNT(vi.id) as ventas_cnt,
+                   COALESCE(SUM(vi.cantidad),0) as unidades,
+                   COALESCE(SUM(vi.cantidad*vi.precio_unitario),0) as facturado
+            FROM productos p
+            LEFT JOIN venta_items vi ON vi.producto_id=p.id
+            LEFT JOIN ventas vn ON vn.id=vi.venta_id AND vn.fecha>=?
+            WHERE p.activo=1
+            GROUP BY p.id ORDER BY facturado DESC
+        """, (mes_ini,)).fetchall()
+
+    # Merge por mes
+    meses_set = sorted(set([r['mes'] for r in ingresos_rows] + [r['mes'] for r in gastos_rows]))
+    ing_map  = {r['mes']: r['total'] for r in ingresos_rows}
+    fact_map = {r['mes']: r['total'] for r in facturacion_rows}
+    gst_map  = {r['mes']: r['total'] for r in gastos_rows}
+    pl = []
+    for mes in meses_set:
+        ing  = ing_map.get(mes, 0)
+        fact = fact_map.get(mes, 0)
+        gst  = gst_map.get(mes, 0)
+        pl.append({'mes': mes, 'ingresos': ing, 'gastos': gst, 'utilidad': ing - gst})
+
+    return jsonify({
+        'pl': pl,
+        'pendientes': [dict(r) for r in pendientes],
+        'margenes': [dict(r) for r in margenes],
+        'resumen': {
+            'total_pendiente': sum(r['total'] for r in pendientes),
+            'total_pendiente_count': len(pendientes),
+        }
+    })
+
+
+@app.route('/api/finanzas/pendientes/<int:vid>/cobrar', methods=['POST'])
+@login_required
+def api_finanzas_cobrar(vid):
+    """Marca una venta como PAGADO."""
+    with db() as c:
+        c.execute("UPDATE ventas SET estado_pago='PAGADO' WHERE id=?", (vid,))
     return jsonify({'ok': True})
 
 

@@ -1,0 +1,231 @@
+{% extends "base.html" %}
+{% block title %}Finanzas — Aurora Bakers{% endblock %}
+{% block page_title %}Finanzas{% endblock %}
+{% block content %}
+
+<!-- Selector de meses -->
+<div style="display:flex;align-items:center;gap:.75rem;margin-bottom:1.5rem">
+  <label class="label" style="margin:0">Período:</label>
+  <div class="filter-tabs">
+    <button class="filter-tab" onclick="setMeses(this,3)">3 meses</button>
+    <button class="filter-tab active" onclick="setMeses(this,6)">6 meses</button>
+    <button class="filter-tab" onclick="setMeses(this,12)">12 meses</button>
+  </div>
+</div>
+
+<!-- KPIs resumen -->
+<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:1rem;margin-bottom:1.5rem" id="kpi-row"></div>
+
+<!-- P&L Chart + tabla -->
+<div class="grid-2 mb-24">
+  <div class="card">
+    <div class="card-header"><h3><i class="bi bi-graph-up-arrow"></i> Ingresos vs Gastos</h3></div>
+    <div style="padding:1rem;position:relative;height:240px">
+      <canvas id="chart-pl"></canvas>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-header"><h3><i class="bi bi-table"></i> P&L por mes</h3></div>
+    <div style="overflow-x:auto">
+      <table class="table" style="margin:0">
+        <thead><tr>
+          <th>Mes</th>
+          <th class="right">Ingresos</th>
+          <th class="right">Gastos</th>
+          <th class="right">Utilidad</th>
+        </tr></thead>
+        <tbody id="pl-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Cobros pendientes -->
+<div class="card mb-24">
+  <div class="card-header">
+    <h3><i class="bi bi-clock-history"></i> Cobros Pendientes</h3>
+    <span id="pend-badge" class="badge badge-red" style="display:none"></span>
+  </div>
+  <div style="overflow-x:auto">
+    <table class="table" style="margin:0">
+      <thead><tr>
+        <th>Fecha venta</th>
+        <th>Cliente</th>
+        <th>Notas</th>
+        <th class="right">Monto</th>
+        <th>F. Despacho</th>
+        <th>Acción</th>
+      </tr></thead>
+      <tbody id="pend-tbody"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Márgenes por producto -->
+<div class="card">
+  <div class="card-header"><h3><i class="bi bi-percent"></i> Márgenes por producto (mes actual)</h3></div>
+  <div style="overflow-x:auto">
+    <table class="table" style="margin:0">
+      <thead><tr>
+        <th>Producto</th>
+        <th class="right">Precio</th>
+        <th class="right">Costo</th>
+        <th class="right">Margen %</th>
+        <th class="right">Unidades vendidas</th>
+        <th class="right">Facturado mes</th>
+      </tr></thead>
+      <tbody id="mg-tbody"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+let meses = 6;
+let chartPL = null;
+
+function setMeses(btn, n) {
+  document.querySelectorAll('.filter-tab').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  meses = n;
+  load();
+}
+
+function mesLabel(s) {
+  // s = 'YYYY-MM'
+  const [y, m] = s.split('-');
+  const names = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+  return names[parseInt(m)-1] + ' ' + y.slice(2);
+}
+
+function margenColor(pct) {
+  if (pct >= 50) return 'var(--success)';
+  if (pct >= 30) return 'var(--warning)';
+  return 'var(--danger)';
+}
+
+async function load() {
+  const data = await api('GET', `/api/finanzas/pl?meses=${meses}`);
+  const { pl, pendientes, margenes, resumen } = data;
+
+  // KPIs
+  const ultMes = pl[pl.length-1] || {};
+  const kpis = [
+    { label:'Ingresos último mes', val: clp(ultMes.ingresos||0), icon:'bi-arrow-up-circle', color:'#3fb950' },
+    { label:'Gastos último mes',   val: clp(ultMes.gastos||0),   icon:'bi-arrow-down-circle', color:'#f85149' },
+    { label:'Utilidad último mes', val: clp(ultMes.utilidad||0), icon:'bi-bank',             color: (ultMes.utilidad||0)>=0 ? '#3fb950' : '#f85149' },
+    { label:'Por cobrar',          val: clp(resumen.total_pendiente), icon:'bi-clock-history', color: resumen.total_pendiente > 0 ? '#f85149' : '#3fb950' },
+    { label:'Facturas pendientes', val: resumen.total_pendiente_count, icon:'bi-receipt',      color: resumen.total_pendiente_count > 0 ? '#e3b341' : '#3fb950' },
+  ];
+  document.getElementById('kpi-row').innerHTML = kpis.map(k => `
+    <div class="card" style="padding:1rem;text-align:center">
+      <i class="bi ${k.icon}" style="font-size:1.3rem;color:${k.color}"></i>
+      <div style="font-size:1.3rem;font-weight:700;margin:.25rem 0">${k.val}</div>
+      <div style="font-size:.72rem;color:var(--muted)">${k.label}</div>
+    </div>`).join('');
+
+  // Chart P&L
+  if (chartPL) chartPL.destroy();
+  const labels = pl.map(r => mesLabel(r.mes));
+  chartPL = new Chart(document.getElementById('chart-pl'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Ingresos',
+          data: pl.map(r => r.ingresos),
+          backgroundColor: 'rgba(63,185,80,.6)',
+          borderColor: '#3fb950',
+          borderWidth: 1, borderRadius: 4,
+        },
+        {
+          label: 'Gastos',
+          data: pl.map(r => r.gastos),
+          backgroundColor: 'rgba(248,81,73,.5)',
+          borderColor: '#f85149',
+          borderWidth: 1, borderRadius: 4,
+        },
+        {
+          label: 'Utilidad',
+          data: pl.map(r => r.utilidad),
+          type: 'line',
+          borderColor: '#a855f7',
+          backgroundColor: 'rgba(168,85,247,.1)',
+          borderWidth: 2, pointRadius: 4,
+          fill: false, tension: 0.3,
+          yAxisID: 'y',
+        },
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: true, position: 'bottom',
+          labels: { color:'#c9d1d9', font:{size:11}, padding:12, boxWidth:10 }},
+        tooltip: { callbacks: { label: ctx => ' '+clp(ctx.raw) }}
+      },
+      scales: {
+        x: { grid:{ color:'rgba(48,54,61,.6)' }, ticks:{ color:'#8b949e', font:{size:11} } },
+        y: { grid:{ color:'rgba(48,54,61,.6)' }, ticks:{ color:'#8b949e', font:{size:11}, callback: v => '$'+(v/1000).toFixed(0)+'k' } }
+      }
+    }
+  });
+
+  // Tabla P&L
+  document.getElementById('pl-tbody').innerHTML = [...pl].reverse().map(r => {
+    const utilColor = r.utilidad >= 0 ? 'var(--success)' : 'var(--danger)';
+    return `<tr>
+      <td>${mesLabel(r.mes)}</td>
+      <td class="right">${clp(r.ingresos)}</td>
+      <td class="right">${clp(r.gastos)}</td>
+      <td class="right" style="font-weight:700;color:${utilColor}">${clp(r.utilidad)}</td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="4"><div class="empty"><i class="bi bi-bar-chart"></i><p>Sin datos</p></div></td></tr>';
+
+  // Cobros pendientes
+  const pb = document.getElementById('pend-badge');
+  if (pendientes.length) {
+    pb.style.display = '';
+    pb.textContent = pendientes.length + ' pendientes';
+  } else {
+    pb.style.display = 'none';
+  }
+  document.getElementById('pend-tbody').innerHTML = pendientes.map(p => `<tr>
+    <td style="white-space:nowrap">${p.fecha}</td>
+    <td>${p.cliente_nombre || '<span style="color:var(--muted)">Sin cliente</span>'}</td>
+    <td style="color:var(--muted);font-size:.8rem">${p.notas || '—'}</td>
+    <td class="right"><strong style="color:var(--danger)">${clp(p.total)}</strong></td>
+    <td style="color:var(--muted);font-size:.8rem">${p.fecha_despacho || '—'}</td>
+    <td>
+      <button class="btn btn-success btn-sm" onclick="marcarPagado(${p.id})">
+        <i class="bi bi-check-circle"></i> Cobrado
+      </button>
+    </td>
+  </tr>`).join('') || '<tr><td colspan="6"><div class="empty" style="padding:2rem"><i class="bi bi-check-all"></i><p>Sin cobros pendientes</p></div></td></tr>';
+
+  // Márgenes
+  document.getElementById('mg-tbody').innerHTML = margenes.map(p => {
+    const mc = margenColor(p.margen_pct);
+    return `<tr>
+      <td><strong>${p.nombre}</strong></td>
+      <td class="right">${clp(p.precio)}</td>
+      <td class="right">${clp(p.costo)}</td>
+      <td class="right"><span style="font-weight:700;color:${mc}">${p.margen_pct}%</span></td>
+      <td class="right">${p.unidades}</td>
+      <td class="right">${clp(p.facturado)}</td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="6"><div class="empty" style="padding:2rem"><i class="bi bi-basket"></i><p>Sin productos</p></div></td></tr>';
+}
+
+async function marcarPagado(id) {
+  if (!confirm('¿Marcar esta venta como cobrada?')) return;
+  try {
+    await api('POST', `/api/finanzas/pendientes/${id}/cobrar`);
+    toast('Marcado como cobrado');
+    load();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+load();
+</script>
+{% endblock %}

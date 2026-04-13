@@ -1,0 +1,214 @@
+{% extends "base.html" %}
+{% block title %}Plan de Despacho — Aurora Bakers{% endblock %}
+{% block page_title %}Plan de Despacho{% endblock %}
+{% block content %}
+
+<!-- Controles -->
+<div style="display:flex;flex-wrap:wrap;gap:.75rem;align-items:flex-end;margin-bottom:1.5rem">
+  <div>
+    <label class="label">Fecha despacho desde</label>
+    <input id="f-desde" type="date" class="input" style="width:145px" onchange="load()" />
+  </div>
+  <div>
+    <label class="label">Hasta</label>
+    <input id="f-hasta" type="date" class="input" style="width:145px" onchange="load()" />
+  </div>
+  <div>
+    <label class="label">Estado</label>
+    <select id="f-estado" class="input" style="width:160px" onchange="load()">
+      <option value="">Todos</option>
+      <option value="PENDIENTE">Pendiente</option>
+      <option value="EN PREPARACION">En preparación</option>
+      <option value="DESPACHADO">Despachado</option>
+      <option value="RETIRO EN TIENDA">Retiro en tienda</option>
+    </select>
+  </div>
+  <button class="btn btn-primary" onclick="load()"><i class="bi bi-arrow-clockwise"></i> Actualizar</button>
+</div>
+
+<!-- KPIs de hoy -->
+<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:1rem;margin-bottom:1.5rem" id="kpi-row"></div>
+
+<!-- Grupos por fecha -->
+<div id="grupos"></div>
+
+<!-- Modal cambio estado -->
+<div id="modal-estado" class="modal-overlay">
+  <div class="modal" style="max-width:380px">
+    <div class="modal-header">
+      <span class="modal-title">Cambiar estado despacho</span>
+      <button class="modal-close" onclick="closeModal('modal-estado')"><i class="bi bi-x-lg"></i></button>
+    </div>
+    <p id="modal-desc" style="color:var(--muted);font-size:.85rem;margin-bottom:1rem"></p>
+    <div class="form-group">
+      <label class="label">Nuevo estado</label>
+      <select id="nuevo-estado" class="input">
+        <option value="PENDIENTE">Pendiente</option>
+        <option value="EN PREPARACION">En preparación</option>
+        <option value="DESPACHADO">Despachado</option>
+        <option value="RETIRO EN TIENDA">Retiro en tienda</option>
+      </select>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-estado')">Cancelar</button>
+      <button class="btn btn-primary" onclick="confirmarEstado()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let editingVid = null;
+
+const ESTADO_BADGE = {
+  'PENDIENTE':        '<span class="badge badge-yellow">Pendiente</span>',
+  'EN PREPARACION':   '<span class="badge badge-blue">En preparación</span>',
+  'DESPACHADO':       '<span class="badge badge-green">Despachado</span>',
+  'RETIRO EN TIENDA': '<span class="badge badge-purple">Retiro tienda</span>',
+};
+
+const PAGO_BADGE = {
+  'PAGADO':   '<span class="badge badge-green">Pagado</span>',
+  'PENDIENTE': '<span class="badge badge-red">Por cobrar</span>',
+};
+
+// Init: desde hoy, hasta +7 días
+(function(){
+  const hoy = new Date();
+  const fin  = new Date(hoy); fin.setDate(fin.getDate() + 14);
+  const fmt  = d => d.toISOString().split('T')[0];
+  document.getElementById('f-desde').value = fmt(hoy);
+  document.getElementById('f-hasta').value = fmt(fin);
+})();
+
+function dayLabel(s) {
+  if (!s) return 'Sin fecha';
+  const hoy   = new Date().toISOString().split('T')[0];
+  const mañana = new Date(); mañana.setDate(mañana.getDate()+1);
+  const mañanaStr = mañana.toISOString().split('T')[0];
+  if (s === hoy)       return '📦 Hoy — ' + s;
+  if (s === mañanaStr) return '📅 Mañana — ' + s;
+  const d = new Date(s+'T00:00:00');
+  const dias = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
+  return dias[d.getDay()] + ' ' + s;
+}
+
+async function load() {
+  const desde  = document.getElementById('f-desde').value;
+  const hasta  = document.getElementById('f-hasta').value;
+  const estado = document.getElementById('f-estado').value;
+
+  // Ventas con despacho en el rango
+  let url = `/api/ventas?desde=2020-01-01&hasta=2099-12-31&con_despacho=1&fecha_despacho_desde=${desde}&fecha_despacho_hasta=${hasta}`;
+  if (estado) url += `&estado_despacho=${encodeURIComponent(estado)}`;
+
+  const ventas = await api('GET', url);
+
+  // KPIs
+  const hoyStr = new Date().toISOString().split('T')[0];
+  const hoy_v  = ventas.filter(v => v.fecha_despacho === hoyStr);
+  const pend   = ventas.filter(v => v.estado_despacho === 'PENDIENTE');
+  const prep   = ventas.filter(v => v.estado_despacho === 'EN PREPARACION');
+  const desp   = ventas.filter(v => v.estado_despacho === 'DESPACHADO');
+
+  const kpis = [
+    { label:'Despachos hoy',    val: hoy_v.length, icon:'bi-truck',             color: hoy_v.length>0?'#f85149':'#3fb950' },
+    { label:'Pendientes',       val: pend.length,  icon:'bi-clock-history',     color: pend.length>0?'#e3b341':'#3fb950' },
+    { label:'En preparación',   val: prep.length,  icon:'bi-box-seam',          color:'#58a6ff' },
+    { label:'Despachados',      val: desp.length,  icon:'bi-check-circle',      color:'#3fb950' },
+    { label:'Total en rango',   val: ventas.length,icon:'bi-bag',               color:'#a855f7' },
+    { label:'Monto en rango',   val: clp(ventas.reduce((s,v)=>s+v.total,0)), icon:'bi-cash-stack', color:'#a855f7' },
+  ];
+  document.getElementById('kpi-row').innerHTML = kpis.map(k => `
+    <div class="card" style="padding:1rem;text-align:center">
+      <i class="bi ${k.icon}" style="font-size:1.3rem;color:${k.color}"></i>
+      <div style="font-size:1.3rem;font-weight:700;margin:.25rem 0">${k.val}</div>
+      <div style="font-size:.72rem;color:var(--muted)">${k.label}</div>
+    </div>`).join('');
+
+  // Agrupar por fecha_despacho
+  const grupos = {};
+  ventas.forEach(v => {
+    const fd = v.fecha_despacho || '';
+    if (!grupos[fd]) grupos[fd] = [];
+    grupos[fd].push(v);
+  });
+
+  const fechas = Object.keys(grupos).sort();
+  if (!fechas.length) {
+    document.getElementById('grupos').innerHTML = `
+      <div class="card"><div class="empty" style="padding:3rem">
+        <i class="bi bi-truck"></i><p>Sin despachos en el período seleccionado</p>
+      </div></div>`;
+    return;
+  }
+
+  document.getElementById('grupos').innerHTML = fechas.map(fd => {
+    const grupo = grupos[fd];
+    const totalGrupo = grupo.reduce((s,v)=>s+v.total,0);
+    const rows = grupo.map(v => {
+      const items = (v.items||[]).map(i => `${Math.round(i.cantidad)} × ${i.nombre}`).join('<br>');
+      return `<tr>
+        <td style="white-space:nowrap">${v.fecha}</td>
+        <td>
+          <div style="font-weight:600">${v.cliente_nombre || '—'}</div>
+          <div style="font-size:.75rem;color:var(--muted)">${v.notas || ''}</div>
+        </td>
+        <td style="font-size:.8rem;line-height:1.6">${items || '—'}</td>
+        <td class="right"><strong>${clp(v.total)}</strong></td>
+        <td>${PAGO_BADGE[v.estado_pago]||''}</td>
+        <td>${ESTADO_BADGE[v.estado_despacho]||v.estado_despacho}</td>
+        <td>
+          <button class="btn btn-secondary btn-sm" onclick="abrirEstado(${v.id},'${(v.cliente_nombre||'').replace(/'/g,"\\'")}','${v.estado_despacho}')">
+            <i class="bi bi-pencil"></i>
+          </button>
+        </td>
+      </tr>`;
+    }).join('');
+
+    return `
+      <div class="card mb-24">
+        <div class="card-header">
+          <h3><i class="bi bi-calendar-event"></i> ${dayLabel(fd)}</h3>
+          <div style="display:flex;gap:.5rem;align-items:center">
+            <span style="font-size:.8rem;color:var(--muted)">${grupo.length} pedido(s)</span>
+            <span style="font-weight:700;color:var(--accent)">${clp(totalGrupo)}</span>
+          </div>
+        </div>
+        <div style="overflow-x:auto">
+          <table class="table" style="margin:0">
+            <thead><tr>
+              <th>F. venta</th>
+              <th>Cliente</th>
+              <th>Productos</th>
+              <th class="right">Total</th>
+              <th>Pago</th>
+              <th>Estado</th>
+              <th></th>
+            </tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function abrirEstado(vid, nombre, estadoActual) {
+  editingVid = vid;
+  document.getElementById('modal-desc').textContent = 'Pedido de: ' + (nombre || 'cliente sin nombre');
+  document.getElementById('nuevo-estado').value = estadoActual;
+  openModal('modal-estado');
+}
+
+async function confirmarEstado() {
+  const estado = document.getElementById('nuevo-estado').value;
+  try {
+    await api('PUT', `/api/ventas/${editingVid}`, { estado_despacho: estado });
+    closeModal('modal-estado');
+    load();
+    toast('Estado actualizado');
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+load();
+</script>
+{% endblock %}
