@@ -111,9 +111,14 @@
     </div>
 
     <div id="sub-notice" style="display:none;padding:10px 14px;border-radius:10px;background:#6b9fd422;border:1px solid #6b9fd444;margin-bottom:12px;font-size:13px;color:#6b9fd4">
-      <i class="bi bi-info-circle"></i>
-      Si el cliente tiene una suscripción activa, se vinculará automáticamente.
-      Si no, se creará una nueva suscripción con los productos de esta venta.
+      <div><i class="bi bi-calendar-check"></i> <strong>Modo Suscripción</strong></div>
+      <div style="margin-top:4px">
+        Al registrar la venta, si el cliente ya tiene una suscripción activa se vinculará
+        automáticamente. Si no, se creará una nueva suscripción con los productos de esta venta.
+        <br><span id="sub-cliente-warn" style="display:none;color:#e05a44;font-weight:600;margin-top:4px;display:none">
+          <i class="bi bi-exclamation-triangle"></i> Debes seleccionar un cliente para que se registre la suscripción.
+        </span>
+      </div>
     </div>
 
     <button class="btn btn-primary w-full" onclick="submitVenta()">
@@ -321,7 +326,24 @@ function showPageTab(tab) {
 // ── Formulario nueva venta ────────────────────────────────────────────────────
 function onCanalChange() {
   const canal = document.getElementById('v-canal').value;
-  document.getElementById('sub-notice').style.display = canal === 'suscripcion' ? 'block' : 'none';
+  const isSub = canal === 'suscripcion';
+  document.getElementById('sub-notice').style.display = isSub ? 'block' : 'none';
+  const lbl = document.querySelector('label[for="v-cliente"]') || document.querySelector('.form-group label');
+  // Marcar cliente como requerido visualmente
+  const clienteGroup = document.getElementById('v-cliente').closest('.form-group');
+  const clienteLabel = clienteGroup ? clienteGroup.querySelector('label') : null;
+  if (clienteLabel) {
+    if (isSub && !clienteLabel.querySelector('.sub-req')) {
+      const req = document.createElement('span');
+      req.className = 'sub-req';
+      req.style.cssText = 'color:#e05a44;margin-left:4px;font-weight:700';
+      req.textContent = '*';
+      clienteLabel.appendChild(req);
+    } else if (!isSub) {
+      const req = clienteLabel.querySelector('.sub-req');
+      if (req) req.remove();
+    }
+  }
 }
 
 function toggleDespacho() {
@@ -451,11 +473,18 @@ async function submitVenta() {
   if (!valid || !items.length) { toast('Completa todos los productos', 'error'); return; }
 
   const cid = document.getElementById('v-cliente').value;
+  const canal = document.getElementById('v-canal').value;
+  if (canal === 'suscripcion' && !cid) {
+    toast('Selecciona un cliente para registrar la suscripción', 'error');
+    document.getElementById('sub-cliente-warn').style.display = 'block';
+    return;
+  }
+  document.getElementById('sub-cliente-warn').style.display = 'none';
   const conDespacho = parseInt(document.getElementById('v-con-despacho').value);
   try {
     const res = await api('POST', '/api/ventas', {
       fecha:           document.getElementById('v-fecha').value,
-      canal:           document.getElementById('v-canal').value,
+      canal:           canal,
       tipo_cliente:    document.getElementById('v-tipo-cliente').value,
       cliente_id:      cid ? parseInt(cid) : null,
       notas:           document.getElementById('v-notas').value,
@@ -465,13 +494,24 @@ async function submitVenta() {
       estado_despacho: conDespacho ? 'PENDIENTE' : 'RETIRO EN TIENDA',
       items
     });
-    toast(res.suscripcion_id
-      ? `Venta registrada · Suscripción #${res.suscripcion_id} creada/vinculada`
-      : 'Venta registrada');
+    if (res.suscripcion_id) {
+      toast(`Venta registrada · Suscripción #${res.suscripcion_id} creada/vinculada ✓`);
+      // Offer quick link
+      const notif = document.createElement('div');
+      notif.style.cssText = 'position:fixed;bottom:70px;right:20px;background:#1e1e1b;border:1px solid #6b9fd4;border-radius:10px;padding:12px 16px;font-size:13px;color:#6b9fd4;z-index:9999;box-shadow:0 4px 16px #0006';
+      notif.innerHTML = `<i class="bi bi-calendar-check"></i> Suscripción #${res.suscripcion_id} registrada. <a href="/suscripciones" style="color:#fff;font-weight:700;margin-left:6px">Ver suscripciones →</a>
+        <button onclick="this.parentElement.remove()" style="background:none;border:none;color:#aaa;float:right;cursor:pointer;margin-left:8px">×</button>`;
+      document.body.appendChild(notif);
+      setTimeout(() => notif.remove(), 8000);
+    } else {
+      toast('Venta registrada');
+    }
     document.getElementById('items-box').innerHTML = '';
     document.getElementById('v-notas').value = '';
     document.getElementById('v-canal').value = 'local';
     document.getElementById('sub-notice').style.display = 'none';
+    const subReq = document.querySelector('.sub-req');
+    if (subReq) subReq.remove();
     addItem();
     loadResumen();
     loadVentas();

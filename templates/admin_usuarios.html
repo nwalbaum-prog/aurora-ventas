@@ -18,6 +18,10 @@
 .dot-on  { background:#22c55e; }
 .dot-off { background:#e2e8f0; }
 .btn-row { display:flex; gap:.3rem; }
+.pw-wrap { position:relative; display:flex; align-items:center; }
+.pw-wrap .form-control { flex:1; padding-right:2.2rem; }
+.pw-toggle { position:absolute; right:.55rem; background:none; border:none; cursor:pointer; color:var(--text-3); font-size:.95rem; padding:0; line-height:1; }
+.pw-toggle:hover { color:var(--text-1); }
 </style>
 
 <div class="u-card">
@@ -43,11 +47,17 @@
   <div style="display:flex;flex-direction:column;gap:.65rem">
     <div class="form-group" style="margin:0">
       <label class="form-label">Contraseña actual</label>
-      <input id="pw-actual" class="form-control" type="password" placeholder="••••••••" />
+      <div class="pw-wrap">
+        <input id="pw-actual" class="form-control" type="password" placeholder="••••••••" />
+        <button type="button" class="pw-toggle" onclick="togglePw('pw-actual',this)" tabindex="-1"><i class="bi bi-eye"></i></button>
+      </div>
     </div>
     <div class="form-group" style="margin:0">
       <label class="form-label">Nueva contraseña</label>
-      <input id="pw-nuevo" class="form-control" type="password" placeholder="Mínimo 6 caracteres" />
+      <div class="pw-wrap">
+        <input id="pw-nuevo" class="form-control" type="password" placeholder="Mínimo 6 caracteres" />
+        <button type="button" class="pw-toggle" onclick="togglePw('pw-nuevo',this)" tabindex="-1"><i class="bi bi-eye"></i></button>
+      </div>
     </div>
     <button class="btn btn-primary" onclick="cambiarContrasena()" style="justify-content:center">
       <i class="bi bi-check2-circle"></i> Cambiar contraseña
@@ -75,7 +85,10 @@
         </div>
         <div class="form-group" style="margin:0">
           <label class="form-label" id="pw-label">Contraseña *</label>
-          <input id="u-pass" class="form-control" type="password" placeholder="Mínimo 6 caracteres" />
+          <div class="pw-wrap">
+            <input id="u-pass" class="form-control" type="password" placeholder="Mínimo 6 caracteres" />
+            <button type="button" class="pw-toggle" onclick="togglePw('u-pass',this)" tabindex="-1"><i class="bi bi-eye"></i></button>
+          </div>
           <div id="pw-hint" style="font-size:.7rem;color:var(--text-3);margin-top:.2rem"></div>
         </div>
         <div class="form-group" style="margin:0">
@@ -135,7 +148,7 @@ function abrirNuevo() {
   document.getElementById('u-rol').value    = 'usuario';
   document.getElementById('pw-label').textContent = 'Contraseña *';
   document.getElementById('pw-hint').textContent  = '';
-  openModal('modal-nuevo');
+  _origOpenModal('modal-nuevo');
 }
 
 function editarUsuario(id) {
@@ -149,7 +162,7 @@ function editarUsuario(id) {
   document.getElementById('u-rol').value    = u.rol;
   document.getElementById('pw-label').textContent = 'Nueva contraseña (dejar vacío para no cambiar)';
   document.getElementById('pw-hint').textContent  = '';
-  openModal('modal-nuevo');
+  _origOpenModal('modal-nuevo');
 }
 
 async function guardarUsuario() {
@@ -201,12 +214,28 @@ function escHtml(s) {
   return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
+function togglePw(inputId, btn) {
+  const inp = document.getElementById(inputId);
+  const icon = btn.querySelector('i');
+  if (inp.type === 'password') {
+    inp.type = 'text';
+    icon.className = 'bi bi-eye-slash';
+  } else {
+    inp.type = 'password';
+    icon.className = 'bi bi-eye';
+  }
+}
+
 // Override openModal para "Agregar usuario"
 const _origOpenModal = window.openModal;
 window.openModal = function(id) {
   if (id === 'modal-nuevo') {
     const eid = document.getElementById('edit-uid');
-    if (eid && !eid.value) abrirNuevo();
+    if (eid && !eid.value) {
+      abrirNuevo();
+    } else {
+      _origOpenModal(id);
+    }
     return;
   }
   if (_origOpenModal) _origOpenModal(id);
