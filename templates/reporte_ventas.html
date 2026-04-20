@@ -3,25 +3,45 @@
 {% block page_title %}Reporte de Ventas{% endblock %}
 {% block content %}
 
-<!-- Filtros -->
+<!-- ═══════════════ RESUMEN CON DRILL-DOWN ═══════════════ -->
+<div class="card mb-24" id="resumen-card">
+  <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.5rem;margin-bottom:1rem">
+    <!-- Breadcrumb -->
+    <div id="breadcrumb" style="display:flex;align-items:center;gap:.4rem;font-size:.84rem"></div>
+    <!-- Botón subir nivel -->
+    <button class="btn btn-ghost btn-sm" id="btn-drill-up" style="display:none" onclick="drillUp()">
+      <i class="bi bi-arrow-up-left"></i> Todos los meses
+    </button>
+  </div>
+
+  <div style="overflow-x:auto">
+    <table class="table resumen-table" style="margin:0">
+      <thead id="resumen-thead"></thead>
+      <tbody id="resumen-tbody">
+        <tr><td colspan="7" style="text-align:center;padding:2.5rem;color:var(--muted)">Cargando…</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ═══════════════ FILTROS ═══════════════ -->
 <div class="card mb-24" style="padding:1rem 1.25rem">
-  <!-- Fila 1: período -->
   <div style="display:flex;flex-wrap:wrap;gap:.75rem;align-items:flex-end;margin-bottom:.75rem">
     <div>
       <label class="label">Período</label>
       <div class="filter-tabs" id="tabs-periodo">
         <button class="filter-tab" onclick="setPeriodo(this,'semana')">Esta semana</button>
-        <button class="filter-tab active" onclick="setPeriodo(this,'mes')">Mes actual</button>
+        <button class="filter-tab" onclick="setPeriodo(this,'mes')">Mes actual</button>
         <button class="filter-tab" onclick="setPeriodo(this,'mes_anterior')">Mes anterior</button>
+        <button class="filter-tab active" onclick="setPeriodo(this,'anno')">Año actual</button>
         <button class="filter-tab" onclick="setPeriodo(this,'personalizado')">Personalizado</button>
       </div>
     </div>
     <div id="custom-range" style="display:none;gap:.5rem;align-items:flex-end">
-      <div><label class="label">Desde</label><input id="f-desde" type="date" class="input" style="width:140px" /></div>
-      <div><label class="label">Hasta</label><input id="f-hasta" type="date" class="input" style="width:140px" /></div>
+      <div><label class="label">Desde</label><input id="f-desde" type="date" class="input" style="width:140px"></div>
+      <div><label class="label">Hasta</label><input id="f-hasta" type="date" class="input" style="width:140px"></div>
     </div>
   </div>
-  <!-- Fila 2: filtros específicos -->
   <div style="display:flex;flex-wrap:wrap;gap:.75rem;align-items:flex-end">
     <div>
       <label class="label">Canal</label>
@@ -29,6 +49,7 @@
         <option value="">Todos</option>
         <option value="local">Local</option>
         <option value="online">Online</option>
+        <option value="whatsapp">WhatsApp</option>
         <option value="suscripcion">Suscripción</option>
       </select>
     </div>
@@ -38,7 +59,6 @@
         <option value="">Todos</option>
         <option value="CLIENTE">Cliente</option>
         <option value="MAYORISTA">Mayorista</option>
-        <option value="SUSCRIPTOR">Suscriptor</option>
       </select>
     </div>
     <div>
@@ -63,11 +83,19 @@
 <!-- KPIs -->
 <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:1rem;margin-bottom:1.5rem" id="kpi-row"></div>
 
-<!-- Tabla detalle -->
+<!-- Detalle -->
 <div class="card">
-  <div class="card-header">
-    <h3><i class="bi bi-table"></i> Detalle de ventas</h3>
-    <span id="count-badge" class="badge badge-gray"></span>
+  <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.5rem;padding:1rem 1.25rem;border-bottom:1px solid var(--border)">
+    <div style="display:flex;align-items:center;gap:.6rem">
+      <h3 style="margin:0;font-size:.9rem"><i class="bi bi-table"></i> Detalle de ventas</h3>
+      <span id="detalle-filtro-badge" style="display:none;font-size:.7rem;background:var(--accent-dim,rgba(200,49,46,.1));color:var(--accent);border-radius:20px;padding:2px 10px;font-weight:600"></span>
+    </div>
+    <div style="display:flex;gap:.5rem;align-items:center">
+      <span id="count-badge" style="font-size:.75rem;color:var(--muted)"></span>
+      <button id="btn-limpiar-detalle" class="btn btn-ghost btn-sm" style="display:none;font-size:.75rem" onclick="limpiarFiltroDetalle()">
+        <i class="bi bi-x-circle"></i> Quitar filtro de semana
+      </button>
+    </div>
   </div>
   <div style="overflow-x:auto">
     <table class="table" style="margin:0">
@@ -87,35 +115,301 @@
   </div>
 </div>
 
+<style>
+.resumen-table th { font-size:.72rem; font-weight:700; text-transform:uppercase;
+  letter-spacing:.05em; color:var(--muted); padding:.5rem .75rem;
+  border-bottom:2px solid var(--border); white-space:nowrap; }
+.resumen-table td { padding:.6rem .75rem; border-bottom:1px solid var(--border); vertical-align:middle; }
+.resumen-table tr:last-child td { border-bottom:none; }
+.resumen-row:hover td { background:var(--hover,rgba(0,0,0,.03)); }
+.resumen-total td { background:var(--accent-dim,rgba(200,49,46,.06)); font-weight:700; }
+.bc-sep { color:var(--muted); font-size:.8rem; }
+.badge-gray   { background:rgba(120,120,120,.12); color:var(--muted); }
+.badge-blue   { background:rgba(99,102,241,.12);  color:#6366f1; }
+.badge-purple { background:rgba(168,85,247,.12);  color:#a855f7; }
+.badge-green  { background:rgba(34,197,94,.12);   color:#16a34a; }
+.badge-teal   { background:rgba(37,211,102,.12);  color:#25d366; }
+.badge-red    { background:rgba(239,68,68,.12);   color:#ef4444; }
+.badge-yellow { background:rgba(234,179,8,.12);   color:#ca8a04; }
+.badge { display:inline-block; padding:2px 7px; border-radius:10px; font-size:.68rem; font-weight:700; }
+.right { text-align:right !important; }
+.mono  { font-variant-numeric:tabular-nums; }
+.fw-600 { font-weight:600; }
+.mb-24 { margin-bottom:1.5rem; }
+.label { display:block; font-size:.7rem; font-weight:700; text-transform:uppercase;
+  letter-spacing:.05em; color:var(--muted); margin-bottom:.25rem; }
+.input { border:1px solid var(--border); border-radius:6px; padding:.35rem .6rem;
+  font-size:.82rem; color:var(--text); background:var(--bg-input,#faf8f6); }
+.table { width:100%; border-collapse:collapse; font-size:.82rem; }
+.table th { text-align:left; font-size:.7rem; font-weight:700; text-transform:uppercase;
+  letter-spacing:.05em; color:var(--muted); padding:.5rem .75rem; border-bottom:2px solid var(--border); }
+.table td { padding:.6rem .75rem; border-bottom:1px solid var(--border); color:var(--text); vertical-align:middle; }
+.table tr:last-child td { border-bottom:none; }
+.table tr:hover td { background:var(--hover,rgba(0,0,0,.03)); }
+</style>
+
 <script>
-let periodo = 'mes';
-let clientes = [];
+let periodo    = 'anno';
+let clientes   = [];
+let allVentas  = [];   // todos los datos cargados (para resumen)
+let detalleVentas = []; // los que muestra el detalle (puede estar filtrado por semana)
 
-const CANAL      = { local:'Local', online:'Online', suscripcion:'Suscripción' };
-const CANAL_CLS  = { local:'badge-blue', online:'badge-purple', suscripcion:'badge-green' };
-const TIPO_CLS   = { CLIENTE:'badge-gray', MAYORISTA:'badge-blue', SUSCRIPTOR:'badge-green' };
+// Drill state
+let drillLevel = 'mes';  // 'mes' | 'semana'
+let drillMes   = null;   // 'YYYY-MM' cuando estamos en nivel semana
 
-// Cargar clientes para el selector
-async function cargarClientes() {
-  clientes = await api('GET', '/api/clientes');
-  const sel = document.getElementById('f-cliente');
-  sel.innerHTML = '<option value="">Todos los clientes</option>' +
-    clientes.map(c => `<option value="${c.id}">${c.nombre}${c.es_suscriptor?' ⭐':''}</option>`).join('');
+const MESES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio',
+               'Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+const CANAL_LBL = { local:'Local', online:'Online', suscripcion:'Suscripción', whatsapp:'WhatsApp' };
+const CANAL_CLS = { local:'badge-blue', online:'badge-purple', suscripcion:'badge-green', whatsapp:'badge-teal' };
+const TIPO_CLS  = { CLIENTE:'badge-gray', MAYORISTA:'badge-blue' };
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function fmt(n) { return '$' + Math.round(n||0).toLocaleString('es-CL'); }
+
+function mesLabel(ym) {
+  const [y, m] = ym.split('-');
+  return `${MESES[parseInt(m)-1]} ${y}`;
 }
 
+function fmtFechaCorta(s) {
+  if (!s) return '—';
+  const [, m, d] = s.split('-');
+  return `${parseInt(d)} ${MESES[parseInt(m)-1].substring(0,3)}`;
+}
+
+function getISOWeek(dateStr) {
+  const d   = new Date(dateStr + 'T12:00:00');
+  const jan = new Date(d.getFullYear(), 0, 1);
+  const w   = Math.ceil(((d - jan) / 86400000 + jan.getDay() + 1) / 7);
+  return `${d.getFullYear()}-W${String(w).padStart(2,'0')}`;
+}
+
+// ── Agrupadores ───────────────────────────────────────────────────────────────
+function agruparPorMes(ventas) {
+  const grp = {};
+  for (const v of ventas) {
+    const k = v.fecha.substring(0, 7);
+    (grp[k] = grp[k] || []).push(v);
+  }
+  return Object.entries(grp)
+    .sort(([a],[b]) => a < b ? -1 : 1)
+    .map(([k, list]) => metricas(k, mesLabel(k), list));
+}
+
+function agruparPorSemana(ventas) {
+  const grp = {};
+  for (const v of ventas) {
+    const k = getISOWeek(v.fecha);
+    if (!grp[k]) grp[k] = { fechas: [], ventas: [] };
+    grp[k].fechas.push(v.fecha);
+    grp[k].ventas.push(v);
+  }
+  return Object.entries(grp)
+    .sort(([a],[b]) => a < b ? -1 : 1)
+    .map(([k, g]) => {
+      const sorted = [...g.fechas].sort();
+      const desde = sorted[0], hasta = sorted[sorted.length - 1];
+      const wNum  = parseInt(k.split('-W')[1]);
+      const label = `Sem. ${wNum} · ${fmtFechaCorta(desde)} – ${fmtFechaCorta(hasta)}`;
+      return { ...metricas(k, label, g.ventas), desde, hasta };
+    });
+}
+
+function metricas(key, label, list) {
+  const total    = list.reduce((s,v) => s + (v.total||0), 0);
+  const pagado   = list.filter(v => v.estado_pago === 'PAGADO').reduce((s,v) => s + v.total, 0);
+  const pendiente= list.filter(v => v.estado_pago === 'PENDIENTE').reduce((s,v) => s + v.total, 0);
+  return { key, label, count: list.length, total, pagado, pendiente,
+           ticket: list.length ? total / list.length : 0, ventas: list };
+}
+
+// ── Renderizar resumen ─────────────────────────────────────────────────────────
+function renderResumen() {
+  const thead = document.getElementById('resumen-thead');
+  const tbody = document.getElementById('resumen-tbody');
+  const bc    = document.getElementById('breadcrumb');
+  const btnUp = document.getElementById('btn-drill-up');
+
+  const colLabel = drillLevel === 'mes' ? 'Mes' : 'Semana';
+  thead.innerHTML = `<tr>
+    <th>${colLabel}</th>
+    <th class="right">N° ventas</th>
+    <th class="right">Total</th>
+    <th class="right">Cobrado</th>
+    <th class="right">Pendiente</th>
+    <th class="right">Ticket prom.</th>
+    <th></th>
+  </tr>`;
+
+  let grupos;
+  if (drillLevel === 'mes') {
+    grupos = agruparPorMes(allVentas);
+    btnUp.style.display = 'none';
+    bc.innerHTML = `<span style="font-weight:600;color:var(--text)">
+      <i class="bi bi-calendar3"></i> Todos los meses</span>`;
+  } else {
+    grupos = agruparPorSemana(allVentas.filter(v => v.fecha.startsWith(drillMes)));
+    btnUp.style.display = '';
+    bc.innerHTML = `
+      <span onclick="drillUp()" style="cursor:pointer;color:var(--accent);font-weight:500">
+        <i class="bi bi-calendar3"></i> Todos los meses
+      </span>
+      <span class="bc-sep">›</span>
+      <span style="font-weight:600;color:var(--text)">
+        <i class="bi bi-calendar-week"></i> ${mesLabel(drillMes)}
+      </span>`;
+  }
+
+  if (!grupos.length) {
+    tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:2.5rem;color:var(--muted)">
+      Sin ventas en este período</td></tr>`;
+    return;
+  }
+
+  const maxTotal = Math.max(...grupos.map(g => g.total), 1);
+
+  const filas = grupos.map(g => {
+    const pct  = (g.total / maxTotal * 100).toFixed(0);
+    const isMes = drillLevel === 'mes';
+    const onclick = isMes
+      ? `drillDown('${g.key}')`
+      : `filtrarDetalle('${g.desde}','${g.hasta}','${g.label.replace(/'/g,"\\'")}')`;
+    const btnLabel = isMes ? 'Ver semanas <i class="bi bi-chevron-right"></i>' : 'Ver detalle <i class="bi bi-list-ul"></i>';
+    return `<tr class="resumen-row" onclick="${onclick}" style="cursor:pointer">
+      <td>
+        <div style="font-weight:600">${g.label}</div>
+        <div style="margin-top:4px;height:3px;background:var(--border);border-radius:2px;width:140px;overflow:hidden">
+          <div style="height:3px;background:var(--accent);border-radius:2px;width:${pct}%"></div>
+        </div>
+      </td>
+      <td class="right mono">${g.count}</td>
+      <td class="right mono fw-600">${fmt(g.total)}</td>
+      <td class="right mono" style="color:var(--success)">${fmt(g.pagado)}</td>
+      <td class="right mono" style="color:${g.pendiente > 0 ? 'var(--warning)' : 'var(--muted)'}">${fmt(g.pendiente)}</td>
+      <td class="right mono" style="color:var(--muted)">${fmt(g.ticket)}</td>
+      <td style="text-align:right;white-space:nowrap">
+        <button class="btn btn-ghost btn-sm" style="font-size:.72rem;pointer-events:none">${btnLabel}</button>
+      </td>
+    </tr>`;
+  }).join('');
+
+  // Fila totales
+  const totC = grupos.reduce((s,g)=>s+g.count,0);
+  const totT = grupos.reduce((s,g)=>s+g.total,0);
+  const totP = grupos.reduce((s,g)=>s+g.pagado,0);
+  const totN = grupos.reduce((s,g)=>s+g.pendiente,0);
+  tbody.innerHTML = filas + `
+    <tr class="resumen-total">
+      <td>TOTAL PERÍODO</td>
+      <td class="right mono">${totC}</td>
+      <td class="right mono">${fmt(totT)}</td>
+      <td class="right mono" style="color:var(--success)">${fmt(totP)}</td>
+      <td class="right mono" style="color:${totN>0?'var(--warning)':'var(--muted)'}">${fmt(totN)}</td>
+      <td class="right mono" style="color:var(--muted)">${totC ? fmt(totT/totC) : '—'}</td>
+      <td></td>
+    </tr>`;
+}
+
+// ── Drill ─────────────────────────────────────────────────────────────────────
+function drillDown(mesKey) {
+  drillLevel = 'semana';
+  drillMes   = mesKey;
+  renderResumen();
+}
+
+function drillUp() {
+  drillLevel = 'mes';
+  drillMes   = null;
+  renderResumen();
+  limpiarFiltroDetalle();
+}
+
+// ── Filtrar detalle por semana ────────────────────────────────────────────────
+function filtrarDetalle(desde, hasta, label) {
+  const filtrado = allVentas.filter(v => v.fecha >= desde && v.fecha <= hasta);
+  renderDetalle(filtrado);
+  document.getElementById('detalle-filtro-badge').textContent = label;
+  document.getElementById('detalle-filtro-badge').style.display = '';
+  document.getElementById('btn-limpiar-detalle').style.display  = '';
+  document.getElementById('tbody').scrollIntoView({ behavior:'smooth', block:'start' });
+}
+
+function limpiarFiltroDetalle() {
+  renderDetalle(allVentas);
+  document.getElementById('detalle-filtro-badge').style.display = 'none';
+  document.getElementById('btn-limpiar-detalle').style.display  = 'none';
+}
+
+// ── Render detalle ventas ─────────────────────────────────────────────────────
+function renderDetalle(ventas) {
+  const total = ventas.reduce((s,v) => s + (v.total||0), 0);
+  document.getElementById('count-badge').textContent =
+    ventas.length ? `${ventas.length} venta${ventas.length!==1?'s':''} · ${fmt(total)}` : '';
+
+  document.getElementById('tbody').innerHTML = ventas.map(v => {
+    const items = (v.items||[]).map(i=>`${Math.round(i.cantidad)}×${i.nombre}`).join(', ');
+    const pagoBadge = v.estado_pago === 'PAGADO'
+      ? '<span class="badge badge-green">Pagado</span>'
+      : '<span class="badge badge-red">Pendiente</span>';
+    const despBadge =
+      v.estado_despacho === 'RETIRO EN TIENDA' ? '<span class="badge badge-blue">Retiro</span>'
+      : v.estado_despacho === 'DESPACHADO'     ? '<span class="badge badge-green">Despachado</span>'
+      : v.estado_despacho === 'EN PREPARACION' ? '<span class="badge badge-yellow">Preparando</span>'
+      : '<span class="badge badge-gray">Pendiente</span>';
+    const canalBadge = `<span class="badge ${CANAL_CLS[v.canal]||'badge-gray'}">${CANAL_LBL[v.canal]||v.canal}</span>`;
+    const tipoBadge  = `<span class="badge ${TIPO_CLS[v.tipo_cliente]||'badge-gray'}" style="font-size:.68rem">${v.tipo_cliente||'—'}</span>`;
+    return `<tr>
+      <td style="white-space:nowrap;font-size:.8rem">${v.fecha}</td>
+      <td>${v.cliente_nombre || '<span style="color:var(--muted)">Sin cliente</span>'}</td>
+      <td>${tipoBadge}</td>
+      <td>${canalBadge}</td>
+      <td style="font-size:.78rem;max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${items}">${items||'—'}</td>
+      <td class="right mono fw-600">${fmt(v.total)}</td>
+      <td>${pagoBadge}</td>
+      <td>${despBadge}</td>
+      <td style="color:var(--muted);font-size:.78rem;white-space:nowrap">${v.fecha_despacho||'—'}</td>
+    </tr>`;
+  }).join('') || `<tr><td colspan="9"><div class="empty" style="padding:2.5rem;text-align:center;color:var(--muted)">
+    <i class="bi bi-receipt" style="font-size:2rem;display:block;margin-bottom:.5rem"></i>
+    Sin ventas en el período seleccionado</div></td></tr>`;
+}
+
+// ── KPIs ──────────────────────────────────────────────────────────────────────
+function renderKPIs(ventas) {
+  const total     = ventas.reduce((s,v) => s + (v.total||0), 0);
+  const count     = ventas.length;
+  const pagado    = ventas.filter(v=>v.estado_pago==='PAGADO').reduce((s,v)=>s+v.total,0);
+  const pendiente = ventas.filter(v=>v.estado_pago==='PENDIENTE').reduce((s,v)=>s+v.total,0);
+  const uniqs     = new Set(ventas.filter(v=>v.cliente_id).map(v=>v.cliente_id)).size;
+  const ticket    = count ? total/count : 0;
+  document.getElementById('kpi-row').innerHTML = [
+    { label:'Total ventas',    val:fmt(total),    icon:'bi-cash-stack',    c:'#a855f7' },
+    { label:'N° ventas',       val:count,          icon:'bi-receipt',       c:'#6366f1' },
+    { label:'Ticket promedio', val:fmt(ticket),    icon:'bi-calculator',    c:'#e3b341' },
+    { label:'Cobrado',         val:fmt(pagado),    icon:'bi-check-circle',  c:'#16a34a' },
+    { label:'Por cobrar',      val:fmt(pendiente), icon:'bi-clock-history', c:pendiente>0?'#ef4444':'#16a34a' },
+    { label:'Clientes únicos', val:uniqs,          icon:'bi-people',        c:'#0891b2' },
+  ].map(k=>`<div class="card" style="padding:1rem;text-align:center">
+    <i class="bi ${k.icon}" style="font-size:1.3rem;color:${k.c}"></i>
+    <div style="font-size:1.25rem;font-weight:700;margin:.25rem 0">${k.val}</div>
+    <div style="font-size:.72rem;color:var(--muted)">${k.label}</div>
+  </div>`).join('');
+}
+
+// ── Carga principal ───────────────────────────────────────────────────────────
 function calcRango(p) {
   const hoy = new Date();
   const y = hoy.getFullYear(), m = hoy.getMonth(), d = hoy.getDate();
   const pad = n => String(n).padStart(2,'0');
-  const fmt = dt => `${dt.getFullYear()}-${pad(dt.getMonth()+1)}-${pad(dt.getDate())}`;
+  const fmt2 = dt => `${dt.getFullYear()}-${pad(dt.getMonth()+1)}-${pad(dt.getDate())}`;
   if (p === 'semana') {
     const lun = new Date(hoy); lun.setDate(d - (hoy.getDay()||7) + 1);
-    return [fmt(lun), fmt(hoy)];
+    return [fmt2(lun), fmt2(hoy)];
   }
-  if (p === 'mes') return [`${y}-${pad(m+1)}-01`, fmt(hoy)];
-  if (p === 'mes_anterior') {
-    return [fmt(new Date(y, m-1, 1)), fmt(new Date(y, m, 0))];
-  }
+  if (p === 'mes')          return [`${y}-${pad(m+1)}-01`, fmt2(hoy)];
+  if (p === 'mes_anterior') return [fmt2(new Date(y,m-1,1)), fmt2(new Date(y,m,0))];
+  if (p === 'anno')         return [`${y}-01-01`, fmt2(hoy)];
   return [
     document.getElementById('f-desde').value,
     document.getElementById('f-hasta').value,
@@ -126,8 +420,7 @@ function setPeriodo(btn, p) {
   document.querySelectorAll('#tabs-periodo .filter-tab').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
   periodo = p;
-  const cr = document.getElementById('custom-range');
-  cr.style.display = p === 'personalizado' ? 'flex' : 'none';
+  document.getElementById('custom-range').style.display = p === 'personalizado' ? 'flex' : 'none';
   if (p !== 'personalizado') load();
 }
 
@@ -154,60 +447,34 @@ async function load() {
   if (pago)        url += `&estado_pago=${pago}`;
   if (clienteId)   url += `&cliente_id=${clienteId}`;
 
-  const ventas = await api('GET', url);
+  document.getElementById('resumen-tbody').innerHTML =
+    `<tr><td colspan="7" style="text-align:center;padding:2rem;color:var(--muted)">Cargando…</td></tr>`;
 
-  // KPIs
-  const total     = ventas.reduce((s,v) => s + v.total, 0);
-  const count     = ventas.length;
-  const ticket    = count ? total/count : 0;
-  const pagado    = ventas.filter(v => v.estado_pago==='PAGADO').reduce((s,v)=>s+v.total,0);
-  const pendiente = ventas.filter(v => v.estado_pago==='PENDIENTE').reduce((s,v)=>s+v.total,0);
-  const uniqs     = new Set(ventas.filter(v=>v.cliente_id).map(v=>v.cliente_id)).size;
+  allVentas = await api('GET', url);
 
-  document.getElementById('kpi-row').innerHTML = [
-    { label:'Total ventas',    val:clp(total),    icon:'bi-cash-stack',    color:'#a855f7' },
-    { label:'N° ventas',       val:count,          icon:'bi-receipt',       color:'#58a6ff' },
-    { label:'Ticket promedio', val:clp(ticket),    icon:'bi-calculator',    color:'#e3b341' },
-    { label:'Cobrado',         val:clp(pagado),    icon:'bi-check-circle',  color:'#3fb950' },
-    { label:'Por cobrar',      val:clp(pendiente), icon:'bi-clock-history', color:pendiente>0?'#f85149':'#3fb950' },
-    { label:'Clientes únicos', val:uniqs,          icon:'bi-people',        color:'#10b981' },
-  ].map(k => `
-    <div class="card" style="padding:1rem;text-align:center">
-      <i class="bi ${k.icon}" style="font-size:1.3rem;color:${k.color}"></i>
-      <div style="font-size:1.3rem;font-weight:700;margin:.25rem 0">${k.val}</div>
-      <div style="font-size:.72rem;color:var(--muted)">${k.label}</div>
-    </div>`).join('');
+  // Reset drill al recargar datos
+  drillLevel = 'mes';
+  drillMes   = null;
+  limpiarFiltroDetalle();
 
-  document.getElementById('count-badge').textContent = count + ' registros';
-
-  document.getElementById('tbody').innerHTML = ventas.map(v => {
-    const items = (v.items||[]).map(i=>`${Math.round(i.cantidad)}×${i.nombre}`).join(', ');
-    const pagoBadge = v.estado_pago==='PAGADO'
-      ? '<span class="badge badge-green">Pagado</span>'
-      : '<span class="badge badge-red">Pendiente</span>';
-    const despBadge = v.estado_despacho==='RETIRO EN TIENDA' ? '<span class="badge badge-blue">Retiro</span>'
-      : v.estado_despacho==='DESPACHADO'      ? '<span class="badge badge-green">Despachado</span>'
-      : v.estado_despacho==='EN PREPARACION'  ? '<span class="badge badge-yellow">Preparando</span>'
-      : '<span class="badge badge-gray">Pendiente</span>';
-    const tipoBadge = `<span class="badge ${TIPO_CLS[v.tipo_cliente]||'badge-gray'}" style="font-size:.68rem">${v.tipo_cliente||'—'}</span>`;
-    return `<tr>
-      <td style="white-space:nowrap">${v.fecha}</td>
-      <td>${v.cliente_nombre || '<span style="color:var(--muted)">Sin cliente</span>'}</td>
-      <td>${tipoBadge}</td>
-      <td><span class="badge ${CANAL_CLS[v.canal]||'badge-gray'}">${CANAL[v.canal]||v.canal}</span></td>
-      <td style="font-size:.78rem;max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${items}">${items||'—'}</td>
-      <td class="right"><strong>${clp(v.total)}</strong></td>
-      <td>${pagoBadge}</td>
-      <td>${despBadge}</td>
-      <td style="color:var(--muted);font-size:.78rem;white-space:nowrap">${v.fecha_despacho||'—'}</td>
-    </tr>`;
-  }).join('') || '<tr><td colspan="9"><div class="empty"><i class="bi bi-receipt"></i><p>Sin ventas en el período seleccionado</p></div></td></tr>';
+  renderKPIs(allVentas);
+  renderResumen();
+  renderDetalle(allVentas);
 }
 
-// Init fechas personalizadas
-(function(){
+// ── Clientes selector ─────────────────────────────────────────────────────────
+async function cargarClientes() {
+  clientes = await api('GET', '/api/clientes');
+  const sel = document.getElementById('f-cliente');
+  sel.innerHTML = '<option value="">Todos los clientes</option>' +
+    clientes.map(c=>`<option value="${c.id}">${c.nombre}${c.es_suscriptor?' ⭐':''}</option>`).join('');
+}
+
+// Init
+(function() {
   const hoy = new Date();
-  const y = hoy.getFullYear(), m = String(hoy.getMonth()+1).padStart(2,'0');
+  const y = hoy.getFullYear();
+  const m = String(hoy.getMonth()+1).padStart(2,'0');
   document.getElementById('f-desde').value = `${y}-${m}-01`;
   document.getElementById('f-hasta').value = hoy.toISOString().split('T')[0];
 })();

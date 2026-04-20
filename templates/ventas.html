@@ -25,6 +25,9 @@
   <a href="/crm/buscar" style="background:#fff;color:#6366f1;border:1.5px solid #fff;border-radius:7px;padding:.4rem 1rem;font-size:.8rem;font-weight:600;text-decoration:none;white-space:nowrap;transition:.15s" onmouseover="this.style.opacity='.85'" onmouseout="this.style.opacity='1'">
     <i class="bi bi-search"></i> Buscar Clientes
   </a>
+  <a href="/reporte-ventas" style="background:rgba(255,255,255,.15);color:#fff;border:1.5px solid rgba(255,255,255,.3);border-radius:7px;padding:.4rem 1rem;font-size:.8rem;font-weight:600;text-decoration:none;white-space:nowrap;transition:.15s" onmouseover="this.style.background='rgba(255,255,255,.25)'" onmouseout="this.style.background='rgba(255,255,255,.15)'">
+    <i class="bi bi-bar-chart-line"></i> Ver Reporte
+  </a>
 </div>
 
 <!-- Tabs de página -->
@@ -35,10 +38,7 @@
 
 <!-- ══════════════════ TAB: VENTAS ══════════════════ -->
 <div id="tab-ventas">
-<div class="grid-2" style="align-items:start">
-
-  <!-- ── Nueva venta ───────────────────────────────────────────────────────── -->
-  <div class="card">
+  <div class="card" style="max-width:680px">
     <div class="card-title"><i class="bi bi-plus-circle"></i> Nueva Venta</div>
 
     <div class="form-row fr-2">
@@ -115,7 +115,7 @@
       <div style="margin-top:4px">
         Al registrar la venta, si el cliente ya tiene una suscripción activa se vinculará
         automáticamente. Si no, se creará una nueva suscripción con los productos de esta venta.
-        <br><span id="sub-cliente-warn" style="display:none;color:#e05a44;font-weight:600;margin-top:4px;display:none">
+        <span id="sub-cliente-warn" style="display:none;color:#e05a44;font-weight:600;margin-top:4px">
           <i class="bi bi-exclamation-triangle"></i> Debes seleccionar un cliente para que se registre la suscripción.
         </span>
       </div>
@@ -125,141 +125,6 @@
       <i class="bi bi-check-lg"></i> Registrar Venta
     </button>
   </div>
-
-  <!-- ── Historial / Reporte ────────────────────────────────────────────────── -->
-  <div class="card">
-    <div class="sec-header mb-12">
-      <span class="card-title" style="margin:0"><i class="bi bi-funnel"></i> Reporte de Ventas</span>
-      <button class="btn btn-secondary btn-sm" onclick="exportarExcel()" title="Descargar Excel">
-        <i class="bi bi-file-earmark-excel"></i> Excel
-      </button>
-    </div>
-
-    <!-- Fila 1: Fechas venta + Canal -->
-    <div class="form-row fr-3 mb-8" style="align-items:end">
-      <div class="form-group" style="margin:0">
-        <label>Desde</label>
-        <input type="date" id="h-desde">
-      </div>
-      <div class="form-group" style="margin:0">
-        <label>Hasta</label>
-        <input type="date" id="h-hasta">
-      </div>
-      <div class="form-group" style="margin:0">
-        <label>Canal</label>
-        <select id="h-canal">
-          <option value="">Todos</option>
-          <option value="local">Local</option>
-          <option value="online">Online</option>
-          <option value="whatsapp">WhatsApp</option>
-          <option value="suscripcion">Suscripción</option>
-        </select>
-      </div>
-    </div>
-
-    <!-- Fila 2: Tipo cliente + Estado pago + Estado despacho -->
-    <div class="form-row fr-3 mb-8" style="align-items:end">
-      <div class="form-group" style="margin:0">
-        <label>Tipo cliente</label>
-        <select id="h-tipo-cliente">
-          <option value="">Todos</option>
-          <option value="CLIENTE">Cliente</option>
-          <option value="HORECA">HORECA / Mayorista</option>
-        </select>
-      </div>
-      <div class="form-group" style="margin:0">
-        <label>Estado pago</label>
-        <select id="h-estado-pago">
-          <option value="">Todos</option>
-          <option value="PENDIENTE">Pendiente</option>
-          <option value="PAGADO">Pagado</option>
-        </select>
-      </div>
-      <div class="form-group" style="margin:0">
-        <label>Estado despacho</label>
-        <select id="h-estado-despacho">
-          <option value="">Todos</option>
-          <option value="PENDIENTE">Pendiente</option>
-          <option value="DESPACHADO">Despachado</option>
-          <option value="RETIRO EN TIENDA">Retiro tienda</option>
-        </select>
-      </div>
-    </div>
-
-    <!-- Fila 3: Cliente + Modalidad entrega + Producto (texto) -->
-    <div class="form-row fr-3 mb-8" style="align-items:end">
-      <div class="form-group" style="margin:0">
-        <label>Cliente</label>
-        <select id="h-cliente-id">
-          <option value="">Todos</option>
-        </select>
-      </div>
-      <div class="form-group" style="margin:0">
-        <label>Modalidad entrega</label>
-        <select id="h-con-despacho">
-          <option value="">Todos</option>
-          <option value="1">Con despacho</option>
-          <option value="0">Retiro en tienda</option>
-        </select>
-      </div>
-      <div class="form-group" style="margin:0">
-        <label>Producto</label>
-        <input type="text" id="h-producto" placeholder="Filtrar por producto...">
-      </div>
-    </div>
-
-    <!-- Fila 4: Monto min + Monto max + Fechas despacho -->
-    <div class="form-row fr-4 mb-12" style="align-items:end">
-      <div class="form-group" style="margin:0">
-        <label>Monto mín. ($)</label>
-        <input type="number" id="h-min-total" min="0" step="100" placeholder="0">
-      </div>
-      <div class="form-group" style="margin:0">
-        <label>Monto máx. ($)</label>
-        <input type="number" id="h-max-total" min="0" step="100" placeholder="—">
-      </div>
-      <div class="form-group" style="margin:0">
-        <label>Despacho desde</label>
-        <input type="date" id="h-despacho-desde">
-      </div>
-      <div class="form-group" style="margin:0">
-        <label>Despacho hasta</label>
-        <input type="date" id="h-despacho-hasta">
-      </div>
-    </div>
-
-    <!-- Acciones -->
-    <div class="flex gap-8 mb-16" style="align-items:center">
-      <button class="btn btn-secondary btn-sm" onclick="loadVentas()">
-        <i class="bi bi-search"></i> Buscar
-      </button>
-      <button class="btn btn-secondary btn-sm" onclick="limpiarFiltros()">
-        <i class="bi bi-x-circle"></i> Limpiar
-      </button>
-      <span class="text-muted text-sm ml-auto" id="h-count"></span>
-    </div>
-
-    <!-- Tabla -->
-    <div class="table-wrap">
-      <table>
-        <thead><tr>
-          <th>Fecha</th>
-          <th>Cliente / Tipo</th>
-          <th>Productos</th>
-          <th>Despacho</th>
-          <th class="right">Total</th>
-          <th>Pago</th>
-          <th>Entrega</th>
-          <th></th>
-        </tr></thead>
-        <tbody id="ventas-tbody">
-          <tr><td colspan="8" class="text-center text-muted" style="padding:40px">Cargando...</td></tr>
-        </tbody>
-      </table>
-    </div>
-  </div>
-
-</div><!-- /grid-2 -->
 </div><!-- /tab-ventas -->
 
 
@@ -268,12 +133,7 @@
   <div class="card">
     <div class="sec-header mb-16">
       <span class="card-title" style="margin:0"><i class="bi bi-boxes"></i> Stock disponible</span>
-      <div class="flex gap-8">
-        <input type="text" id="stock-search" placeholder="Buscar producto..." oninput="renderStock()" style="width:200px">
-        <button class="btn btn-secondary btn-sm" onclick="exportarStockExcel()" title="Descargar Excel">
-          <i class="bi bi-file-earmark-excel"></i> Excel
-        </button>
-      </div>
+      <input type="text" id="stock-search" placeholder="Buscar producto..." oninput="renderStock()" style="width:200px">
     </div>
 
     <!-- Mini KPIs de stock -->
@@ -306,13 +166,9 @@
 {% endblock %}
 
 {% block scripts %}
-<!-- SheetJS para exportar Excel (sin dependencias de servidor) -->
-<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
-
 <script>
 let productos = [];
 let clientes  = [];
-let ventasData = [];   // última consulta cargada (para excel)
 
 // ── Tabs ──────────────────────────────────────────────────────────────────────
 function showPageTab(tab) {
@@ -328,8 +184,6 @@ function onCanalChange() {
   const canal = document.getElementById('v-canal').value;
   const isSub = canal === 'suscripcion';
   document.getElementById('sub-notice').style.display = isSub ? 'block' : 'none';
-  const lbl = document.querySelector('label[for="v-cliente"]') || document.querySelector('.form-group label');
-  // Marcar cliente como requerido visualmente
   const clienteGroup = document.getElementById('v-cliente').closest('.form-group');
   const clienteLabel = clienteGroup ? clienteGroup.querySelector('label') : null;
   if (clienteLabel) {
@@ -356,15 +210,13 @@ async function init() {
   const today = new Date().toISOString().split('T')[0];
   document.getElementById('v-fecha').value          = today;
   document.getElementById('v-fecha-despacho').value = today;
-  document.getElementById('h-desde').value          = today;
-  document.getElementById('h-hasta').value          = today;
 
   [productos, clientes] = await Promise.all([
     api('GET', '/api/productos'),
     api('GET', '/api/clientes'),
   ]);
 
-  // Poblar select cliente del formulario de venta
+  // Poblar select cliente
   const selV = document.getElementById('v-cliente');
   clientes.forEach(c => {
     const o = document.createElement('option');
@@ -374,18 +226,8 @@ async function init() {
     selV.appendChild(o);
   });
 
-  // Poblar select cliente del historial
-  const selH = document.getElementById('h-cliente-id');
-  clientes.forEach(c => {
-    const o = document.createElement('option');
-    o.value = c.id;
-    o.textContent = c.nombre;
-    selH.appendChild(o);
-  });
-
   addItem();
   loadResumen();
-  loadVentas();
 }
 
 // ── Precios ───────────────────────────────────────────────────────────────────
@@ -472,14 +314,16 @@ async function submitVenta() {
   });
   if (!valid || !items.length) { toast('Completa todos los productos', 'error'); return; }
 
-  const cid = document.getElementById('v-cliente').value;
+  const cid   = document.getElementById('v-cliente').value;
   const canal = document.getElementById('v-canal').value;
+
   if (canal === 'suscripcion' && !cid) {
     toast('Selecciona un cliente para registrar la suscripción', 'error');
     document.getElementById('sub-cliente-warn').style.display = 'block';
     return;
   }
   document.getElementById('sub-cliente-warn').style.display = 'none';
+
   const conDespacho = parseInt(document.getElementById('v-con-despacho').value);
   try {
     const res = await api('POST', '/api/ventas', {
@@ -494,18 +338,19 @@ async function submitVenta() {
       estado_despacho: conDespacho ? 'PENDIENTE' : 'RETIRO EN TIENDA',
       items
     });
+
     if (res.suscripcion_id) {
       toast(`Venta registrada · Suscripción #${res.suscripcion_id} creada/vinculada ✓`);
-      // Offer quick link
       const notif = document.createElement('div');
-      notif.style.cssText = 'position:fixed;bottom:70px;right:20px;background:#1e1e1b;border:1px solid #6b9fd4;border-radius:10px;padding:12px 16px;font-size:13px;color:#6b9fd4;z-index:9999;box-shadow:0 4px 16px #0006';
-      notif.innerHTML = `<i class="bi bi-calendar-check"></i> Suscripción #${res.suscripcion_id} registrada. <a href="/suscripciones" style="color:#fff;font-weight:700;margin-left:6px">Ver suscripciones →</a>
+      notif.style.cssText = 'position:fixed;bottom:70px;right:20px;background:#fff;border:1px solid #6b9fd4;border-radius:10px;padding:12px 16px;font-size:13px;color:#1a1410;z-index:9999;box-shadow:0 4px 16px #0002';
+      notif.innerHTML = `<i class="bi bi-calendar-check" style="color:#6b9fd4"></i> Suscripción #${res.suscripcion_id} registrada. <a href="/suscripciones" style="color:#6366f1;font-weight:700;margin-left:6px">Ver suscripciones →</a>
         <button onclick="this.parentElement.remove()" style="background:none;border:none;color:#aaa;float:right;cursor:pointer;margin-left:8px">×</button>`;
       document.body.appendChild(notif);
       setTimeout(() => notif.remove(), 8000);
     } else {
       toast('Venta registrada');
     }
+
     document.getElementById('items-box').innerHTML = '';
     document.getElementById('v-notas').value = '';
     document.getElementById('v-canal').value = 'local';
@@ -514,7 +359,6 @@ async function submitVenta() {
     if (subReq) subReq.remove();
     addItem();
     loadResumen();
-    loadVentas();
   } catch(e) { toast(e.message, 'error'); }
 }
 
@@ -531,169 +375,6 @@ async function loadResumen() {
   document.getElementById('k-pend-desp').textContent = r.pendientes_despacho;
 }
 
-// ── Historial / Reporte ───────────────────────────────────────────────────────
-async function loadVentas() {
-  const params = new URLSearchParams({
-    desde:               document.getElementById('h-desde').value,
-    hasta:               document.getElementById('h-hasta').value,
-    canal:               document.getElementById('h-canal').value,
-    tipo_cliente:        document.getElementById('h-tipo-cliente').value,
-    estado_pago:         document.getElementById('h-estado-pago').value,
-    estado_despacho:     document.getElementById('h-estado-despacho').value,
-    cliente_id:          document.getElementById('h-cliente-id').value,
-    con_despacho:        document.getElementById('h-con-despacho').value,
-    min_total:           document.getElementById('h-min-total').value,
-    max_total:           document.getElementById('h-max-total').value,
-    fecha_despacho_desde:document.getElementById('h-despacho-desde').value,
-    fecha_despacho_hasta:document.getElementById('h-despacho-hasta').value,
-  });
-  // Eliminar params vacíos
-  [...params.keys()].forEach(k => { if (!params.get(k)) params.delete(k); });
-
-  let ventas = await api('GET', `/api/ventas?${params}`);
-
-  // Filtro client-side por nombre de producto
-  const prodQ = document.getElementById('h-producto').value.toLowerCase().trim();
-  if (prodQ) {
-    ventas = ventas.filter(v =>
-      v.items.some(i => (i.nombre||'').toLowerCase().includes(prodQ))
-    );
-  }
-
-  ventasData = ventas;
-  renderVentas(ventas);
-}
-
-function renderVentas(ventas) {
-  const tbody = document.getElementById('ventas-tbody');
-  const count = document.getElementById('h-count');
-  const total = ventas.reduce((s, v) => s + (v.total||0), 0);
-  count.textContent = ventas.length
-    ? `${ventas.length} venta${ventas.length!=1?'s':''} · ${clp(total)}`
-    : '';
-
-  if (!ventas.length) {
-    tbody.innerHTML = '<tr><td colspan="8"><div class="empty"><i class="bi bi-receipt"></i><p>Sin ventas en ese período</p></div></td></tr>';
-    return;
-  }
-
-  tbody.innerHTML = ventas.map(v => {
-    const productosStr = v.items.map(i=>`${i.nombre} ×${i.cantidad}`).join(', ');
-    const tipoBadge = v.tipo_cliente === 'HORECA'
-      ? '<span class="badge badge-horeca">HORECA</span>'
-      : '<span class="badge badge-cliente">CLIENTE</span>';
-    const despachoInfo = v.con_despacho
-      ? `<span class="text-sm text-muted">🚚 ${v.fecha_despacho||'sin fecha'}</span>`
-      : `<span class="text-sm text-muted">🏪 Retiro</span>`;
-
-    return `<tr>
-      <td>
-        <div class="fw-600 text-white text-sm">${v.fecha}</div>
-        <div class="text-muted text-sm">${canal_badge(v.canal)}</div>
-      </td>
-      <td>
-        <div class="text-sm">${v.cliente_nombre || '<span class="text-muted">—</span>'}</div>
-        <div>${tipoBadge}</div>
-      </td>
-      <td class="text-muted text-sm" style="max-width:160px;white-space:normal;line-height:1.4">${productosStr}</td>
-      <td>${despachoInfo}</td>
-      <td class="right mono fw-600 text-white">${clp(v.total)}</td>
-      <td>
-        <select class="badge-select" onchange="updateEstado(${v.id},'estado_pago',this.value)"
-          style="background:${v.estado_pago==='PAGADO'?'var(--success-dim,#5ad47b22)':'var(--warning-dim,#d4a85a22)'}">
-          <option value="PENDIENTE" ${v.estado_pago==='PENDIENTE'?'selected':''}>⏳ Pendiente</option>
-          <option value="PAGADO"    ${v.estado_pago==='PAGADO'?'selected':''}>✅ Pagado</option>
-        </select>
-      </td>
-      <td>
-        <select class="badge-select" onchange="updateEstado(${v.id},'estado_despacho',this.value)"
-          style="background:${despachoColor(v.estado_despacho)}">
-          <option value="PENDIENTE"        ${v.estado_despacho==='PENDIENTE'?'selected':''}>⏳ Pendiente</option>
-          <option value="DESPACHADO"       ${v.estado_despacho==='DESPACHADO'?'selected':''}>✅ Despachado</option>
-          <option value="RETIRO EN TIENDA" ${v.estado_despacho==='RETIRO EN TIENDA'?'selected':''}>🏪 Retiro tienda</option>
-        </select>
-      </td>
-      <td>
-        <button class="btn btn-danger btn-icon btn-sm" onclick="deleteVenta(${v.id},this)" title="Eliminar"><i class="bi bi-trash3"></i></button>
-      </td>
-    </tr>`;
-  }).join('');
-}
-
-function limpiarFiltros() {
-  const today = new Date().toISOString().split('T')[0];
-  document.getElementById('h-desde').value          = today;
-  document.getElementById('h-hasta').value          = today;
-  document.getElementById('h-canal').value          = '';
-  document.getElementById('h-tipo-cliente').value   = '';
-  document.getElementById('h-estado-pago').value    = '';
-  document.getElementById('h-estado-despacho').value= '';
-  document.getElementById('h-cliente-id').value     = '';
-  document.getElementById('h-con-despacho').value   = '';
-  document.getElementById('h-producto').value       = '';
-  document.getElementById('h-min-total').value      = '';
-  document.getElementById('h-max-total').value      = '';
-  document.getElementById('h-despacho-desde').value = '';
-  document.getElementById('h-despacho-hasta').value = '';
-  loadVentas();
-}
-
-function despachoColor(estado) {
-  if (estado === 'DESPACHADO')       return 'var(--success-dim,#5ad47b22)';
-  if (estado === 'RETIRO EN TIENDA') return '#6b9fd422';
-  return 'var(--warning-dim,#d4a85a22)';
-}
-
-async function updateEstado(vid, campo, valor) {
-  try {
-    await api('PUT', `/api/ventas/${vid}`, { [campo]: valor });
-    toast('Estado actualizado');
-    loadResumen();
-  } catch(e) { toast(e.message, 'error'); }
-}
-
-async function deleteVenta(id, btn) {
-  if (!confirm('¿Eliminar esta venta? El stock se restaurará.')) return;
-  try {
-    await api('DELETE', `/api/ventas/${id}`);
-    btn.closest('tr').remove();
-    ventasData = ventasData.filter(v => v.id !== id);
-    loadResumen();
-    toast('Venta eliminada');
-  } catch(e) { toast(e.message, 'error'); }
-}
-
-// ── Excel — Ventas ────────────────────────────────────────────────────────────
-function exportarExcel() {
-  if (!ventasData.length) { toast('No hay datos para exportar', 'error'); return; }
-
-  const filas = ventasData.map(v => ({
-    'Fecha':           v.fecha,
-    'Cliente':         v.cliente_nombre || '—',
-    'Tipo cliente':    v.tipo_cliente,
-    'Canal':           v.canal,
-    'Productos':       v.items.map(i=>`${i.nombre} ×${i.cantidad} @${clp(i.precio_unitario)}`).join(' | '),
-    'Total ($)':       v.total,
-    'Estado pago':     v.estado_pago,
-    'Estado despacho': v.estado_despacho,
-    'Con despacho':    v.con_despacho ? 'Sí' : 'No',
-    'Fecha despacho':  v.fecha_despacho || '—',
-    'Notas':           v.notas || '',
-  }));
-
-  const ws = XLSX.utils.json_to_sheet(filas);
-  // Ancho de columnas
-  ws['!cols'] = [14,20,14,12,50,12,14,16,13,15,20].map(w=>({wch:w}));
-
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Ventas');
-
-  const desde = document.getElementById('h-desde').value;
-  const hasta  = document.getElementById('h-hasta').value;
-  XLSX.writeFile(wb, `aurora_ventas_${desde}_${hasta}.xlsx`);
-  toast('Descargando Excel...');
-}
-
 // ── Tab Stock ─────────────────────────────────────────────────────────────────
 function renderStock() {
   const q = (document.getElementById('stock-search')?.value || '').toLowerCase();
@@ -701,7 +382,6 @@ function renderStock() {
     !q || p.nombre.toLowerCase().includes(q) || (p.descripcion||'').toLowerCase().includes(q)
   );
 
-  // KPIs
   const critico = productos.filter(p => p.stock <= 2).length;
   const bajo    = productos.filter(p => p.stock > 2 && p.stock <= 5).length;
   const ok      = productos.filter(p => p.stock > 5).length;
@@ -716,9 +396,7 @@ function renderStock() {
     return;
   }
 
-  // Ordenar: crítico primero
   const sorted = [...lista].sort((a,b) => a.stock - b.stock);
-
   tbody.innerHTML = sorted.map(p => {
     const critico = p.stock <= 2;
     const bajo    = p.stock > 2 && p.stock <= 5;
@@ -731,10 +409,9 @@ function renderStock() {
     const catBadge = p.categoria === 'suscripcion'
       ? '<span class="badge" style="background:#6b9fd422;color:#6b9fd4">📦 Suscripción</span>'
       : '<span class="badge" style="background:#d4a85a22;color:#d4a85a">🍞 Pan</span>';
-
     return `<tr>
       <td>
-        <div class="fw-600 text-white">${p.nombre}</div>
+        <div class="fw-600">${p.nombre}</div>
         <div class="text-muted text-sm">${p.descripcion||''}</div>
       </td>
       <td>${catBadge}</td>
@@ -745,29 +422,6 @@ function renderStock() {
       <td class="center">${estadoBadge}</td>
     </tr>`;
   }).join('');
-}
-
-function exportarStockExcel() {
-  if (!productos.length) { toast('No hay productos para exportar', 'error'); return; }
-
-  const filas = productos.map(p => ({
-    'Producto':        p.nombre,
-    'Descripción':     p.descripcion || '',
-    'Categoría':       p.categoria || 'pan',
-    'Unidad':          p.unidad,
-    'Precio retail ($)':    p.precio,
-    'Precio mayorista ($)': p.precio_mayorista || 0,
-    'Costo ($)':       p.costo || 0,
-    'Stock':           p.stock,
-    'Estado':          p.stock <= 2 ? 'Crítico' : p.stock <= 5 ? 'Bajo' : 'OK',
-  }));
-
-  const ws = XLSX.utils.json_to_sheet(filas);
-  ws['!cols'] = [22,24,12,10,16,18,12,8,10].map(w=>({wch:w}));
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Stock');
-  XLSX.writeFile(wb, `aurora_stock_${new Date().toISOString().split('T')[0]}.xlsx`);
-  toast('Descargando Excel...');
 }
 
 init();
@@ -786,39 +440,23 @@ init();
 
 /* ── Badges ── */
 .badge { display:inline-block; padding:2px 8px; border-radius:10px; font-size:10px; font-weight:700; }
-.badge-horeca   { background:#d4a85a22; color:#d4a85a; }
-.badge-cliente  { background:#6b9fd422; color:#6b9fd4; }
-.badge-danger   { background:#e05a4422; color:#e05a44; }
-.badge-warning  { background:#d4a85a22; color:#d4a85a; }
-.badge-success  { background:#5ad47b22; color:#5ad47b; }
-
-/* ── Historial select inline ── */
-.badge-select {
-  border:none; border-radius:10px; padding:3px 8px; font-size:11px; font-weight:600;
-  cursor:pointer; outline:none; color:var(--text);
-  appearance:none; -webkit-appearance:none;
-  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%237a776e'/%3E%3C/svg%3E");
-  background-repeat:no-repeat; background-position:right 6px center; padding-right:20px;
-}
-.badge-select option { background:#1a1916; }
-
-/* ── fr-4 grid ── */
-.fr-4 { grid-template-columns: repeat(4, 1fr) !important; }
+.badge-danger  { background:#e05a4422; color:#e05a44; }
+.badge-warning { background:#d4a85a22; color:#d4a85a; }
+.badge-success { background:#5ad47b22; color:#5ad47b; }
 
 /* ── Stock KPIs ── */
 .stock-kpis { display:flex; gap:16px; }
 .stock-kpi {
   display:flex; flex-direction:column; align-items:center;
-  background:var(--surface2); border-radius:10px; padding:12px 20px; min-width:90px;
+  background:var(--surface2,#f5f0ea); border-radius:10px; padding:12px 20px; min-width:90px;
 }
 .stock-kpi span { font-size:22px; font-weight:700; line-height:1; }
 .stock-kpi label { font-size:11px; color:var(--muted); margin-top:4px; text-align:center; }
-.text-danger { color:var(--danger) !important; }
+.text-danger  { color:var(--danger)  !important; }
 .text-warning { color:var(--warning) !important; }
 .text-success { color:var(--success) !important; }
 
 /* ── Misc ── */
 .mb-20 { margin-bottom:20px; }
-.ml-auto { margin-left:auto; }
 </style>
 {% endblock %}
