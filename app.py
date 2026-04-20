@@ -468,6 +468,19 @@ Aurora Bakers | panypasta.cl""",
                 hora        TEXT    NOT NULL DEFAULT '',
                 completado  INTEGER NOT NULL DEFAULT 0,
                 prioridad   TEXT    NOT NULL DEFAULT 'media',
+                creado_en   TEXT    NOT NULL DEFAULT (datetime('now')),
+                responsable TEXT    NOT NULL DEFAULT '',
+                fecha_fin   TEXT    NOT NULL DEFAULT ''
+            );
+            CREATE TABLE IF NOT EXISTS agenda_subtareas (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                tarea_id    INTEGER NOT NULL REFERENCES agenda(id) ON DELETE CASCADE,
+                titulo      TEXT    NOT NULL,
+                responsable TEXT    NOT NULL DEFAULT '',
+                fecha_inicio TEXT   NOT NULL DEFAULT '',
+                fecha_fin   TEXT    NOT NULL DEFAULT '',
+                completado  INTEGER NOT NULL DEFAULT 0,
+                orden       INTEGER NOT NULL DEFAULT 0,
                 creado_en   TEXT    NOT NULL DEFAULT (datetime('now'))
             );
             CREATE TABLE IF NOT EXISTS config_negocio (
@@ -478,6 +491,12 @@ Aurora Bakers | panypasta.cl""",
                 descripcion TEXT    NOT NULL DEFAULT ''
             );
         """)
+
+        # Migrations: add new columns to existing tables
+        if not _col_exists(c, 'agenda', 'responsable'):
+            c.execute("ALTER TABLE agenda ADD COLUMN responsable TEXT NOT NULL DEFAULT ''")
+        if not _col_exists(c, 'agenda', 'fecha_fin'):
+            c.execute("ALTER TABLE agenda ADD COLUMN fecha_fin TEXT NOT NULL DEFAULT ''")
 
         # Seed inventario inicial con ingredientes base
         if c.execute("SELECT COUNT(*) FROM inventario").fetchone()[0] == 0:
@@ -2546,6 +2565,116 @@ def api_plan_copiar():
     return jsonify({'ok': True, 'copiados': len(rows)})
 
 
+@app.route('/api/plan-produccion/<fecha>/desde-ventas', methods=['GET'])
+@login_required
+def api_plan_desde_ventas(fecha):
+    """
+    Retorna los productos que hay que producir para la fecha indicada,
+    sumando las cantidades de venta_items según:
+      - Ventas con despacho a domicilio donde fecha_despacho = fecha y no despachadas aún
+      - Ventas de retiro en tienda donde fecha de venta = fecha y no despachadas aún
+    """
+    with db() as c:
+        rows = c.execute("""
+            SELECT
+                p.id          AS producto_id,
+                p.nombre      AS nombre_producto,
+                SUM(vi.cantidad) AS cantidad_total,
+                COUNT(DISTINCT v.id) AS num_ventas,
+                GROUP_CONCAT(
+                    CASE
+                        WHEN c.nombre IS NOT NULL
+                        THEN CAST(CAST(vi.cantidad AS INTEGER) AS TEXT) || '× ' || c.nombre
+                        ELSE CAST(CAST(vi.cantidad AS INTEGER) AS TEXT) || '× (sin cliente)'
+                    END, ', '
+                ) AS detalle_clientes
+            FROM venta_items vi
+            JOIN ventas v  ON v.id  = vi.venta_id
+            JOIN productos p ON p.id = vi.producto_id
+            LEFT JOIN clientes c ON c.id = v.cliente_id
+            WHERE v.estado_despacho != 'DESPACHADO'
+              AND (
+                  (v.con_despacho = 1 AND v.fecha_despacho = ?)
+                  OR
+                  (v.con_despacho = 0 AND v.fecha = ?)
+              )
+            GROUP BY p.id, p.nombre
+            ORDER BY cantidad_total DESC
+        """, (fecha, fecha)).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route('/api/plan-produccion/<fecha>/generar-desde-ventas', methods=['POST'])
+@login_required
+def api_plan_generar_desde_ventas(fecha):
+    """
+    Genera (o completa) el plan de producción de la fecha a partir de las ventas pendientes.
+    Parámetro JSON:
+      modo: 'reemplazar'  — borra el plan actual y lo crea desde cero
+            'agregar'     — solo añade productos que aún no están en el plan
+    """
+    d    = request.get_json(silent=True) or {}
+    modo = d.get('modo', 'agregar')  # default: no destructivo
+
+    with db() as c:
+        # 1. Obtener productos desde ventas
+        rows = c.execute("""
+            SELECT
+                p.id          AS producto_id,
+                p.nombre      AS nombre_producto,
+                SUM(vi.cantidad) AS cantidad_total,
+                GROUP_CONCAT(
+                    CASE
+                        WHEN c.nombre IS NOT NULL
+                        THEN CAST(CAST(vi.cantidad AS INTEGER) AS TEXT) || '× ' || c.nombre
+                        ELSE CAST(CAST(vi.cantidad AS INTEGER) AS TEXT) || '× (sin cliente)'
+                    END, ', '
+                ) AS detalle_clientes
+            FROM venta_items vi
+            JOIN ventas v  ON v.id  = vi.venta_id
+            JOIN productos p ON p.id = vi.producto_id
+            LEFT JOIN clientes c ON c.id = v.cliente_id
+            WHERE v.estado_despacho != 'DESPACHADO'
+              AND (
+                  (v.con_despacho = 1 AND v.fecha_despacho = ?)
+                  OR
+                  (v.con_despacho = 0 AND v.fecha = ?)
+              )
+            GROUP BY p.id, p.nombre
+            ORDER BY cantidad_total DESC
+        """, (fecha, fecha)).fetchall()
+
+        if not rows:
+            return jsonify({'ok': False, 'error': 'No hay ventas pendientes para esa fecha'}), 400
+
+        if modo == 'reemplazar':
+            c.execute("DELETE FROM plan_produccion WHERE fecha=?", (fecha,))
+            for r in rows:
+                codigo = 'V' + str(r['producto_id'])
+                notas  = r['detalle_clientes'] or ''
+                c.execute(
+                    "INSERT INTO plan_produccion (fecha,codigo_producto,nombre_producto,cantidad,estado,notas) VALUES (?,?,?,?,?,?)",
+                    (fecha, codigo, r['nombre_producto'], int(r['cantidad_total']), 'pendiente', notas)
+                )
+            return jsonify({'ok': True, 'modo': 'reemplazar', 'items': len(rows)})
+
+        else:  # agregar
+            # Obtener nombres ya presentes en el plan
+            existing = {row['nombre_producto'].lower()
+                        for row in c.execute("SELECT nombre_producto FROM plan_produccion WHERE fecha=?", (fecha,)).fetchall()}
+            agregados = 0
+            for r in rows:
+                if r['nombre_producto'].lower() not in existing:
+                    codigo = 'V' + str(r['producto_id'])
+                    notas  = r['detalle_clientes'] or ''
+                    c.execute(
+                        "INSERT INTO plan_produccion (fecha,codigo_producto,nombre_producto,cantidad,estado,notas) VALUES (?,?,?,?,?,?)",
+                        (fecha, codigo, r['nombre_producto'], int(r['cantidad_total']), 'pendiente', notas)
+                    )
+                    agregados += 1
+            return jsonify({'ok': True, 'modo': 'agregar', 'items': len(rows), 'agregados': agregados})
+
+
 # ════════════════════════════════════════════════════════════════════════════
 # GASTOS
 # ════════════════════════════════════════════════════════════════════════════
@@ -2642,9 +2771,18 @@ def api_agenda_list():
             ).fetchall()
         else:
             rows = c.execute(
-                "SELECT * FROM agenda ORDER BY fecha DESC, prioridad DESC"
+                "SELECT * FROM agenda ORDER BY fecha ASC, prioridad DESC"
             ).fetchall()
-    return jsonify([dict(r) for r in rows])
+        result = []
+        for r in rows:
+            item = dict(r)
+            subs = c.execute(
+                "SELECT * FROM agenda_subtareas WHERE tarea_id=? ORDER BY orden, id",
+                (item['id'],)
+            ).fetchall()
+            item['subtareas'] = [dict(s) for s in subs]
+            result.append(item)
+    return jsonify(result)
 
 @app.route('/api/agenda', methods=['POST'])
 @login_required
@@ -2652,10 +2790,10 @@ def api_agenda_create():
     d = request.get_json(silent=True) or {}
     with db() as c:
         cur = c.execute(
-            "INSERT INTO agenda (tipo, titulo, descripcion, fecha, hora, completado, prioridad) VALUES (?,?,?,?,?,?,?)",
+            "INSERT INTO agenda (tipo, titulo, descripcion, fecha, hora, completado, prioridad, responsable, fecha_fin) VALUES (?,?,?,?,?,?,?,?,?)",
             (d.get('tipo','tarea'), d.get('titulo',''), d.get('descripcion',''),
              d.get('fecha', date.today().isoformat()), d.get('hora',''),
-             0, d.get('prioridad','media'))
+             0, d.get('prioridad','media'), d.get('responsable',''), d.get('fecha_fin',''))
         )
         rid = cur.lastrowid
     return jsonify({'ok': True, 'id': rid})
@@ -2666,10 +2804,10 @@ def api_agenda_update(aid):
     d = request.get_json(silent=True) or {}
     with db() as c:
         c.execute(
-            "UPDATE agenda SET tipo=?, titulo=?, descripcion=?, fecha=?, hora=?, prioridad=? WHERE id=?",
+            "UPDATE agenda SET tipo=?, titulo=?, descripcion=?, fecha=?, hora=?, prioridad=?, responsable=?, fecha_fin=? WHERE id=?",
             (d.get('tipo','tarea'), d.get('titulo',''), d.get('descripcion',''),
              d.get('fecha', date.today().isoformat()), d.get('hora',''),
-             d.get('prioridad','media'), aid)
+             d.get('prioridad','media'), d.get('responsable',''), d.get('fecha_fin',''), aid)
         )
     return jsonify({'ok': True})
 
@@ -2684,8 +2822,52 @@ def api_agenda_completar(aid):
 @login_required
 def api_agenda_delete(aid):
     with db() as c:
+        c.execute("DELETE FROM agenda_subtareas WHERE tarea_id=?", (aid,))
         c.execute("DELETE FROM agenda WHERE id=?", (aid,))
     return jsonify({'ok': True})
+
+@app.route('/api/agenda/<int:aid>/subtareas', methods=['POST'])
+@login_required
+def api_agenda_subtarea_create(aid):
+    d = request.get_json(silent=True) or {}
+    with db() as c:
+        cur = c.execute(
+            "INSERT INTO agenda_subtareas (tarea_id, titulo, responsable, fecha_inicio, fecha_fin, completado, orden) VALUES (?,?,?,?,?,0,?)",
+            (aid, d.get('titulo',''), d.get('responsable',''),
+             d.get('fecha_inicio',''), d.get('fecha_fin',''),
+             d.get('orden', 0))
+        )
+        rid = cur.lastrowid
+    return jsonify({'ok': True, 'id': rid})
+
+@app.route('/api/agenda/subtareas/<int:sid>', methods=['PUT'])
+@login_required
+def api_agenda_subtarea_update(sid):
+    d = request.get_json(silent=True) or {}
+    with db() as c:
+        c.execute(
+            "UPDATE agenda_subtareas SET titulo=?, responsable=?, fecha_inicio=?, fecha_fin=?, orden=? WHERE id=?",
+            (d.get('titulo',''), d.get('responsable',''),
+             d.get('fecha_inicio',''), d.get('fecha_fin',''),
+             d.get('orden', 0), sid)
+        )
+    return jsonify({'ok': True})
+
+@app.route('/api/agenda/subtareas/<int:sid>', methods=['DELETE'])
+@login_required
+def api_agenda_subtarea_delete(sid):
+    with db() as c:
+        c.execute("DELETE FROM agenda_subtareas WHERE id=?", (sid,))
+    return jsonify({'ok': True})
+
+@app.route('/api/agenda/subtareas/<int:sid>/completar', methods=['POST'])
+@login_required
+def api_agenda_subtarea_completar(sid):
+    with db() as c:
+        row = c.execute("SELECT completado FROM agenda_subtareas WHERE id=?", (sid,)).fetchone()
+        nuevo = 0 if (row and row['completado']) else 1
+        c.execute("UPDATE agenda_subtareas SET completado=? WHERE id=?", (nuevo, sid))
+    return jsonify({'ok': True, 'completado': nuevo})
 
 
 # ════════════════════════════════════════════════════════════════════════════

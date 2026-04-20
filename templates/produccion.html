@@ -3,45 +3,77 @@
 {% block page_title %}Plan de Producción{% endblock %}
 {% block content %}
 
-<div style="display:flex;gap:1rem;margin-bottom:1.5rem;flex-wrap:wrap;align-items:center">
+<!-- ── Toolbar ──────────────────────────────────────────────────────────────── -->
+<div style="display:flex;gap:.75rem;margin-bottom:1.5rem;flex-wrap:wrap;align-items:center">
   <div style="display:flex;align-items:center;gap:.5rem">
     <label style="margin:0;white-space:nowrap;font-size:.8rem;color:var(--muted)">Fecha:</label>
     <input id="fecha-sel" type="date" style="width:160px" />
   </div>
-  <button class="btn btn-primary" onclick="abrirNuevo()"><i class="bi bi-plus-lg"></i> Agregar producto</button>
+  <button class="btn btn-primary"   onclick="abrirNuevo()"><i class="bi bi-plus-lg"></i> Agregar</button>
   <button class="btn btn-secondary" onclick="copiarDesdeAyer()"><i class="bi bi-copy"></i> Copiar de ayer</button>
-  <button class="btn btn-success" id="btn-confirmar" onclick="confirmarProduccion()" style="display:none">
+  <button class="btn btn-success"   id="btn-confirmar" onclick="confirmarProduccion()" style="display:none">
     <i class="bi bi-check2-all"></i> Confirmar producción
   </button>
   <div id="resumen-badge" style="margin-left:auto;font-size:.85rem;color:var(--muted)"></div>
 </div>
 
+<!-- ══════════════ PEDIDOS DEL DÍA (desde ventas) ══════════════ -->
+<div class="card" id="card-pedidos" style="margin-bottom:1.25rem">
+  <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.5rem;margin-bottom:.9rem">
+    <div style="display:flex;align-items:center;gap:.6rem">
+      <span style="font-size:.9rem;font-weight:700"><i class="bi bi-bag-check"></i> Pedidos para despacho</span>
+      <span id="pedidos-badge" style="font-size:.7rem;background:var(--accent-dim,rgba(200,49,46,.1));color:var(--accent);border-radius:20px;padding:2px 9px;font-weight:600;display:none"></span>
+    </div>
+    <div style="display:flex;gap:.5rem;flex-wrap:wrap">
+      <button class="btn btn-secondary btn-sm" onclick="loadPedidos()" title="Actualizar">
+        <i class="bi bi-arrow-clockwise"></i> Actualizar
+      </button>
+      <button id="btn-agregar-faltantes" class="btn btn-secondary btn-sm" style="display:none" onclick="generarDesdeVentas('agregar')">
+        <i class="bi bi-plus-circle"></i> Agregar faltantes al plan
+      </button>
+      <button id="btn-generar-plan" class="btn btn-primary btn-sm" style="display:none" onclick="generarDesdeVentas('reemplazar')">
+        <i class="bi bi-magic"></i> Generar plan completo
+      </button>
+    </div>
+  </div>
+
+  <div id="pedidos-body">
+    <div style="color:var(--muted);font-size:.82rem;padding:.5rem 0">Cargando pedidos…</div>
+  </div>
+</div>
+
+<!-- ══════════════ PLAN DE PRODUCCIÓN ══════════════ -->
 <div class="card" style="margin-bottom:1rem">
+  <div style="display:flex;align-items:center;gap:.6rem;margin-bottom:.75rem">
+    <span style="font-size:.9rem;font-weight:700"><i class="bi bi-clipboard-check"></i> Plan de producción</span>
+  </div>
   <table class="table" id="tabla-plan">
     <thead><tr>
       <th>Código</th>
       <th>Producto</th>
-      <th>Cantidad</th>
+      <th class="right">Cantidad</th>
       <th>Estado</th>
-      <th>Notas</th>
-      <th>Acciones</th>
+      <th>Notas / Clientes</th>
+      <th></th>
     </tr></thead>
     <tbody id="tbody"></tbody>
   </table>
   <div id="empty-msg" style="display:none">
-    <div class="empty" style="padding:2.5rem">
-      <i class="bi bi-clipboard-x"></i>
-      <p>Sin plan para esta fecha. Agrega productos o copia de otro día.</p>
+    <div class="empty" style="padding:2.5rem;text-align:center;color:var(--muted)">
+      <i class="bi bi-clipboard-x" style="font-size:2rem;display:block;margin-bottom:.5rem"></i>
+      <p>Sin plan para esta fecha.<br>
+         Agrega productos manualmente o usa <strong>"Generar plan completo"</strong> para crearlo desde las ventas.</p>
     </div>
   </div>
 </div>
 
+<!-- ══════════════ INGREDIENTES ══════════════ -->
 <div class="card" id="card-ingredientes" style="display:none">
-  <div class="card-header"><h3><i class="bi bi-boxes"></i> Ingredientes necesarios</h3></div>
-  <div id="ingredientes-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:.5rem;padding:1rem"></div>
+  <div style="font-size:.9rem;font-weight:700;margin-bottom:.75rem"><i class="bi bi-boxes"></i> Ingredientes necesarios</div>
+  <div id="ingredientes-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:.5rem"></div>
 </div>
 
-<!-- Modal agregar/editar -->
+<!-- ══════════════ MODAL ══════════════ -->
 <div id="modal-prod" class="modal-overlay">
   <div class="modal" style="max-width:440px">
     <div class="modal-header">
@@ -94,17 +126,45 @@
   </div>
 </div>
 
+<style>
+/* Tabla pedidos */
+.pedidos-table { width:100%; border-collapse:collapse; font-size:.82rem; }
+.pedidos-table th { text-align:left; font-size:.7rem; font-weight:700; text-transform:uppercase;
+  letter-spacing:.05em; color:var(--muted); padding:.4rem .75rem; border-bottom:2px solid var(--border); }
+.pedidos-table td { padding:.55rem .75rem; border-bottom:1px solid var(--border); vertical-align:middle; }
+.pedidos-table tr:last-child td { border-bottom:none; }
+.table { width:100%; border-collapse:collapse; font-size:.82rem; }
+.table th { text-align:left; font-size:.7rem; font-weight:700; text-transform:uppercase;
+  letter-spacing:.05em; color:var(--muted); padding:.5rem .75rem; border-bottom:2px solid var(--border); }
+.table td { padding:.6rem .75rem; border-bottom:1px solid var(--border); vertical-align:middle; }
+.table tr:last-child td { border-bottom:none; }
+.table tr:hover td { background:var(--hover,rgba(0,0,0,.03)); }
+.right { text-align:right !important; }
+.qty-chip { display:inline-block; font-size:1.05rem; font-weight:700; min-width:2.2rem;
+  text-align:center; background:var(--accent-dim,rgba(200,49,46,.1));
+  color:var(--accent); border-radius:6px; padding:.1rem .45rem; }
+.badge-yellow { background:rgba(234,179,8,.15);  color:#b45309; }
+.badge-blue   { background:rgba(99,102,241,.12);  color:#4338ca; }
+.badge-green  { background:rgba(34,197,94,.12);   color:#15803d; }
+.badge-gray   { background:rgba(120,120,120,.1);  color:var(--muted); }
+.badge { display:inline-block; padding:2px 8px; border-radius:10px; font-size:.7rem; font-weight:700; }
+.en-plan-chip { display:inline-flex;align-items:center;gap:3px;font-size:.68rem;
+  background:rgba(34,197,94,.12);color:#15803d;border-radius:10px;padding:1px 7px;font-weight:600; }
+</style>
+
 <script>
 const NOMBRES = {
   HC:'Hogaza Campesina', HCN:'Hogaza Nueces', HI:'Hogaza Integral',
   HIM:'Hogaza Integral Multisemilla', PMB:'Pan Molde Blanco',
   PMI:'Pan Molde Integral', PMIM:'Pan Molde Integral Multisemilla', CIA:'Ciabatta'
 };
-let editId = null;
+let editId   = null;
+let pedidos  = [];    // productos desde ventas
+let planActual = [];  // plan_produccion actual
 
 const fechaInput = document.getElementById('fecha-sel');
 fechaInput.value = new Date().toISOString().split('T')[0];
-fechaInput.addEventListener('change', load);
+fechaInput.addEventListener('change', () => { loadPedidos(); loadPlan(); });
 
 function fillNombre() {
   const v = document.getElementById('f-codigo').value;
@@ -112,50 +172,153 @@ function fillNombre() {
   if (v !== 'OTRO') document.getElementById('f-nombre').value = NOMBRES[v] || '';
 }
 
-async function load() {
+// ── Pedidos del día (desde ventas) ────────────────────────────────────────────
+async function loadPedidos() {
   const fecha = fechaInput.value;
-  const data = await api('GET', `/api/agentes/produccion/${fecha}`);
-  const plan = data.plan || [];
-  const ing  = data.ingredientes_necesarios || {};
+  document.getElementById('pedidos-body').innerHTML =
+    '<div style="color:var(--muted);font-size:.82rem;padding:.5rem 0">Cargando…</div>';
 
-  document.getElementById('empty-msg').style.display   = plan.length ? 'none' : '';
-  document.getElementById('tabla-plan').style.display  = plan.length ? '' : 'none';
-  document.getElementById('resumen-badge').textContent = plan.length
-    ? `${plan.length} producto(s) · ${data.total_piezas} piezas totales` : '';
+  pedidos = await api('GET', `/api/plan-produccion/${fecha}/desde-ventas`);
+  renderPedidos();
+}
 
-  const pendientes = plan.filter(p => p.estado !== 'listo');
+function renderPedidos() {
+  const body  = document.getElementById('pedidos-body');
+  const badge = document.getElementById('pedidos-badge');
+  const btnA  = document.getElementById('btn-agregar-faltantes');
+  const btnG  = document.getElementById('btn-generar-plan');
+
+  if (!pedidos.length) {
+    badge.style.display = 'none';
+    btnA.style.display = btnG.style.display = 'none';
+    body.innerHTML = `<div style="color:var(--muted);font-size:.82rem;padding:.4rem 0">
+      <i class="bi bi-check2-circle" style="color:var(--success)"></i>
+      Sin pedidos pendientes de despacho para esta fecha.
+    </div>`;
+    return;
+  }
+
+  // Comparar con el plan actual para marcar los que ya están
+  const nombresEnPlan = new Set(planActual.map(p => p.nombre_producto.toLowerCase()));
+  const totalPiezas = pedidos.reduce((s, p) => s + (p.cantidad_total || 0), 0);
+
+  badge.textContent = `${pedidos.length} producto${pedidos.length !== 1 ? 's' : ''} · ${totalPiezas} piezas`;
+  badge.style.display = '';
+  btnA.style.display = btnG.style.display = '';
+
+  const filas = pedidos.map(p => {
+    const enPlan = nombresEnPlan.has(p.nombre_producto.toLowerCase());
+    const chip   = enPlan
+      ? '<span class="en-plan-chip"><i class="bi bi-check2"></i> en plan</span>'
+      : '';
+    return `<tr>
+      <td>
+        <span style="font-weight:600">${p.nombre_producto}</span>
+        ${chip}
+      </td>
+      <td class="right"><span class="qty-chip">${Math.round(p.cantidad_total)}</span></td>
+      <td style="font-size:.75rem;color:var(--muted);max-width:280px">${p.detalle_clientes || '—'}</td>
+      <td style="text-align:right">
+        ${!enPlan
+          ? `<button class="btn btn-ghost btn-sm" style="font-size:.72rem"
+              onclick="agregarUno(${p.producto_id},'${p.nombre_producto.replace(/'/g,"\\'")}',${p.cantidad_total},'${(p.detalle_clientes||'').replace(/'/g,"\\'")}')">
+              <i class="bi bi-plus"></i> Agregar al plan
+             </button>`
+          : `<span style="font-size:.72rem;color:var(--muted)">—</span>`
+        }
+      </td>
+    </tr>`;
+  }).join('');
+
+  body.innerHTML = `<table class="pedidos-table">
+    <thead><tr>
+      <th>Producto</th><th class="right">Uds.</th><th>Detalle pedidos</th><th></th>
+    </tr></thead>
+    <tbody>${filas}</tbody>
+  </table>`;
+}
+
+async function agregarUno(productoId, nombre, cantidad, detalle) {
+  const fecha  = fechaInput.value;
+  const codigo = 'V' + productoId;
+  try {
+    await api('POST', '/api/plan-produccion', {
+      fecha, codigo_producto: codigo, nombre_producto: nombre,
+      cantidad: Math.round(cantidad), estado: 'pendiente', notas: detalle
+    });
+    toast(`${nombre} agregado al plan`);
+    await loadPlan();
+    renderPedidos();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function generarDesdeVentas(modo) {
+  const fecha = fechaInput.value;
+  const label = modo === 'reemplazar'
+    ? '¿Reemplazar el plan actual con los pedidos de ventas?'
+    : '¿Agregar los productos faltantes al plan actual?';
+  if (!confirm(label)) return;
+  try {
+    const r = await api('POST', `/api/plan-produccion/${fecha}/generar-desde-ventas`, { modo });
+    if (modo === 'reemplazar') {
+      toast(`Plan generado: ${r.items} producto(s) desde ventas`);
+    } else {
+      toast(r.agregados > 0
+        ? `${r.agregados} producto(s) nuevos agregados al plan`
+        : 'El plan ya tiene todos los productos de las ventas');
+    }
+    await loadPlan();
+    renderPedidos();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+// ── Plan de producción ────────────────────────────────────────────────────────
+async function loadPlan() {
+  const fecha = fechaInput.value;
+  const data  = await api('GET', `/api/agentes/produccion/${fecha}`);
+  planActual  = data.plan || [];
+  const ing   = data.ingredientes_necesarios || {};
+
+  document.getElementById('empty-msg').style.display  = planActual.length ? 'none' : '';
+  document.getElementById('tabla-plan').style.display = planActual.length ? '' : 'none';
+  document.getElementById('resumen-badge').textContent = planActual.length
+    ? `${planActual.length} producto(s) · ${data.total_piezas} piezas` : '';
+
+  const pendientes = planActual.filter(p => p.estado !== 'listo');
   document.getElementById('btn-confirmar').style.display = pendientes.length ? '' : 'none';
 
   const SC = { pendiente:'badge-yellow', en_proceso:'badge-blue', listo:'badge-green' };
-  document.getElementById('tbody').innerHTML = plan.map(p => `<tr>
-    <td><code>${p.codigo_producto}</code></td>
+  document.getElementById('tbody').innerHTML = planActual.map(p => `<tr>
+    <td><code style="font-size:.75rem">${p.codigo_producto}</code></td>
     <td><strong>${p.nombre_producto}</strong></td>
-    <td>${p.cantidad}</td>
-    <td><span class="badge ${SC[p.estado]||'badge-yellow'}">${p.estado.replace('_',' ')}</span></td>
-    <td style="color:var(--muted);font-size:.8rem">${p.notas || '—'}</td>
-    <td>
+    <td class="right"><strong>${p.cantidad}</strong></td>
+    <td><span class="badge ${SC[p.estado]||'badge-gray'}">${p.estado.replace('_',' ')}</span></td>
+    <td style="color:var(--muted);font-size:.78rem;max-width:240px">${p.notas || '—'}</td>
+    <td style="text-align:right">
       <button class="btn btn-secondary btn-sm btn-icon" onclick='abrirEditar(${JSON.stringify(p).replace(/"/g,"&quot;")})' title="Editar"><i class="bi bi-pencil"></i></button>
       <button class="btn btn-danger btn-sm btn-icon" onclick="eliminar(${p.id})" title="Eliminar"><i class="bi bi-trash3"></i></button>
     </td>
   </tr>`).join('');
 
+  // Ingredientes
   const ingEntries = Object.entries(ing);
   document.getElementById('card-ingredientes').style.display = ingEntries.length ? '' : 'none';
   document.getElementById('ingredientes-list').innerHTML = ingEntries.map(([k,v]) => `
-    <div style="background:var(--bg-input);border:1px solid var(--border);border-radius:var(--r);padding:.6rem .9rem">
+    <div style="background:var(--bg-input,#faf8f6);border:1px solid var(--border);border-radius:8px;padding:.6rem .9rem">
       <div style="font-size:.75rem;color:var(--muted)">${k}</div>
       <div style="font-weight:600">${v >= 1000 ? (v/1000).toFixed(2)+' kg' : v+' g'}</div>
     </div>`).join('');
 }
 
+// ── CRUD plan ─────────────────────────────────────────────────────────────────
 function abrirNuevo() {
   editId = null;
   document.getElementById('modal-title').textContent = 'Agregar producto';
-  document.getElementById('f-codigo').value = '';
-  document.getElementById('f-nombre').value = '';
-  document.getElementById('f-cantidad').value = 1;
-  document.getElementById('f-estado').value = 'pendiente';
-  document.getElementById('f-notas').value = '';
+  document.getElementById('f-codigo').value    = '';
+  document.getElementById('f-nombre').value    = '';
+  document.getElementById('f-cantidad').value  = 1;
+  document.getElementById('f-estado').value    = 'pendiente';
+  document.getElementById('f-notas').value     = '';
   document.getElementById('custom-nombre-row').style.display = 'none';
   openModal('modal-prod');
 }
@@ -163,11 +326,11 @@ function abrirNuevo() {
 function abrirEditar(p) {
   editId = p.id;
   document.getElementById('modal-title').textContent = 'Editar';
-  document.getElementById('f-codigo').value = p.codigo_producto;
-  document.getElementById('f-nombre').value = p.nombre_producto;
-  document.getElementById('f-cantidad').value = p.cantidad;
-  document.getElementById('f-estado').value = p.estado;
-  document.getElementById('f-notas').value = p.notas || '';
+  document.getElementById('f-codigo').value    = p.codigo_producto;
+  document.getElementById('f-nombre').value    = p.nombre_producto;
+  document.getElementById('f-cantidad').value  = p.cantidad;
+  document.getElementById('f-estado').value    = p.estado;
+  document.getElementById('f-notas').value     = p.notas || '';
   document.getElementById('custom-nombre-row').style.display = '';
   openModal('modal-prod');
 }
@@ -179,27 +342,29 @@ async function guardar() {
     : (NOMBRES[codigo] || document.getElementById('f-nombre').value);
   if (!codigo || !nombre) { toast('Selecciona un producto', 'error'); return; }
   const body = {
-    fecha:            fechaInput.value,
-    codigo_producto:  codigo,
-    nombre_producto:  nombre,
-    cantidad:         parseInt(document.getElementById('f-cantidad').value) || 1,
-    estado:           document.getElementById('f-estado').value,
-    notas:            document.getElementById('f-notas').value,
+    fecha:           fechaInput.value,
+    codigo_producto: codigo,
+    nombre_producto: nombre,
+    cantidad:        parseInt(document.getElementById('f-cantidad').value) || 1,
+    estado:          document.getElementById('f-estado').value,
+    notas:           document.getElementById('f-notas').value,
   };
   try {
     const url = editId ? `/api/plan-produccion/${editId}` : '/api/plan-produccion';
     await api(editId ? 'PUT' : 'POST', url, body);
     closeModal('modal-prod');
-    load();
+    await loadPlan();
+    renderPedidos();
     toast('Guardado');
   } catch(e) { toast(e.message, 'error'); }
 }
 
 async function eliminar(id) {
-  if (!confirm('¿Eliminar?')) return;
+  if (!confirm('¿Eliminar este ítem del plan?')) return;
   try {
     await api('DELETE', `/api/plan-produccion/${id}`);
-    load();
+    await loadPlan();
+    renderPedidos();
     toast('Eliminado');
   } catch(e) { toast(e.message, 'error'); }
 }
@@ -210,7 +375,8 @@ async function copiarDesdeAyer() {
   const desde = d.toISOString().split('T')[0];
   try {
     await api('POST', '/api/plan-produccion/copiar', { desde, hasta });
-    load();
+    await loadPlan();
+    renderPedidos();
     toast('Plan copiado de ' + desde);
   } catch(e) { toast(e.message, 'error'); }
 }
@@ -220,22 +386,21 @@ async function confirmarProduccion() {
   if (!fecha) { toast('Selecciona una fecha', 'error'); return; }
   if (!confirm(`¿Confirmar producción del ${fecha}?\nEsto descontará los ingredientes del inventario.`)) return;
   const btn = document.getElementById('btn-confirmar');
-  btn.disabled = true; btn.textContent = 'Procesando...';
+  btn.disabled = true; btn.textContent = 'Procesando…';
   try {
     const d = await api('POST', `/api/plan-produccion/${fecha}/confirmar`);
     if (!d.ok) { toast(d.error || 'Error al confirmar', 'error'); return; }
-
     let msg = `Producción del ${fecha} confirmada.\n${d.items_confirmados} ítem(s) marcados como listos.`;
     const desc = Object.entries(d.descuentos || {});
     if (desc.length) msg += '\n\nDescuentos:\n' + desc.map(([k,v]) => `  ${k}: -${v} kg`).join('\n');
     if (d.alertas_stock?.length) {
-      msg += '\n\n⚠️ Stock bajo mínimo:\n' + d.alertas_stock.map(a => `  ${a.ingrediente}: ${a.stock_kg} kg`).join('\n');
       toast('Stock bajo en ' + d.alertas_stock.map(a=>a.ingrediente).join(', '), 'error');
     } else {
       toast('Producción confirmada e inventario actualizado');
     }
     alert(msg);
-    load();
+    await loadPlan();
+    renderPedidos();
   } catch(e) {
     toast(e.message, 'error');
   } finally {
@@ -243,6 +408,11 @@ async function confirmarProduccion() {
   }
 }
 
-load();
+// ── Init ──────────────────────────────────────────────────────────────────────
+async function init() {
+  await loadPlan();    // carga el plan primero para que renderPedidos sepa qué ya está
+  await loadPedidos(); // luego los pedidos (compara con plan)
+}
+init();
 </script>
 {% endblock %}
