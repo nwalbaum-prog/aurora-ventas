@@ -6,3 +6,6 @@ aurora_config.json
 aurora.db
 *.db
 .env
+.worktrees/
+certificados/
+static/boletas/
