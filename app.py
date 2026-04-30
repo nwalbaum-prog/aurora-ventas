@@ -598,6 +598,47 @@ Aurora Bakers""",
                 ]
             )
 
+        # ── Tablas POS ──────────────────────────────────────────────────────
+        c.executescript("""
+            CREATE TABLE IF NOT EXISTS pos_turnos (
+                id                       INTEGER PRIMARY KEY AUTOINCREMENT,
+                usuario_id               INTEGER,
+                fecha_apertura           TEXT NOT NULL,
+                monto_inicial_efectivo   REAL NOT NULL DEFAULT 0,
+                fecha_cierre             TEXT,
+                monto_declarado_efectivo REAL,
+                estado                   TEXT NOT NULL DEFAULT 'abierto'
+            );
+            CREATE TABLE IF NOT EXISTS pos_ventas (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                turno_id       INTEGER NOT NULL REFERENCES pos_turnos(id),
+                venta_id       INTEGER NOT NULL REFERENCES ventas(id),
+                metodo_pago    TEXT NOT NULL,
+                monto_efectivo REAL NOT NULL DEFAULT 0,
+                monto_tarjeta  REAL NOT NULL DEFAULT 0,
+                vuelto         REAL NOT NULL DEFAULT 0,
+                boleta_numero  TEXT,
+                boleta_folio   INTEGER,
+                boleta_pdf_url TEXT,
+                boleta_estado  TEXT NOT NULL DEFAULT 'pendiente'
+            );
+            CREATE TABLE IF NOT EXISTS pos_frecuentes (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                producto_id INTEGER NOT NULL REFERENCES productos(id),
+                orden       INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS pos_promociones (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                nombre      TEXT NOT NULL,
+                tipo        TEXT NOT NULL,
+                valor       REAL NOT NULL DEFAULT 0,
+                producto_id INTEGER,
+                activa      INTEGER NOT NULL DEFAULT 1,
+                fecha_inicio TEXT,
+                fecha_fin    TEXT
+            );
+        """)
+
         # Seed productos iniciales
         if c.execute("SELECT COUNT(*) FROM productos").fetchone()[0] == 0:
             c.executemany(
@@ -3466,6 +3507,10 @@ def api_finanzas_cobrar(vid):
         c.execute("UPDATE ventas SET estado_pago='PAGADO' WHERE id=?", (vid,))
     return jsonify({'ok': True})
 
+
+# ── POS Blueprint ────────────────────────────────────────────────────────────
+from pos import pos_bp
+app.register_blueprint(pos_bp)
 
 # ── Arranque ──────────────────────────────────────────────────────────────────
 
