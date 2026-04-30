@@ -9,3 +9,4 @@ aurora.db
 .worktrees/
 certificados/
 static/boletas/
+.superpowers/
