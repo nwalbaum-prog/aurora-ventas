@@ -3,42 +3,68 @@
 {% block page_title %}Agenda{% endblock %}
 {% block content %}
 
-<div style="display:flex;gap:1rem;margin-bottom:1.5rem;flex-wrap:wrap;align-items:center">
-  <button class="btn btn-primary" onclick="abrirNueva()"><i class="bi bi-plus-lg"></i> Nueva tarea / evento</button>
-  <div style="margin-left:auto;display:flex;gap:.5rem">
-    <button class="btn btn-ghost" id="btn-hoy"      onclick="setFiltro('hoy')">Hoy</button>
-    <button class="btn btn-ghost" id="btn-todos"    onclick="setFiltro('todos')">Todos pendientes</button>
-    <button class="btn btn-ghost" id="btn-completos" onclick="setFiltro('completos')">Completados</button>
+<!-- Toolbar -->
+<div class="toolbar mb-24">
+  <div class="filter-tabs">
+    <button class="filter-tab" onclick="setVista(this,'semana')">Semana</button>
+    <button class="filter-tab active" onclick="setVista(this,'quincena')">2 semanas</button>
+    <button class="filter-tab" onclick="setVista(this,'mes')">Mes</button>
+  </div>
+  <div style="display:flex;align-items:center;gap:.5rem;margin-left:auto">
+    <button class="btn btn-secondary btn-sm" onclick="navegar(-1)"><i class="bi bi-chevron-left"></i></button>
+    <span id="rango-label" style="font-weight:600;min-width:180px;text-align:center;font-size:.9rem"></span>
+    <button class="btn btn-secondary btn-sm" onclick="navegar(1)"><i class="bi bi-chevron-right"></i></button>
+    <button class="btn btn-secondary btn-sm" onclick="irHoy()">Hoy</button>
+    <button class="btn btn-primary btn-sm" onclick="abrirNueva()"><i class="bi bi-plus-lg"></i> Nueva tarea</button>
   </div>
 </div>
 
-<div id="vencidos-alert" style="display:none;background:rgba(248,81,73,.1);border:1px solid rgba(248,81,73,.3);border-radius:var(--r);padding:.75rem 1rem;margin-bottom:1rem;color:var(--danger);font-size:.85rem">
-  <i class="bi bi-clock-history"></i> <span id="vencidos-count">0</span> tarea(s) vencida(s)
+<!-- Gantt container -->
+<div class="card" style="overflow:hidden;padding:0" id="gantt-card">
+  <div id="gantt-wrap" class="gantt-wrap">
+    <!-- Left panel: task names -->
+    <div id="gantt-left" class="gantt-left">
+      <div class="gantt-header-left">Tarea / Responsable</div>
+      <div id="gantt-rows-left"></div>
+    </div>
+    <!-- Right panel: timeline -->
+    <div id="gantt-right" class="gantt-right">
+      <div id="gantt-header-days" class="gantt-header-days"></div>
+      <div id="gantt-rows-right"></div>
+    </div>
+  </div>
+  <div id="gantt-empty" class="empty" style="display:none;padding:3rem">
+    <i class="bi bi-calendar3"></i>
+    <p>Sin tareas. <a href="#" onclick="abrirNueva();return false">Agregar primera tarea</a></p>
+  </div>
 </div>
 
-<div id="items-container" style="display:grid;gap:.5rem"></div>
-
 <!-- Modal nueva/editar tarea -->
-<div id="modal-agenda" class="modal-overlay">
-  <div class="modal" style="max-width:460px">
+<div class="modal-overlay" id="modal-tarea">
+  <div class="modal" style="max-width:520px">
     <div class="modal-header">
-      <span class="modal-title" id="modal-title">Nueva tarea</span>
-      <button class="modal-close" onclick="closeModal('modal-agenda')"><i class="bi bi-x-lg"></i></button>
+      <h3 id="modal-titulo-txt">Nueva Tarea</h3>
+      <button class="modal-close" onclick="closeModal('modal-tarea')"><i class="bi bi-x-lg"></i></button>
     </div>
-    <div style="display:grid;gap:.75rem">
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem">
+    <div class="modal-body">
+      <input type="hidden" id="t-id">
+      <div class="form-group">
+        <label class="label">Título *</label>
+        <input id="t-titulo" class="input" placeholder="Nombre de la tarea">
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:.75rem">
         <div class="form-group">
-          <label>Tipo</label>
-          <select id="af-tipo">
+          <label class="label">Tipo</label>
+          <select id="t-tipo" class="input">
             <option value="tarea">Tarea</option>
             <option value="evento">Evento</option>
-            <option value="recordatorio">Recordatorio</option>
-            <option value="llamada">Llamada</option>
+            <option value="reunion">Reunión</option>
+            <option value="entrega">Entrega</option>
           </select>
         </div>
         <div class="form-group">
-          <label>Prioridad</label>
-          <select id="af-prioridad">
+          <label class="label">Prioridad</label>
+          <select id="t-prioridad" class="input">
             <option value="alta">Alta</option>
             <option value="media" selected>Media</option>
             <option value="baja">Baja</option>
@@ -46,149 +72,385 @@
         </div>
       </div>
       <div class="form-group">
-        <label>Título *</label>
-        <input id="af-titulo" placeholder="Ej: Llamar al distribuidor de harina" />
+        <label class="label">Responsable</label>
+        <input id="t-responsable" class="input" placeholder="Nombre del responsable">
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:.75rem">
+        <div class="form-group">
+          <label class="label">Fecha inicio *</label>
+          <input id="t-fecha" type="date" class="input">
+        </div>
+        <div class="form-group">
+          <label class="label">Fecha fin</label>
+          <input id="t-fecha-fin" type="date" class="input">
+        </div>
       </div>
       <div class="form-group">
-        <label>Descripción</label>
-        <textarea id="af-desc" rows="2" placeholder="Detalles opcionales"></textarea>
-      </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem">
-        <div class="form-group"><label>Fecha</label><input id="af-fecha" type="date" /></div>
-        <div class="form-group"><label>Hora (opcional)</label><input id="af-hora" type="time" /></div>
+        <label class="label">Descripción</label>
+        <textarea id="t-desc" class="input" rows="2" placeholder="Notas opcionales"></textarea>
       </div>
     </div>
     <div class="modal-footer">
-      <button class="btn btn-secondary" onclick="closeModal('modal-agenda')">Cancelar</button>
+      <button class="btn btn-secondary" onclick="closeModal('modal-tarea')">Cancelar</button>
       <button class="btn btn-primary" onclick="guardar()">Guardar</button>
     </div>
   </div>
 </div>
 
-<script>
-let editId = null, filtro = 'hoy';
-const hoy = new Date().toISOString().split('T')[0];
-document.getElementById('af-fecha').value = hoy;
-
-const TIPO_ICON  = { tarea:'bi-check2-square', evento:'bi-calendar-event', recordatorio:'bi-bell', llamada:'bi-telephone' };
-const PRIOR_CLS  = { alta:'badge-red', media:'badge-yellow', baja:'badge-blue' };
-
-function setFiltro(f) {
-  filtro = f;
-  ['hoy','todos','completos'].forEach(x => {
-    const btn = document.getElementById('btn-'+x);
-    btn.className = x===f ? 'btn btn-primary' : 'btn btn-ghost';
-  });
-  load();
-}
-
-async function load() {
-  let url = '/api/agenda';
-  if (filtro === 'hoy')   url += `?fecha=${hoy}`;
-  else if (filtro === 'todos') url += '?pendientes=1';
-  let items = await api('GET', url);
-  if (filtro === 'completos') items = items.filter(i => i.completado);
-  else if (filtro !== 'hoy')  items = items.filter(i => !i.completado);
-
-  const vencidos = items.filter(i => i.fecha < hoy && !i.completado);
-  document.getElementById('vencidos-alert').style.display = vencidos.length ? '' : 'none';
-  document.getElementById('vencidos-count').textContent = vencidos.length;
-
-  if (!items.length) {
-    document.getElementById('items-container').innerHTML = `
-      <div class="card"><div class="empty">
-        <i class="bi bi-calendar-check"></i>
-        <p>${filtro==='hoy' ? 'Sin tareas para hoy' : 'Sin items'}</p>
-      </div></div>`;
-    return;
-  }
-
-  document.getElementById('items-container').innerHTML = items.map(item => {
-    const vencido = !item.completado && item.fecha < hoy;
-    return `<div style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--r);padding:.8rem 1rem;display:flex;gap:.75rem;align-items:flex-start;${vencido?'border-left:3px solid var(--danger)':''}">
-      <button style="background:none;border:none;cursor:pointer;color:${item.completado?'var(--accent)':'var(--muted)'};font-size:1.1rem;margin-top:.1rem;padding:0"
-        onclick="completar(${item.id})" title="${item.completado?'Completado':'Marcar como listo'}">
-        <i class="bi ${item.completado?'bi-check-circle-fill':'bi-circle'}"></i>
-      </button>
-      <div style="flex:1">
-        <div style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center">
-          <span style="font-weight:600;${item.completado?'text-decoration:line-through;opacity:.5':''}">${item.titulo}</span>
-          <span class="badge ${PRIOR_CLS[item.prioridad]||'badge-blue'}">${item.prioridad}</span>
-          <span class="badge badge-gray"><i class="bi ${TIPO_ICON[item.tipo]||'bi-tag'}"></i> ${item.tipo}</span>
+<!-- Modal agregar/editar subtarea -->
+<div class="modal-overlay" id="modal-sub">
+  <div class="modal" style="max-width:460px">
+    <div class="modal-header">
+      <h3 id="modal-sub-titulo">Nueva subtarea</h3>
+      <button class="modal-close" onclick="closeModal('modal-sub')"><i class="bi bi-x-lg"></i></button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="sub-tarea-id">
+      <input type="hidden" id="sub-id">
+      <div class="form-group">
+        <label class="label">Título *</label>
+        <input id="sub-titulo" class="input" placeholder="Nombre de la subtarea">
+      </div>
+      <div class="form-group">
+        <label class="label">Responsable</label>
+        <input id="sub-responsable" class="input" placeholder="Responsable">
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:.75rem">
+        <div class="form-group">
+          <label class="label">Fecha inicio</label>
+          <input id="sub-fecha-inicio" type="date" class="input">
         </div>
-        ${item.descripcion ? `<div style="font-size:.8rem;color:var(--muted);margin-top:.25rem">${item.descripcion}</div>` : ''}
-        <div style="font-size:.75rem;color:${vencido?'var(--danger)':'var(--muted)'};margin-top:.25rem">
-          <i class="bi bi-calendar3"></i> ${item.fecha}${item.hora ? ' ' + item.hora : ''}
+        <div class="form-group">
+          <label class="label">Fecha fin</label>
+          <input id="sub-fecha-fin" type="date" class="input">
         </div>
       </div>
-      <div style="display:flex;gap:.25rem">
-        <button class="btn btn-secondary btn-sm btn-icon" onclick='abrirEditar(${JSON.stringify(item).replace(/"/g,"&quot;")})' title="Editar"><i class="bi bi-pencil"></i></button>
-        <button class="btn btn-danger btn-sm btn-icon" onclick="eliminar(${item.id})" title="Eliminar"><i class="bi bi-trash3"></i></button>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-sub')">Cancelar</button>
+      <button class="btn btn-primary" onclick="guardarSub()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────────
+let vista = 'quincena';
+let anchorDate = new Date(); anchorDate.setHours(0,0,0,0);
+let tareas = [];
+const COL_W = 38; // px per day
+
+// ── Date helpers ──────────────────────────────────────────────────────────────
+function dateStr(d) {
+  return d.getFullYear() + '-' +
+    String(d.getMonth()+1).padStart(2,'0') + '-' +
+    String(d.getDate()).padStart(2,'0');
+}
+function parseDate(s) {
+  if (!s) return null;
+  const [y,m,d] = s.split('-').map(Number);
+  return new Date(y, m-1, d);
+}
+function addDays(d, n) { const r=new Date(d); r.setDate(r.getDate()+n); return r; }
+function diffDays(a, b) { return Math.round((b-a)/86400000); }
+function daysInVista() { return {semana:7,quincena:14,mes:30}[vista]; }
+function startOfVista() {
+  const d = new Date(anchorDate);
+  if (vista==='semana') { const wd=d.getDay()||7; d.setDate(d.getDate()-wd+1); }
+  else if (vista==='mes') { d.setDate(1); }
+  return d;
+}
+
+const PRIO_COLOR = { alta:'#C8312E', media:'#e0a832', baja:'#4ab870' };
+const TIPO_ICON  = { tarea:'bi-check2-square', evento:'bi-calendar-event', reunion:'bi-people', entrega:'bi-truck' };
+const DAY_NAMES  = ['D','L','M','X','J','V','S'];
+
+// ── Navigation ────────────────────────────────────────────────────────────────
+function setVista(btn, v) {
+  document.querySelectorAll('.filter-tab').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  vista = v; renderGantt();
+}
+function navegar(dir) { anchorDate = addDays(anchorDate, dir*daysInVista()); renderGantt(); }
+function irHoy() { anchorDate=new Date(); anchorDate.setHours(0,0,0,0); renderGantt(); }
+
+// ── Load ──────────────────────────────────────────────────────────────────────
+async function load() {
+  tareas = await api('GET', '/api/agenda');
+  renderGantt();
+}
+
+// ── Render Gantt ──────────────────────────────────────────────────────────────
+function renderGantt() {
+  const winStart = startOfVista();
+  const days     = daysInVista();
+  const winEnd   = addDays(winStart, days);
+  const today    = new Date(); today.setHours(0,0,0,0);
+  const totalW   = days * COL_W;
+
+  // Range label
+  const fmt = {day:'numeric',month:'short'};
+  document.getElementById('rango-label').textContent =
+    winStart.toLocaleDateString('es-CL',fmt) + ' — ' +
+    addDays(winEnd,-1).toLocaleDateString('es-CL',fmt);
+
+  document.getElementById('gantt-empty').style.display  = tareas.length ? 'none' : 'block';
+  document.getElementById('gantt-wrap').style.display   = tareas.length ? 'flex' : 'none';
+  if (!tareas.length) return;
+
+  // ── Day headers ──────────────────────────────────────────────────────────────
+  let hHtml = '';
+  for (let i=0;i<days;i++) {
+    const d = addDays(winStart, i);
+    const isToday   = diffDays(today,d)===0;
+    const isWeekend = d.getDay()===0||d.getDay()===6;
+    hHtml += `<div class="gantt-day-col${isToday?' today':''}${isWeekend?' weekend':''}" style="width:${COL_W}px;min-width:${COL_W}px">
+      <div style="font-size:.58rem;color:var(--muted)">${DAY_NAMES[d.getDay()]}</div>
+      <div style="font-size:.74rem;font-weight:${isToday?700:400};color:${isToday?'var(--accent)':'inherit'}">${d.getDate()}</div>
+    </div>`;
+  }
+  const hDays = document.getElementById('gantt-header-days');
+  hDays.innerHTML = hHtml;
+  hDays.style.minWidth = totalW+'px';
+
+  // ── Rows ──────────────────────────────────────────────────────────────────────
+  let lHtml = '', rHtml = '';
+
+  for (const t of tareas) {
+    const pColor = PRIO_COLOR[t.prioridad]||'#8b949e';
+    const icon   = TIPO_ICON[t.tipo]||'bi-check2-square';
+    const tS = parseDate(t.fecha) || today;
+    const tE = parseDate(t.fecha_fin) || tS;
+    const done = t.completado;
+    const subs = t.subtareas || [];
+
+    // LEFT — task row
+    lHtml += `<div class="gantt-cell-left${done?' done':''}">
+      <span class="gantt-prio-bar" style="background:${pColor}"></span>
+      <div class="gantt-cell-info">
+        <div class="gantt-task-name" title="${esc(t.titulo)}">
+          <i class="bi ${icon}" style="color:${pColor};font-size:.72rem;flex-shrink:0"></i>
+          <span style="${done?'text-decoration:line-through;opacity:.5':''}">${esc(t.titulo)}</span>
+          ${done?'<i class="bi bi-check-circle-fill" style="color:#4ab870;font-size:.65rem"></i>':''}
+        </div>
+        ${t.responsable?`<div class="gantt-task-meta"><i class="bi bi-person"></i> ${esc(t.responsable)}</div>`:''}
+        ${(t.fecha_fin&&t.fecha_fin!==t.fecha)?`<div class="gantt-task-meta"><i class="bi bi-calendar3"></i> ${t.fecha} → ${t.fecha_fin}</div>`:`<div class="gantt-task-meta"><i class="bi bi-calendar3"></i> ${t.fecha}</div>`}
+      </div>
+      <div class="gantt-actions">
+        <button class="btn-icon" title="Subtarea" onclick="abrirSub(${t.id},'${esc(t.titulo)}')" ><i class="bi bi-diagram-3"></i></button>
+        <button class="btn-icon" title="Editar" onclick="abrirEditar(${t.id})"><i class="bi bi-pencil"></i></button>
+        ${!done?`<button class="btn-icon text-success" title="Completar" onclick="completar(${t.id})"><i class="bi bi-check-lg"></i></button>`:''}
+        <button class="btn-icon text-danger" title="Eliminar" onclick="eliminar(${t.id})"><i class="bi bi-trash"></i></button>
       </div>
     </div>`;
-  }).join('');
+
+    // RIGHT — task bar
+    rHtml += `<div class="gantt-cell-right" style="min-width:${totalW}px">
+      ${bar(tS,tE,winStart,days,pColor,done,false,esc(t.titulo))}
+      ${gridLines(days)}
+    </div>`;
+
+    // Subtasks
+    for (const s of subs) {
+      const sS = parseDate(s.fecha_inicio)||tS;
+      const sE = parseDate(s.fecha_fin)||sS;
+      const sDone = s.completado;
+
+      lHtml += `<div class="gantt-cell-left subtask${sDone?' done':''}">
+        <div style="width:4px;flex-shrink:0"></div>
+        <div class="gantt-cell-info" style="padding-left:.75rem;border-left:2px solid ${pColor}33">
+          <div class="gantt-task-name" title="${esc(s.titulo)}">
+            <i class="bi bi-arrow-return-right" style="font-size:.6rem;color:var(--muted);flex-shrink:0"></i>
+            <span style="font-size:.78rem${sDone?';text-decoration:line-through;opacity:.5':''}">${esc(s.titulo)}</span>
+          </div>
+          ${s.responsable?`<div class="gantt-task-meta"><i class="bi bi-person"></i> ${esc(s.responsable)}</div>`:''}
+        </div>
+        <div class="gantt-actions">
+          <button class="btn-icon${sDone?' text-success':''}" title="${sDone?'Desmarcar':'Completar'}" onclick="toggleSub(${s.id})"><i class="bi ${sDone?'bi-check-circle-fill':'bi-circle'}"></i></button>
+          <button class="btn-icon" title="Editar" onclick="editarSub(${s.id},${t.id})"><i class="bi bi-pencil"></i></button>
+          <button class="btn-icon text-danger" title="Eliminar" onclick="eliminarSub(${s.id})"><i class="bi bi-trash"></i></button>
+        </div>
+      </div>`;
+
+      rHtml += `<div class="gantt-cell-right" style="min-width:${totalW}px">
+        ${bar(sS,sE,winStart,days,pColor,sDone,true,esc(s.titulo))}
+        ${gridLines(days)}
+      </div>`;
+    }
+  }
+
+  document.getElementById('gantt-rows-left').innerHTML  = lHtml;
+  const rowsRight = document.getElementById('gantt-rows-right');
+  rowsRight.innerHTML = rHtml;
+
+  // Today line
+  const todayOffset = diffDays(winStart, today);
+  if (todayOffset>=0 && todayOffset<days) {
+    const x = todayOffset*COL_W + COL_W/2;
+    rowsRight.querySelectorAll('.gantt-cell-right').forEach(el => {
+      const ln = document.createElement('div');
+      ln.className = 'gantt-today-line';
+      ln.style.left = x+'px';
+      el.appendChild(ln);
+    });
+  }
 }
 
+function bar(tS, tE, winStart, days, color, done, isSub, label) {
+  const totalW = days*COL_W;
+  const s = diffDays(winStart, tS);
+  const e = diffDays(winStart, tE);
+
+  // Entirely out of window
+  if (s>=days) return `<div style="position:absolute;right:4px;top:50%;transform:translateY(-50%);font-size:.6rem;color:var(--muted)">→</div>`;
+  if (e<0)     return `<div style="position:absolute;left:4px;top:50%;transform:translateY(-50%);font-size:.6rem;color:var(--muted)">←</div>`;
+
+  const left  = Math.max(0,s)*COL_W;
+  const right = Math.min(days,e+1)*COL_W;
+  const w     = Math.max(COL_W*0.6, right-left);
+  const h     = isSub ? 12 : 18;
+  const top   = isSub ? 'calc(50% - 6px)' : 'calc(50% - 9px)';
+  const op    = done ? '0.4' : isSub ? '0.82' : '1';
+  const deco  = done ? 'text-decoration:line-through;' : '';
+
+  return `<div title="${label}" style="position:absolute;left:${left}px;top:${top};width:${w}px;height:${h}px;
+    background:${color};border-radius:3px;overflow:hidden;display:flex;align-items:center;
+    padding:0 5px;font-size:.58rem;color:#fff;font-weight:600;white-space:nowrap;
+    opacity:${op};${deco}z-index:2;pointer-events:none">
+    ${w>55?label.substring(0,22)+(label.length>22?'…':''):''}
+  </div>`;
+}
+
+function gridLines(days) {
+  let h = '';
+  for (let i=0;i<days;i++) {
+    h += `<div style="position:absolute;left:${i*COL_W}px;top:0;bottom:0;width:1px;background:var(--border-light,rgba(0,0,0,.06))"></div>`;
+  }
+  return h;
+}
+
+function esc(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── Sync scroll ───────────────────────────────────────────────────────────────
+(function() {
+  let syncing = false;
+  document.addEventListener('DOMContentLoaded', () => {
+    const L = document.getElementById('gantt-left');
+    const R = document.getElementById('gantt-right');
+    R.addEventListener('scroll', () => { if(!syncing){syncing=true;L.scrollTop=R.scrollTop;syncing=false;} }, {passive:true});
+    L.addEventListener('scroll', () => { if(!syncing){syncing=true;R.scrollTop=L.scrollTop;syncing=false;} }, {passive:true});
+  });
+})();
+
+// ── Modal: Tarea ──────────────────────────────────────────────────────────────
 function abrirNueva() {
-  editId = null;
-  document.getElementById('modal-title').textContent = 'Nueva tarea';
-  document.getElementById('af-titulo').value = '';
-  document.getElementById('af-desc').value = '';
-  document.getElementById('af-fecha').value = hoy;
-  document.getElementById('af-hora').value = '';
-  document.getElementById('af-tipo').value = 'tarea';
-  document.getElementById('af-prioridad').value = 'media';
-  openModal('modal-agenda');
+  document.getElementById('t-id').value='';
+  document.getElementById('t-titulo').value='';
+  document.getElementById('t-tipo').value='tarea';
+  document.getElementById('t-prioridad').value='media';
+  document.getElementById('t-responsable').value='';
+  document.getElementById('t-fecha').value=dateStr(new Date());
+  document.getElementById('t-fecha-fin').value='';
+  document.getElementById('t-desc').value='';
+  document.getElementById('modal-titulo-txt').textContent='Nueva Tarea';
+  openModal('modal-tarea');
 }
-
-function abrirEditar(item) {
-  editId = item.id;
-  document.getElementById('modal-title').textContent = 'Editar';
-  document.getElementById('af-titulo').value = item.titulo;
-  document.getElementById('af-desc').value = item.descripcion || '';
-  document.getElementById('af-fecha').value = item.fecha;
-  document.getElementById('af-hora').value = item.hora || '';
-  document.getElementById('af-tipo').value = item.tipo;
-  document.getElementById('af-prioridad').value = item.prioridad;
-  openModal('modal-agenda');
+function abrirEditar(id) {
+  const t = tareas.find(x=>x.id===id); if(!t) return;
+  document.getElementById('t-id').value=t.id;
+  document.getElementById('t-titulo').value=t.titulo;
+  document.getElementById('t-tipo').value=t.tipo||'tarea';
+  document.getElementById('t-prioridad').value=t.prioridad||'media';
+  document.getElementById('t-responsable').value=t.responsable||'';
+  document.getElementById('t-fecha').value=t.fecha||'';
+  document.getElementById('t-fecha-fin').value=t.fecha_fin||'';
+  document.getElementById('t-desc').value=t.descripcion||'';
+  document.getElementById('modal-titulo-txt').textContent='Editar Tarea';
+  openModal('modal-tarea');
 }
-
 async function guardar() {
-  const titulo = document.getElementById('af-titulo').value.trim();
-  if (!titulo) { toast('Escribe un título', 'error'); return; }
+  const titulo = document.getElementById('t-titulo').value.trim();
+  if (!titulo) { toast('El título es obligatorio','error'); return; }
+  const id = document.getElementById('t-id').value;
   const body = {
-    tipo:        document.getElementById('af-tipo').value,
     titulo,
-    descripcion: document.getElementById('af-desc').value,
-    fecha:       document.getElementById('af-fecha').value,
-    hora:        document.getElementById('af-hora').value,
-    prioridad:   document.getElementById('af-prioridad').value,
+    tipo:        document.getElementById('t-tipo').value,
+    prioridad:   document.getElementById('t-prioridad').value,
+    responsable: document.getElementById('t-responsable').value.trim(),
+    fecha:       document.getElementById('t-fecha').value,
+    fecha_fin:   document.getElementById('t-fecha-fin').value,
+    descripcion: document.getElementById('t-desc').value.trim(),
   };
   try {
-    const url = editId ? `/api/agenda/${editId}` : '/api/agenda';
-    await api(editId ? 'PUT' : 'POST', url, body);
-    closeModal('modal-agenda');
-    load();
-    toast('Guardado');
-  } catch(e) { toast(e.message, 'error'); }
+    if (id) { await api('PUT',`/api/agenda/${id}`,body); toast('Tarea actualizada'); }
+    else    { await api('POST','/api/agenda',body); toast('Tarea creada'); }
+    closeModal('modal-tarea'); load();
+  } catch(e) { toast(e.message,'error'); }
 }
-
 async function completar(id) {
-  try {
-    await api('POST', `/api/agenda/${id}/completar`);
-    load();
-  } catch(e) { toast(e.message, 'error'); }
+  await api('POST',`/api/agenda/${id}/completar`);
+  toast('Tarea completada'); load();
 }
-
 async function eliminar(id) {
-  if (!confirm('¿Eliminar?')) return;
-  try {
-    await api('DELETE', `/api/agenda/${id}`);
-    load();
-    toast('Eliminado');
-  } catch(e) { toast(e.message, 'error'); }
+  if (!confirm('¿Eliminar esta tarea y sus subtareas?')) return;
+  await api('DELETE',`/api/agenda/${id}`);
+  toast('Eliminado'); load();
 }
 
-setFiltro('hoy');
+// ── Modal: Subtarea ───────────────────────────────────────────────────────────
+function abrirSub(tareaId, tareaNombre) {
+  document.getElementById('sub-tarea-id').value=tareaId;
+  document.getElementById('sub-id').value='';
+  document.getElementById('sub-titulo').value='';
+  document.getElementById('sub-responsable').value='';
+  document.getElementById('sub-fecha-inicio').value='';
+  document.getElementById('sub-fecha-fin').value='';
+  document.getElementById('modal-sub-titulo').textContent='Nueva subtarea — '+tareaNombre;
+  openModal('modal-sub');
+}
+function editarSub(sid, tareaId) {
+  const tarea = tareas.find(x=>x.id===tareaId);
+  const s = tarea && tarea.subtareas && tarea.subtareas.find(x=>x.id===sid);
+  if (!s) return;
+  document.getElementById('sub-tarea-id').value=tareaId;
+  document.getElementById('sub-id').value=sid;
+  document.getElementById('sub-titulo').value=s.titulo||'';
+  document.getElementById('sub-responsable').value=s.responsable||'';
+  document.getElementById('sub-fecha-inicio').value=s.fecha_inicio||'';
+  document.getElementById('sub-fecha-fin').value=s.fecha_fin||'';
+  document.getElementById('modal-sub-titulo').textContent='Editar subtarea';
+  openModal('modal-sub');
+}
+async function guardarSub() {
+  const titulo = document.getElementById('sub-titulo').value.trim();
+  if (!titulo) { toast('El título es obligatorio','error'); return; }
+  const tareaId = document.getElementById('sub-tarea-id').value;
+  const sid     = document.getElementById('sub-id').value;
+  const body = {
+    titulo,
+    responsable:  document.getElementById('sub-responsable').value.trim(),
+    fecha_inicio: document.getElementById('sub-fecha-inicio').value,
+    fecha_fin:    document.getElementById('sub-fecha-fin').value,
+  };
+  try {
+    if (sid) { await api('PUT',`/api/agenda/subtareas/${sid}`,body); toast('Subtarea actualizada'); }
+    else     { await api('POST',`/api/agenda/${tareaId}/subtareas`,body); toast('Subtarea agregada'); }
+    closeModal('modal-sub'); load();
+  } catch(e) { toast(e.message,'error'); }
+}
+async function toggleSub(sid) {
+  const res = await api('POST',`/api/agenda/subtareas/${sid}/completar`);
+  toast(res.completado ? 'Subtarea completada' : 'Marcado como pendiente');
+  load();
+}
+async function eliminarSub(sid) {
+  if (!confirm('¿Eliminar esta subtarea?')) return;
+  await api('DELETE',`/api/agenda/subtareas/${sid}`);
+  toast('Eliminado'); load();
+}
+
+load();
 </script>
 {% endblock %}

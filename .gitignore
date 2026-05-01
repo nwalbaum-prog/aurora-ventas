@@ -10,3 +10,10 @@ aurora.db
 certificados/
 static/boletas/
 .superpowers/
+.claude/
+.claude-plugin/
+*.skill
+docker-compose.yml
+levantar-evolution.bat
+generar_manual_pdf.py
+*.pdf
