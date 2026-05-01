@@ -602,7 +602,7 @@ Aurora Bakers""",
         c.executescript("""
             CREATE TABLE IF NOT EXISTS pos_turnos (
                 id                       INTEGER PRIMARY KEY AUTOINCREMENT,
-                usuario_id               INTEGER,
+                usuario_id               INTEGER NOT NULL REFERENCES usuarios(id),
                 fecha_apertura           TEXT NOT NULL,
                 monto_inicial_efectivo   REAL NOT NULL DEFAULT 0,
                 fecha_cierre             TEXT,

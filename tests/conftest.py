@@ -1,6 +1,10 @@
 # tests/conftest.py
 import pytest, os, sys
 
+# WARNING: never import app, pos, or dte at module level here.
+# Each test fixture re-imports them fresh after monkeypatching DATA_DIR so that
+# init_db() creates the SQLite file in the per-test tmp_path, not the real DB.
+
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     monkeypatch.setenv('DATA_DIR', str(tmp_path))

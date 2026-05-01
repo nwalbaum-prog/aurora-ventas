@@ -1,7 +1,7 @@
 # pos.py — Blueprint POS para Aurora Bakers
 from flask import Blueprint, render_template, request, jsonify, redirect, url_for, session
 from datetime import date, datetime
-from app import db, login_required, current_user, _load_config, _save_config
+from app import db, login_required, _load_config, _save_config
 
 pos_bp = Blueprint('pos', __name__)
 
@@ -46,5 +46,6 @@ def page_caja():
 
 
 @pos_bp.route('/pos/cliente')
+# No @login_required — customer-facing display, shown on a second monitor without authentication
 def page_cliente():
     return render_template('pos_cliente.html')
