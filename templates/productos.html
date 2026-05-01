@@ -113,26 +113,65 @@
 </div>
 <!-- Modal ficha técnica -->
 <div class="modal-overlay" id="ficha-modal">
-  <div class="modal" style="max-width:560px">
+  <div class="modal" style="max-width:600px">
     <div class="modal-header">
-      <span class="modal-title">Ficha Técnica — <span id="ficha-nombre"></span></span>
+      <span class="modal-title"><i class="bi bi-journal-text"></i> Ficha Técnica — <span id="ficha-nombre"></span></span>
       <button class="modal-close" onclick="closeModal('ficha-modal')"><i class="bi bi-x-lg"></i></button>
     </div>
     <input type="hidden" id="ficha-pid">
-    <div class="form-group">
-      <label>Peso por unidad (kg) <span style="color:var(--muted);font-size:.8rem">— para calcular consumo de ingredientes</span></label>
-      <input type="number" id="ficha-peso" step="0.001" min="0" placeholder="ej: 0.08">
+
+    <!-- Harina base -->
+    <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:.75rem 1rem;margin-bottom:1rem">
+      <div style="font-size:.75rem;font-weight:700;color:var(--aurora);text-transform:uppercase;letter-spacing:.05em;margin-bottom:.5rem">
+        <i class="bi bi-moisture"></i> Base: Harina (100% panadero)
+      </div>
+      <div class="form-row fr-2" style="margin:0">
+        <div class="form-group" style="margin:0">
+          <label>Harina total por unidad (kg)</label>
+          <input type="number" id="ficha-harina-kg" step="0.001" min="0" placeholder="ej: 0.080"
+                 oninput="fichaActualizarGramos()">
+          <div style="font-size:.75rem;color:var(--muted);margin-top:.25rem">
+            Esta es la base del 100% panadero
+          </div>
+        </div>
+        <div class="form-group" style="margin:0">
+          <label>Tipo de harina</label>
+          <select id="ficha-tipo-harina" style="width:100%">
+            <option value="harina blanca">Harina blanca (100%)</option>
+            <option value="harina integral">Harina integral (100%)</option>
+            <option value="mixta">Mixta (especificar %↓)</option>
+          </select>
+          <div id="ficha-mixta-hint" style="font-size:.75rem;color:var(--muted);margin-top:.25rem;display:none">
+            Agrega harina blanca e integral como ingredientes con sus % abajo
+          </div>
+        </div>
+      </div>
     </div>
-    <div style="font-size:.82rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:.5rem">Ingredientes (% del peso)</div>
-    <table style="width:100%;border-collapse:collapse;font-size:.85rem;margin-bottom:.75rem">
+
+    <!-- Tabla ingredientes -->
+    <div style="font-size:.78rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:.4rem">
+      Ingredientes — % panadero (% de la harina)
+    </div>
+    <table style="width:100%;border-collapse:collapse;font-size:.84rem;margin-bottom:.6rem" id="ficha-table">
       <thead><tr>
-        <th style="text-align:left;padding:.3rem .4rem;color:var(--muted);font-size:.72rem;text-transform:uppercase">Ingrediente</th>
-        <th style="text-align:right;padding:.3rem .4rem;color:var(--muted);font-size:.72rem;text-transform:uppercase;width:110px">% del peso</th>
+        <th style="text-align:left;padding:.3rem .4rem;color:var(--muted);font-size:.7rem;text-transform:uppercase">Ingrediente</th>
+        <th style="text-align:right;padding:.3rem .4rem;color:var(--muted);font-size:.7rem;text-transform:uppercase;width:100px">% panadero</th>
+        <th style="text-align:right;padding:.3rem .4rem;color:var(--muted);font-size:.7rem;text-transform:uppercase;width:80px">g/unidad</th>
         <th style="width:32px"></th>
       </tr></thead>
       <tbody id="ficha-tbody"></tbody>
+      <tfoot>
+        <tr id="ficha-harina-row" style="display:none">
+          <td colspan="4" style="padding:.3rem .4rem">
+            <!-- fila harina fija se inserta dinámicamente -->
+          </td>
+        </tr>
+      </tfoot>
     </table>
-    <button class="btn btn-secondary btn-sm" onclick="fichaAgregarFila()"><i class="bi bi-plus"></i> Agregar ingrediente</button>
+    <button class="btn btn-secondary btn-sm" onclick="fichaAgregarFila()">
+      <i class="bi bi-plus"></i> Agregar ingrediente
+    </button>
+
     <div class="modal-footer" style="margin-top:1rem">
       <button class="btn btn-secondary" onclick="closeModal('ficha-modal')">Cancelar</button>
       <button class="btn btn-primary" onclick="fichaGuardar()"><i class="bi bi-floppy"></i> Guardar ficha</button>
@@ -303,8 +342,12 @@ async function deleteProducto(id) {
 
 loadProductos();
 
-// ── Ficha técnica ─────────────────────────────────────────────────────────────
+// ── Ficha técnica — % panadero ────────────────────────────────────────────────
 let _fichaIngDisponibles = [];
+
+document.getElementById('ficha-tipo-harina').addEventListener('change', function() {
+  document.getElementById('ficha-mixta-hint').style.display = this.value === 'mixta' ? '' : 'none';
+});
 
 async function _cargarIngDisponibles() {
   if (_fichaIngDisponibles.length) return;
@@ -313,38 +356,72 @@ async function _cargarIngDisponibles() {
   _fichaIngDisponibles = d.ingredientes || [];
 }
 
+function fichaActualizarGramos() {
+  const harinaKg = parseFloat(document.getElementById('ficha-harina-kg').value) || 0;
+  document.querySelectorAll('#ficha-tbody tr').forEach(tr => {
+    const pct = parseFloat(tr.querySelector('.ficha-pct').value) || 0;
+    const gEl = tr.querySelector('.ficha-g');
+    if (gEl) gEl.textContent = harinaKg > 0 ? (harinaKg * pct / 100 * 1000).toFixed(1) + ' g' : '—';
+  });
+}
+
 async function openFicha(pid, nombre) {
   document.getElementById('ficha-pid').value = pid;
   document.getElementById('ficha-nombre').textContent = nombre;
   document.getElementById('ficha-tbody').innerHTML = '';
-  document.getElementById('ficha-peso').value = '';
+  document.getElementById('ficha-harina-kg').value = '';
+  document.getElementById('ficha-tipo-harina').value = 'harina blanca';
+  document.getElementById('ficha-mixta-hint').style.display = 'none';
   openModal('ficha-modal');
 
   await _cargarIngDisponibles();
 
   const r = await fetch(`/api/recetas/${pid}`);
   const d = await r.json();
-  document.getElementById('ficha-peso').value = d.peso_unitario_kg || '';
-  (d.ingredientes || []).forEach(i => fichaAgregarFila(i.ingrediente, i.porcentaje));
+  document.getElementById('ficha-harina-kg').value = d.peso_unitario_kg || '';
+
+  // Detectar si tiene harinas mixtas en los ingredientes
+  const ings = d.ingredientes || [];
+  const tieneHarinaBlanca  = ings.some(i => i.ingrediente === 'harina blanca');
+  const tieneHarinaIntegral = ings.some(i => i.ingrediente === 'harina integral');
+  if (tieneHarinaBlanca && tieneHarinaIntegral) {
+    document.getElementById('ficha-tipo-harina').value = 'mixta';
+    document.getElementById('ficha-mixta-hint').style.display = '';
+  } else if (tieneHarinaIntegral) {
+    document.getElementById('ficha-tipo-harina').value = 'harina integral';
+  }
+
+  const HARINAS = ['harina blanca', 'harina integral'];
+  const tipoActual = document.getElementById('ficha-tipo-harina').value;
+  ings.forEach(i => {
+    // Si no es mixta, las filas de harina están implícitas → no mostrar en tabla
+    if (tipoActual !== 'mixta' && HARINAS.includes(i.ingrediente)) return;
+    fichaAgregarFila(i.ingrediente, i.porcentaje);
+  });
+  fichaActualizarGramos();
 }
 
 function fichaAgregarFila(ingrediente = '', porcentaje = '') {
   const tbody = document.getElementById('ficha-tbody');
-  const tr = document.createElement('tr');
+  const harinaKg = parseFloat(document.getElementById('ficha-harina-kg').value) || 0;
+  const g = harinaKg > 0 && porcentaje > 0 ? (harinaKg * porcentaje / 100 * 1000).toFixed(1) + ' g' : '—';
   const opts = _fichaIngDisponibles.map(i =>
     `<option value="${i}" ${i === ingrediente ? 'selected' : ''}>${i}</option>`
   ).join('');
+  const tr = document.createElement('tr');
   tr.innerHTML = `
     <td style="padding:.3rem .4rem">
-      <select style="width:100%;font-size:.85rem" class="form-control">
+      <select style="width:100%;font-size:.84rem" class="form-control">
         <option value="">— Ingrediente —</option>
         ${opts}
       </select>
     </td>
     <td style="padding:.3rem .4rem">
-      <input type="number" min="0" max="200" step="0.1" value="${porcentaje}"
-             placeholder="%" style="width:100%;font-size:.85rem" class="form-control">
+      <input type="number" min="0" max="500" step="0.1" value="${porcentaje}"
+             placeholder="%" style="width:100%;font-size:.84rem;text-align:right" class="form-control ficha-pct"
+             oninput="fichaActualizarGramos()">
     </td>
+    <td style="padding:.3rem .4rem;text-align:right;color:var(--muted);font-size:.8rem;white-space:nowrap" class="ficha-g">${g}</td>
     <td style="padding:.3rem .4rem;text-align:center">
       <button onclick="this.closest('tr').remove()"
               style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:1rem">✕</button>
@@ -353,18 +430,31 @@ function fichaAgregarFila(ingrediente = '', porcentaje = '') {
 }
 
 async function fichaGuardar() {
-  const pid  = parseInt(document.getElementById('ficha-pid').value);
-  const peso = parseFloat(document.getElementById('ficha-peso').value) || 0;
-  const filas = document.querySelectorAll('#ficha-tbody tr');
+  const pid      = parseInt(document.getElementById('ficha-pid').value);
+  const harinaKg = parseFloat(document.getElementById('ficha-harina-kg').value) || 0;
+  const tipo     = document.getElementById('ficha-tipo-harina').value;
+
+  if (!harinaKg) { toast('Ingresa la harina por unidad (kg)', 'error'); return; }
+
+  const HARINAS = ['harina blanca', 'harina integral'];
   const ingredientes = [];
-  filas.forEach(tr => {
+
+  // Para blanca/integral: la harina va fija al 100%, sin aparecer en las filas
+  if (tipo !== 'mixta') {
+    ingredientes.push({ ingrediente: tipo, porcentaje: 100 });
+  }
+
+  // Leer todas las filas; en no-mixta se saltan las filas de harina (ya están arriba)
+  document.querySelectorAll('#ficha-tbody tr').forEach(tr => {
     const sel = tr.querySelector('select').value;
-    const pct = parseFloat(tr.querySelector('input').value) || 0;
-    if (sel && pct > 0) ingredientes.push({ ingrediente: sel, porcentaje: pct });
+    const pct = parseFloat(tr.querySelector('.ficha-pct').value) || 0;
+    if (!sel || pct <= 0) return;
+    if (tipo !== 'mixta' && HARINAS.includes(sel)) return;
+    ingredientes.push({ ingrediente: sel, porcentaje: pct });
   });
 
   try {
-    await api('POST', `/api/recetas/${pid}`, { peso_unitario_kg: peso, ingredientes });
+    await api('POST', `/api/recetas/${pid}`, { peso_unitario_kg: harinaKg, ingredientes });
     toast('Ficha técnica guardada');
     closeModal('ficha-modal');
     loadProductos();
