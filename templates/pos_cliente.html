@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Aurora Bakers — Pantalla Cliente</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+  <style>
+    body { background:#0f0f1a; color:#fff; margin:0; font-family:system-ui,sans-serif; min-height:100vh; display:flex; flex-direction:column; }
+    .header { background:linear-gradient(135deg,#c8860a,#f5a623); padding:1.2rem 2rem; display:flex; align-items:center; gap:1rem; }
+    .header h1 { margin:0; font-size:1.6rem; color:#fff; }
+    .header .tagline { font-size:.85rem; color:rgba(255,255,255,.8); margin:0; }
+    .content { flex:1; padding:2rem; display:flex; flex-direction:column; }
+    .estado-esperando { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:1rem; }
+    .estado-esperando .emoji { font-size:5rem; }
+    .estado-esperando p { color:#555; font-size:1.1rem; }
+    .items-table { width:100%; border-collapse:collapse; }
+    .items-table th { color:#888; font-size:.75rem; text-transform:uppercase; letter-spacing:.05em; padding:.5rem .75rem; border-bottom:1px solid #2a2a3a; text-align:left; }
+    .items-table td { padding:.6rem .75rem; border-bottom:1px solid #1a1a2a; font-size:1rem; }
+    .items-table .precio { text-align:right; color:#f5a623; font-weight:600; }
+    .total-bar { background:#1a1a2e; border-radius:.75rem; padding:1.25rem 1.5rem; display:flex; justify-content:space-between; align-items:center; margin-top:1.5rem; }
+    .total-bar .label { color:#888; font-size:.9rem; }
+    .total-bar .monto { font-size:2.5rem; font-weight:800; color:#fff; }
+    .gracias { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:1rem; text-align:center; }
+    .gracias h2 { font-size:2.5rem; color:#f5a623; margin:0; }
+    .gracias .total-gracias { font-size:3.5rem; font-weight:900; color:#fff; }
+    .gracias p { color:#888; font-size:1rem; }
+  </style>
+</head>
+<body>
+
+<div class="header">
+  <div style="font-size:2rem">🥐</div>
+  <div>
+    <h1>Aurora Bakers</h1>
+    <p class="tagline">El pan de tu barrio</p>
+  </div>
+</div>
+
+<div class="content" id="main-content">
+</div>
+
+<script>
+let _estadoAnterior = null;
+let _timerGracias   = null;
+
+function fmt(n) { return '$' + Math.round(n).toLocaleString('es-CL'); }
+
+function renderEsperando() {
+  document.getElementById('main-content').innerHTML = `
+    <div class="estado-esperando">
+      <div class="emoji">🍞</div>
+      <p>Esperando próxima atención…</p>
+    </div>`;
+}
+
+function renderEnCurso(items, total) {
+  const filas = items.map(i =>
+    `<tr>
+       <td>${i.nombre}</td>
+       <td style="text-align:center">${i.cantidad}</td>
+       <td class="precio">${fmt(i.precio_unitario)}</td>
+       <td class="precio">${fmt(i.cantidad * i.precio_unitario)}</td>
+     </tr>`
+  ).join('');
+  document.getElementById('main-content').innerHTML = `
+    <table class="items-table">
+      <thead><tr><th>Producto</th><th style="text-align:center">Cant.</th><th style="text-align:right">Precio</th><th style="text-align:right">Subtotal</th></tr></thead>
+      <tbody>${filas}</tbody>
+    </table>
+    <div class="total-bar">
+      <span class="label">TOTAL</span>
+      <span class="monto">${fmt(total)}</span>
+    </div>`;
+}
+
+function renderGracias(total) {
+  document.getElementById('main-content').innerHTML = `
+    <div class="gracias">
+      <div style="font-size:4rem">✅</div>
+      <h2>¡Gracias por tu compra!</h2>
+      <div class="total-gracias">${fmt(total)}</div>
+      <p>Que disfrutes tu pan 🍞</p>
+    </div>`;
+  if (_timerGracias) clearTimeout(_timerGracias);
+  _timerGracias = setTimeout(renderEsperando, 5000);
+}
+
+async function poll() {
+  try {
+    const r = await fetch('/api/pos/cliente/estado');
+    const d = await r.json();
+    if (d.estado !== _estadoAnterior) {
+      _estadoAnterior = d.estado;
+      if (d.estado === 'esperando')   renderEsperando();
+      if (d.estado === 'en_curso')    renderEnCurso(d.items, d.total);
+      if (d.estado === 'finalizado')  renderGracias(d.total_cobrado || d.total);
+    } else if (d.estado === 'en_curso') {
+      renderEnCurso(d.items, d.total);
+    }
+  } catch (e) { /* network down — silent */ }
+}
+
+renderEsperando();
+setInterval(poll, 2000);
+</script>
+</body>
+</html>
