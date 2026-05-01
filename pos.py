@@ -156,7 +156,7 @@ def api_pos_productos():
                 "SELECT id,nombre,precio,stock FROM productos WHERE activo=1 ORDER BY nombre LIMIT 50"
             ).fetchall()
         frecuentes_rows = c.execute(
-            """SELECT pf.id as frec_id, pf.orden, p.id, p.nombre, p.precio, p.stock
+            """SELECT pf.id as frec_id, pf.orden, p.id as producto_id, p.nombre, p.precio, p.stock
                FROM pos_frecuentes pf JOIN productos p ON p.id=pf.producto_id
                WHERE p.activo=1 ORDER BY pf.orden"""
         ).fetchall()
@@ -171,9 +171,9 @@ def api_pos_productos():
 def api_frecuentes_list():
     with db() as c:
         rows = c.execute(
-            """SELECT pf.id, pf.orden, p.id as producto_id, p.nombre, p.precio
+            """SELECT pf.id, pf.orden, p.id as producto_id, p.nombre, p.precio, p.stock
                FROM pos_frecuentes pf JOIN productos p ON p.id=pf.producto_id
-               ORDER BY pf.orden"""
+               WHERE p.activo=1 ORDER BY pf.orden"""
         ).fetchall()
     return jsonify([dict(r) for r in rows])
 
@@ -186,6 +186,8 @@ def api_frecuentes_add():
     if not producto_id:
         return jsonify({'error': 'producto_id requerido'}), 400
     with db() as c:
+        if not c.execute("SELECT id FROM productos WHERE id=? AND activo=1", (producto_id,)).fetchone():
+            return jsonify({'error': 'Producto no encontrado'}), 404
         existente = c.execute("SELECT id FROM pos_frecuentes WHERE producto_id=?", (producto_id,)).fetchone()
         if existente:
             return jsonify({'error': 'Ya es frecuente'}), 400
@@ -201,4 +203,6 @@ def api_frecuentes_add():
 def api_frecuentes_delete(fid):
     with db() as c:
         c.execute("DELETE FROM pos_frecuentes WHERE id=?", (fid,))
+        if c.rowcount == 0:
+            return jsonify({'error': 'Frecuente no encontrado'}), 404
     return jsonify({'ok': True})
