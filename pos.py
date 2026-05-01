@@ -326,12 +326,22 @@ def _aplicar_promociones(items: list) -> tuple:
 @pos_bp.route('/api/pos/venta', methods=['POST'])
 @login_required
 def api_pos_venta():
+    # Imported here to avoid circular import at module load; cached by Python after first call
     import dte as dte_mod
 
     body  = request.get_json(silent=True) or {}
     items = body.get('items', [])
     if not items:
         return jsonify({'error': 'Carrito vacío'}), 400
+
+    # Validate numeric fields in items before doing any DB work
+    try:
+        for i in items:
+            float(i['cantidad'])
+            float(i['precio_unitario'])
+        monto_efectivo = float(body.get('monto_efectivo', 0))
+    except (TypeError, ValueError, KeyError):
+        return jsonify({'error': 'Items con campos numéricos inválidos'}), 400
 
     uid = session.get('user_id')
 
@@ -348,10 +358,9 @@ def api_pos_venta():
     total_bruto = sum(float(i['cantidad']) * float(i['precio_unitario']) for i in items)
     total_final = max(0.0, total_bruto - descuento)
 
-    metodo_pago    = body.get('metodo_pago', 'efectivo')
-    monto_efectivo = float(body.get('monto_efectivo', 0))
+    metodo_pago = body.get('metodo_pago', 'efectivo')
     if metodo_pago == 'efectivo':
-        monto_efectivo_real = monto_efectivo
+        monto_efectivo_real = monto_efectivo  # validated above
         monto_tarjeta       = 0.0
     else:
         monto_efectivo_real = 0.0
@@ -383,6 +392,8 @@ def api_pos_venta():
         )
         pos_venta_id = pv_cur.lastrowid
 
+    # DTE call is intentionally outside the DB transaction: a sale is always saved,
+    # even if Bsale is down. Rows with boleta_estado='error' can be retried manually.
     cfg      = _load_config()
     dte_resp = dte_mod.emit_boleta(items, total_final, cfg)
 
