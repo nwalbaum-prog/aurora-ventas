@@ -206,3 +206,113 @@ def api_frecuentes_delete(fid):
         if c.rowcount == 0:
             return jsonify({'error': 'Frecuente no encontrado'}), 404
     return jsonify({'ok': True})
+
+
+# ── API: Promociones ──────────────────────────────────────────────────────────
+
+@pos_bp.route('/api/pos/promociones', methods=['GET'])
+@login_required
+def api_promociones_list():
+    with db() as c:
+        rows = c.execute(
+            "SELECT * FROM pos_promociones ORDER BY activa DESC, id DESC"
+        ).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+@pos_bp.route('/api/pos/promociones', methods=['POST'])
+@login_required
+def api_promociones_create():
+    body = request.get_json(silent=True) or {}
+    nombre = body.get('nombre', '').strip()
+    tipo   = body.get('tipo', '')
+    if not nombre or tipo not in ('porcentaje', 'fijo', '2x1'):
+        return jsonify({'error': 'nombre y tipo (porcentaje/fijo/2x1) requeridos'}), 400
+    with db() as c:
+        cur = c.execute(
+            "INSERT INTO pos_promociones (nombre,tipo,valor,producto_id,activa,fecha_inicio,fecha_fin) VALUES (?,?,?,?,?,?,?)",
+            (nombre, tipo, float(body.get('valor', 0)), body.get('producto_id'),
+             1, body.get('fecha_inicio'), body.get('fecha_fin'))
+        )
+        row = c.execute("SELECT * FROM pos_promociones WHERE id=?", (cur.lastrowid,)).fetchone()
+    return jsonify({'ok': True, 'promocion': dict(row)})
+
+
+@pos_bp.route('/api/pos/promociones/<int:pid>', methods=['PUT'])
+@login_required
+def api_promociones_update(pid):
+    body = request.get_json(silent=True) or {}
+    with db() as c:
+        if not c.execute("SELECT id FROM pos_promociones WHERE id=?", (pid,)).fetchone():
+            return jsonify({'error': 'Promoción no encontrada'}), 404
+        c.execute(
+            "UPDATE pos_promociones SET nombre=?,tipo=?,valor=?,producto_id=?,activa=?,fecha_inicio=?,fecha_fin=? WHERE id=?",
+            (body.get('nombre'), body.get('tipo'), float(body.get('valor', 0)),
+             body.get('producto_id'), int(body.get('activa', 1)),
+             body.get('fecha_inicio'), body.get('fecha_fin'), pid)
+        )
+    return jsonify({'ok': True})
+
+
+@pos_bp.route('/api/pos/promociones/<int:pid>', methods=['DELETE'])
+@login_required
+def api_promociones_delete(pid):
+    with db() as c:
+        c.execute("DELETE FROM pos_promociones WHERE id=?", (pid,))
+        if c.rowcount == 0:
+            return jsonify({'error': 'Promoción no encontrada'}), 404
+    return jsonify({'ok': True})
+
+
+def _aplicar_promociones(items: list) -> tuple:
+    """
+    Calcula descuento total basado en promociones activas.
+    items: [{"producto_id": int, "nombre": str, "cantidad": float, "precio_unitario": float}]
+    Retorna: (descuento_total: float, detalle: list[str])
+    """
+    today = date.today().isoformat()
+    with db() as c:
+        promos = c.execute(
+            """SELECT * FROM pos_promociones WHERE activa=1
+               AND (fecha_inicio IS NULL OR fecha_inicio <= ?)
+               AND (fecha_fin IS NULL OR fecha_fin >= ?)""",
+            (today, today)
+        ).fetchall()
+
+    descuento = 0.0
+    detalle   = []
+    subtotal  = sum(float(i['cantidad']) * float(i['precio_unitario']) for i in items)
+
+    for p in promos:
+        if p['tipo'] == 'porcentaje':
+            if p['producto_id']:
+                for item in items:
+                    if item['producto_id'] == p['producto_id']:
+                        d = round(float(item['cantidad']) * float(item['precio_unitario']) * p['valor'] / 100)
+                        descuento += d
+                        detalle.append(f"{p['nombre']}: -${d:,.0f}")
+            else:
+                d = round(subtotal * p['valor'] / 100)
+                descuento += d
+                detalle.append(f"{p['nombre']}: -${d:,.0f}")
+
+        elif p['tipo'] == 'fijo':
+            if p['producto_id']:
+                for item in items:
+                    if item['producto_id'] == p['producto_id']:
+                        descuento += p['valor']
+                        detalle.append(f"{p['nombre']}: -${p['valor']:,.0f}")
+            else:
+                descuento += p['valor']
+                detalle.append(f"{p['nombre']}: -${p['valor']:,.0f}")
+
+        elif p['tipo'] == '2x1':
+            if p['producto_id']:
+                for item in items:
+                    if item['producto_id'] == p['producto_id']:
+                        unidades_gratis = int(float(item['cantidad']) // 2)
+                        d = unidades_gratis * float(item['precio_unitario'])
+                        descuento += d
+                        detalle.append(f"{p['nombre']}: -${d:,.0f}")
+
+    return round(descuento), detalle
