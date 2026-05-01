@@ -319,3 +319,91 @@ def _aplicar_promociones(items: list) -> tuple:
                         detalle.append(f"{p['nombre']}: -${d:,.0f}")
 
     return max(0, round(descuento)), detalle
+
+
+# ── API: Venta ────────────────────────────────────────────────────────────────
+
+@pos_bp.route('/api/pos/venta', methods=['POST'])
+@login_required
+def api_pos_venta():
+    import dte as dte_mod
+
+    body  = request.get_json(silent=True) or {}
+    items = body.get('items', [])
+    if not items:
+        return jsonify({'error': 'Carrito vacío'}), 400
+
+    uid = session.get('user_id')
+
+    with db() as c:
+        turno = c.execute(
+            "SELECT * FROM pos_turnos WHERE usuario_id=? AND estado='abierto' ORDER BY id DESC LIMIT 1",
+            (uid,)
+        ).fetchone()
+
+    if not turno:
+        return jsonify({'error': 'No hay turno abierto. Abre la caja primero.'}), 400
+
+    descuento, detalle_promos = _aplicar_promociones(items)
+    total_bruto = sum(float(i['cantidad']) * float(i['precio_unitario']) for i in items)
+    total_final = max(0.0, total_bruto - descuento)
+
+    metodo_pago    = body.get('metodo_pago', 'efectivo')
+    monto_efectivo = float(body.get('monto_efectivo', 0))
+    if metodo_pago == 'efectivo':
+        monto_efectivo_real = monto_efectivo
+        monto_tarjeta       = 0.0
+    else:
+        monto_efectivo_real = 0.0
+        monto_tarjeta       = total_final
+    vuelto = round(max(0.0, monto_efectivo_real - total_final)) if metodo_pago == 'efectivo' else 0
+
+    with db() as c:
+        cur = c.execute(
+            """INSERT INTO ventas (fecha, canal, total, notas, estado_pago, estado_despacho, con_despacho)
+               VALUES (?,?,?,?,?,?,?)""",
+            (date.today().isoformat(), 'pos', total_final,
+             '; '.join(detalle_promos), 'PAGADO', 'RETIRO EN TIENDA', 0)
+        )
+        venta_id = cur.lastrowid
+
+        for item in items:
+            c.execute(
+                "INSERT INTO venta_items (venta_id,producto_id,cantidad,precio_unitario) VALUES (?,?,?,?)",
+                (venta_id, item['producto_id'], float(item['cantidad']), float(item['precio_unitario']))
+            )
+            c.execute("UPDATE productos SET stock=stock-? WHERE id=?",
+                      (float(item['cantidad']), item['producto_id']))
+
+        pv_cur = c.execute(
+            """INSERT INTO pos_ventas (turno_id,venta_id,metodo_pago,monto_efectivo,monto_tarjeta,vuelto,boleta_estado)
+               VALUES (?,?,?,?,?,?,?)""",
+            (turno['id'], venta_id, metodo_pago,
+             monto_efectivo_real, monto_tarjeta, vuelto, 'pendiente')
+        )
+        pos_venta_id = pv_cur.lastrowid
+
+    cfg      = _load_config()
+    dte_resp = dte_mod.emit_boleta(items, total_final, cfg)
+
+    with db() as c:
+        if dte_resp['ok']:
+            c.execute(
+                "UPDATE pos_ventas SET boleta_numero=?,boleta_folio=?,boleta_pdf_url=?,boleta_estado='emitida' WHERE id=?",
+                (dte_resp['numero'], dte_resp['folio'], dte_resp['pdf_url'], pos_venta_id)
+            )
+        else:
+            c.execute("UPDATE pos_ventas SET boleta_estado='error' WHERE id=?", (pos_venta_id,))
+
+    _pos_carrito_activo.update({"items": [], "total": 0, "estado": "finalizado",
+                                "total_cobrado": total_final})
+
+    return jsonify({
+        'ok':        True,
+        'venta_id':  venta_id,
+        'total':     total_final,
+        'descuento': descuento,
+        'vuelto':    vuelto,
+        'boleta':    dte_resp,
+        'promos':    detalle_promos
+    })
