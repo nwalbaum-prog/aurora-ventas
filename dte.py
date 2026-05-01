@@ -1,8 +1,9 @@
 # dte.py — Integración Bsale para emisión de boleta electrónica
 import urllib.request
+import urllib.error
 import json
 
-BSALE_API_URL = "https://api.bsale.io/v1/documents.json"
+_BSALE_API_URL = "https://api.bsale.io/v1/documents.json"
 
 
 def emit_boleta(items: list, total: float, config: dict) -> dict:
@@ -47,7 +48,7 @@ def emit_boleta(items: list, total: float, config: dict) -> dict:
 
     data = json.dumps(body).encode('utf-8')
     req  = urllib.request.Request(
-        BSALE_API_URL,
+        _BSALE_API_URL,
         data=data,
         method='POST',
         headers={
@@ -69,6 +70,15 @@ def emit_boleta(items: list, total: float, config: dict) -> dict:
             "pdf_url": pdf_url,
             "numero":  f"B-{folio}" if folio else None,
             "error":   None
+        }
+    except urllib.error.HTTPError as e:
+        body = e.read().decode('utf-8', errors='replace')
+        return {
+            "ok":      False,
+            "folio":   None,
+            "pdf_url": None,
+            "numero":  None,
+            "error":   f"HTTP {e.code}: {body[:200]}"
         }
     except Exception as e:
         return {
