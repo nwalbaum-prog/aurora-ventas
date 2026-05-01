@@ -1,0 +1,205 @@
+{% extends "base.html" %}
+{% block title %}Caja — Aurora Bakers{% endblock %}
+{% block page_title %}POS / Caja{% endblock %}
+
+{% block content %}
+{% if msg %}<div class="alert alert-warning">{{ msg }}</div>{% endif %}
+
+<!-- Tabs -->
+<div class="tabs" style="display:flex;gap:.5rem;margin-bottom:1.5rem;border-bottom:1px solid var(--border);padding-bottom:.75rem">
+  <button class="btn btn-sm" id="tab-caja"   onclick="showTab('caja')"   style="font-weight:600">📦 Caja</button>
+  <button class="btn btn-sm" id="tab-promos" onclick="showTab('promos')">🏷️ Promociones</button>
+</div>
+
+<!-- TAB: CAJA -->
+<div id="pane-caja">
+{% if not turno %}
+<!-- Apertura -->
+<div class="card" style="max-width:420px;margin:0 auto">
+  <div class="card-header"><h3>Abrir caja</h3></div>
+  <div class="card-body">
+    <label class="form-label">Efectivo inicial en caja</label>
+    <input type="number" id="monto-inicial" class="form-control" placeholder="30000" min="0">
+    <button class="btn btn-primary mt-3 w-100" onclick="abrirCaja()">Abrir caja y empezar a vender</button>
+  </div>
+</div>
+{% else %}
+<!-- Cierre -->
+<div class="card" style="max-width:480px;margin:0 auto">
+  <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+    <h3>Caja abierta</h3>
+    <span class="badge badge-success">● Activa</span>
+  </div>
+  <div class="card-body">
+    <div class="stat-row"><span>Apertura</span><strong>{{ turno.fecha_apertura }}</strong></div>
+    <div class="stat-row"><span>Efectivo inicial</span><strong id="ef-inicial">${{ '{:,.0f}'.format(turno.monto_inicial_efectivo) }}</strong></div>
+    <div class="stat-row"><span>Ventas efectivo</span><strong id="sum-ef">cargando…</strong></div>
+    <div class="stat-row"><span>Ventas tarjeta</span><strong id="sum-tj">cargando…</strong></div>
+    <div class="stat-row"><span>Total ventas</span><strong id="sum-tot">cargando…</strong></div>
+    <hr>
+    <label class="form-label">Efectivo contado en caja al cerrar</label>
+    <input type="number" id="monto-declarado" class="form-control" placeholder="0" min="0">
+    <div id="diferencia-msg" style="margin-top:.5rem;font-size:.85rem"></div>
+    <button class="btn btn-danger mt-3 w-100" onclick="cerrarCaja()">Cerrar caja</button>
+    <a href="/pos" class="btn btn-primary mt-2 w-100">Ir a la caja →</a>
+  </div>
+</div>
+{% endif %}
+</div>
+
+<!-- TAB: PROMOCIONES -->
+<div id="pane-promos" style="display:none">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+    <h3>Promociones activas</h3>
+    <button class="btn btn-primary btn-sm" onclick="modalPromo()">+ Nueva promoción</button>
+  </div>
+  <table class="table" id="tabla-promos">
+    <thead><tr><th>Nombre</th><th>Tipo</th><th>Valor</th><th>Estado</th><th></th></tr></thead>
+    <tbody></tbody>
+  </table>
+</div>
+
+<!-- Modal promoción -->
+<div id="modal-promo" class="modal" style="display:none">
+  <div class="modal-dialog">
+    <div class="modal-header"><h4 id="modal-promo-title">Nueva promoción</h4><button onclick="cerrarModalPromo()">✕</button></div>
+    <div class="modal-body">
+      <input type="hidden" id="promo-id">
+      <label>Nombre</label><input id="promo-nombre" class="form-control" placeholder="Ej: Descuento de bienvenida">
+      <label class="mt-2">Tipo</label>
+      <select id="promo-tipo" class="form-control">
+        <option value="porcentaje">Porcentaje (%)</option>
+        <option value="fijo">Monto fijo ($)</option>
+        <option value="2x1">2x1</option>
+      </select>
+      <label class="mt-2">Valor (% o $, ignorado en 2x1)</label>
+      <input id="promo-valor" class="form-control" type="number" min="0" placeholder="0">
+      <label class="mt-2">Fecha inicio (opcional)</label>
+      <input id="promo-inicio" class="form-control" type="date">
+      <label class="mt-2">Fecha fin (opcional)</label>
+      <input id="promo-fin" class="form-control" type="date">
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="cerrarModalPromo()">Cancelar</button>
+      <button class="btn btn-primary" onclick="guardarPromo()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const TURNO_ID = {{ turno.id if turno else 'null' }};
+
+function showTab(t) {
+  document.getElementById('pane-caja').style.display   = t === 'caja'   ? '' : 'none';
+  document.getElementById('pane-promos').style.display = t === 'promos' ? '' : 'none';
+}
+
+async function abrirCaja() {
+  const monto = parseFloat(document.getElementById('monto-inicial').value) || 0;
+  const r = await fetch('/api/pos/turno/abrir', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({monto_inicial: monto})
+  });
+  if (r.ok) location.href = '/pos';
+  else { const d = await r.json(); toast(d.error, 'error'); }
+}
+
+async function cerrarCaja() {
+  const monto = parseFloat(document.getElementById('monto-declarado').value) || 0;
+  if (!confirm('¿Confirmas cerrar la caja?')) return;
+  const r = await fetch('/api/pos/turno/cerrar', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({monto_declarado: monto})
+  });
+  if (r.ok) { toast('Caja cerrada'); setTimeout(() => location.reload(), 1000); }
+  else { const d = await r.json(); toast(d.error, 'error'); }
+}
+
+async function cargarResumen() {
+  if (!TURNO_ID) return;
+  const r = await fetch(`/api/pos/turno/${TURNO_ID}/resumen`);
+  const d = await r.json();
+  document.getElementById('sum-ef').textContent  = `$${d.total_efectivo.toLocaleString('es-CL')}`;
+  document.getElementById('sum-tj').textContent  = `$${d.total_tarjeta.toLocaleString('es-CL')}`;
+  document.getElementById('sum-tot').textContent = `$${d.total_ventas.toLocaleString('es-CL')}`;
+  document.getElementById('monto-declarado').addEventListener('input', () => {
+    const declarado = parseFloat(document.getElementById('monto-declarado').value) || 0;
+    const esperado  = d.turno.monto_inicial_efectivo + d.total_efectivo;
+    const diff = declarado - esperado;
+    const el   = document.getElementById('diferencia-msg');
+    el.textContent = diff >= 0 ? `Sobrante: $${diff.toLocaleString('es-CL')}` : `Faltante: $${Math.abs(diff).toLocaleString('es-CL')}`;
+    el.style.color = diff >= 0 ? 'var(--green)' : 'var(--red)';
+  });
+}
+
+async function cargarPromos() {
+  const r = await fetch('/api/pos/promociones');
+  const promos = await r.json();
+  const tbody = document.querySelector('#tabla-promos tbody');
+  tbody.innerHTML = promos.map(p => `
+    <tr>
+      <td>${p.nombre}</td>
+      <td>${p.tipo}</td>
+      <td>${p.tipo === '2x1' ? '—' : p.tipo === 'porcentaje' ? p.valor + '%' : '$' + p.valor.toLocaleString('es-CL')}</td>
+      <td><span class="badge ${p.activa ? 'badge-success' : 'badge-secondary'}">${p.activa ? 'Activa' : 'Inactiva'}</span></td>
+      <td>
+        <button class="btn btn-sm btn-secondary" onclick="editarPromo(${p.id})">Editar</button>
+        <button class="btn btn-sm btn-danger"    onclick="eliminarPromo(${p.id})">Eliminar</button>
+      </td>
+    </tr>`).join('');
+}
+
+function modalPromo() {
+  document.getElementById('promo-id').value     = '';
+  document.getElementById('promo-nombre').value = '';
+  document.getElementById('promo-tipo').value   = 'porcentaje';
+  document.getElementById('promo-valor').value  = '';
+  document.getElementById('promo-inicio').value = '';
+  document.getElementById('promo-fin').value    = '';
+  document.getElementById('modal-promo-title').textContent = 'Nueva promoción';
+  document.getElementById('modal-promo').style.display = 'flex';
+}
+function cerrarModalPromo() { document.getElementById('modal-promo').style.display = 'none'; }
+
+async function editarPromo(id) {
+  const r = await fetch('/api/pos/promociones');
+  const promos = await r.json();
+  const p = promos.find(x => x.id === id);
+  if (!p) return;
+  document.getElementById('promo-id').value     = p.id;
+  document.getElementById('promo-nombre').value = p.nombre;
+  document.getElementById('promo-tipo').value   = p.tipo;
+  document.getElementById('promo-valor').value  = p.valor;
+  document.getElementById('promo-inicio').value = p.fecha_inicio || '';
+  document.getElementById('promo-fin').value    = p.fecha_fin    || '';
+  document.getElementById('modal-promo-title').textContent = 'Editar promoción';
+  document.getElementById('modal-promo').style.display = 'flex';
+}
+
+async function guardarPromo() {
+  const id     = document.getElementById('promo-id').value;
+  const body   = {
+    nombre: document.getElementById('promo-nombre').value.trim(),
+    tipo:   document.getElementById('promo-tipo').value,
+    valor:  parseFloat(document.getElementById('promo-valor').value) || 0,
+    fecha_inicio: document.getElementById('promo-inicio').value || null,
+    fecha_fin:    document.getElementById('promo-fin').value    || null,
+    activa: 1
+  };
+  const url    = id ? `/api/pos/promociones/${id}` : '/api/pos/promociones';
+  const method = id ? 'PUT' : 'POST';
+  const r = await fetch(url, {method, headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+  if (r.ok) { cerrarModalPromo(); cargarPromos(); toast('Promoción guardada'); }
+  else { const d = await r.json(); toast(d.error, 'error'); }
+}
+
+async function eliminarPromo(id) {
+  if (!confirm('¿Eliminar promoción?')) return;
+  await fetch(`/api/pos/promociones/${id}`, {method: 'DELETE'});
+  cargarPromos();
+}
+
+cargarResumen();
+cargarPromos();
+</script>
+{% endblock %}
