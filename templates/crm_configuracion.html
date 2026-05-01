@@ -123,6 +123,30 @@ code { background:var(--hover); padding:.1rem .35rem; border-radius:4px; font-si
     </div>
   </div>
 
+  <!-- ── DTE / Boleta Electrónica ─────────────────────────────────────── -->
+  <div style="margin-bottom:1.5rem">
+    <div class="cfg-card">
+      <div class="cfg-head">
+        <i class="bi bi-receipt" style="color:var(--accent)"></i>
+        DTE / Boleta Electrónica (Bsale)
+      </div>
+      <div class="form-group mb-2">
+        <label class="form-label">Bsale API Token</label>
+        <input type="password" id="bsale-token" class="form-control" placeholder="Token de Bsale">
+      </div>
+      <div class="form-group mb-2">
+        <label class="form-label">ID Tipo Documento (boleta = 39)</label>
+        <input type="number" id="bsale-doc-type" class="form-control" value="39">
+      </div>
+      <div class="form-group mb-3">
+        <label class="form-label">ID Lista de Precios (default = 1)</label>
+        <input type="number" id="bsale-price-list" class="form-control" value="1">
+      </div>
+      <button class="btn btn-primary btn-sm" onclick="guardarDTE()">Guardar configuración DTE</button>
+      <span id="dte-status" style="margin-left:.75rem;font-size:.85rem"></span>
+    </div>
+  </div>
+
   <!-- ── Email SMTP ──────────────────────────────────────────────────────── -->
   <div>
     <div class="cfg-card" style="margin-bottom:1rem">
@@ -378,5 +402,29 @@ async function testSmtp() {
 }
 
 loadStatus();
+
+async function cargarConfigDTE() {
+  const r = await fetch('/api/crm/config/status');
+  const d = await r.json();
+  if (d.bsale_token)            document.getElementById('bsale-token').value     = '••••••••';
+  if (d.bsale_document_type_id) document.getElementById('bsale-doc-type').value  = d.bsale_document_type_id;
+  if (d.bsale_price_list_id)    document.getElementById('bsale-price-list').value = d.bsale_price_list_id;
+}
+
+async function guardarDTE() {
+  const token = document.getElementById('bsale-token').value.trim();
+  const body  = {
+    bsale_document_type_id: parseInt(document.getElementById('bsale-doc-type').value),
+    bsale_price_list_id:    parseInt(document.getElementById('bsale-price-list').value),
+  };
+  if (token && !token.startsWith('•')) body.bsale_token = token;
+  const r = await fetch('/api/pos/config/dte', {
+    method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body)
+  });
+  const d = await r.json();
+  document.getElementById('dte-status').textContent = d.ok ? '✅ Guardado' : '❌ Error';
+}
+
+cargarConfigDTE();
 </script>
 {% endblock %}

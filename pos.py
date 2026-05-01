@@ -443,3 +443,15 @@ def api_pos_carrito_sync():
 def api_cliente_estado():
     """Polling desde /pos/cliente — no requiere login."""
     return jsonify(_pos_carrito_activo)
+
+
+@pos_bp.route('/api/pos/config/dte', methods=['POST'])
+@login_required
+def api_pos_config_dte():
+    d = request.json or {}
+    update = {}
+    if d.get('bsale_token'):            update['bsale_token']            = d['bsale_token']
+    if d.get('bsale_document_type_id'): update['bsale_document_type_id'] = d['bsale_document_type_id']
+    if d.get('bsale_price_list_id'):    update['bsale_price_list_id']    = d['bsale_price_list_id']
+    _save_config(update)
+    return jsonify({'ok': True})
