@@ -68,17 +68,21 @@ def api_turno_activo():
 @pos_bp.route('/api/pos/turno/abrir', methods=['POST'])
 @login_required
 def api_turno_abrir():
-    uid = session.get('user_id')
+    uid  = session.get('user_id')
+    body = request.get_json(silent=True) or {}
+    try:
+        monto = float(body.get('monto_inicial', 0))
+    except (TypeError, ValueError):
+        return jsonify({'error': 'monto_inicial debe ser un número'}), 400
     with db() as c:
         existente = c.execute(
             "SELECT id FROM pos_turnos WHERE usuario_id=? AND estado='abierto'", (uid,)
         ).fetchone()
         if existente:
             return jsonify({'error': 'Ya tienes un turno abierto'}), 400
-        monto = float(request.json.get('monto_inicial', 0))
         cur = c.execute(
             "INSERT INTO pos_turnos (usuario_id, fecha_apertura, monto_inicial_efectivo, estado) VALUES (?,?,?,?)",
-            (uid, datetime.now().strftime('%Y-%m-%d %H:%M'), monto, 'abierto')
+            (uid, datetime.now().strftime('%Y-%m-%d %H:%M:%S'), monto, 'abierto')
         )
         turno = c.execute("SELECT * FROM pos_turnos WHERE id=?", (cur.lastrowid,)).fetchone()
     return jsonify({'ok': True, 'turno': dict(turno)})
@@ -87,7 +91,12 @@ def api_turno_abrir():
 @pos_bp.route('/api/pos/turno/cerrar', methods=['POST'])
 @login_required
 def api_turno_cerrar():
-    uid = session.get('user_id')
+    uid  = session.get('user_id')
+    body = request.get_json(silent=True) or {}
+    try:
+        monto_declarado = float(body.get('monto_declarado', 0))
+    except (TypeError, ValueError):
+        return jsonify({'error': 'monto_declarado debe ser un número'}), 400
     with db() as c:
         turno = c.execute(
             "SELECT * FROM pos_turnos WHERE usuario_id=? AND estado='abierto' ORDER BY id DESC LIMIT 1",
@@ -95,10 +104,9 @@ def api_turno_cerrar():
         ).fetchone()
         if not turno:
             return jsonify({'error': 'No hay turno abierto'}), 400
-        monto_declarado = float(request.json.get('monto_declarado', 0))
         c.execute(
             "UPDATE pos_turnos SET estado='cerrado', fecha_cierre=?, monto_declarado_efectivo=? WHERE id=?",
-            (datetime.now().strftime('%Y-%m-%d %H:%M'), monto_declarado, turno['id'])
+            (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), monto_declarado, turno['id'])
         )
         turno_actualizado = c.execute("SELECT * FROM pos_turnos WHERE id=?", (turno['id'],)).fetchone()
     _pos_carrito_activo.update({"turno_id": None, "items": [], "total": 0, "estado": "esperando"})
@@ -108,8 +116,9 @@ def api_turno_cerrar():
 @pos_bp.route('/api/pos/turno/<int:tid>/resumen')
 @login_required
 def api_turno_resumen(tid):
+    uid = session.get('user_id')
     with db() as c:
-        turno = c.execute("SELECT * FROM pos_turnos WHERE id=?", (tid,)).fetchone()
+        turno = c.execute("SELECT * FROM pos_turnos WHERE id=? AND usuario_id=?", (tid, uid)).fetchone()
         if not turno:
             return jsonify({'error': 'Turno no encontrado'}), 404
         ventas = c.execute(

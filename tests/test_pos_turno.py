@@ -44,3 +44,21 @@ def test_cerrar_sin_turno_abierto_da_error(client):
                 json={'monto_declarado': 0},
                 content_type='application/json')
     assert r.status_code == 400
+
+def test_resumen_turno_vacio(client):
+    tc, _ = client
+    abrir = json.loads(tc.post('/api/pos/turno/abrir', json={'monto_inicial': 30000},
+                               content_type='application/json').data)
+    tid = abrir['turno']['id']
+    r = tc.get(f'/api/pos/turno/{tid}/resumen')
+    assert r.status_code == 200
+    data = json.loads(r.data)
+    assert data['n_ventas'] == 0
+    assert data['total_ventas'] == 0
+    assert data['total_efectivo'] == 0
+    assert data['total_tarjeta'] == 0
+
+def test_resumen_turno_inexistente_da_404(client):
+    tc, _ = client
+    r = tc.get('/api/pos/turno/99999/resumen')
+    assert r.status_code == 404
