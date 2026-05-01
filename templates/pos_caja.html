@@ -122,14 +122,14 @@ async function cargarResumen() {
   document.getElementById('sum-ef').textContent  = `$${d.total_efectivo.toLocaleString('es-CL')}`;
   document.getElementById('sum-tj').textContent  = `$${d.total_tarjeta.toLocaleString('es-CL')}`;
   document.getElementById('sum-tot').textContent = `$${d.total_ventas.toLocaleString('es-CL')}`;
-  document.getElementById('monto-declarado').addEventListener('input', () => {
+  const esperado = d.turno.monto_inicial_efectivo + d.total_efectivo;
+  document.getElementById('monto-declarado').oninput = () => {
     const declarado = parseFloat(document.getElementById('monto-declarado').value) || 0;
-    const esperado  = d.turno.monto_inicial_efectivo + d.total_efectivo;
     const diff = declarado - esperado;
     const el   = document.getElementById('diferencia-msg');
     el.textContent = diff >= 0 ? `Sobrante: $${diff.toLocaleString('es-CL')}` : `Faltante: $${Math.abs(diff).toLocaleString('es-CL')}`;
     el.style.color = diff >= 0 ? 'var(--green)' : 'var(--red)';
-  });
+  };
 }
 
 async function cargarPromos() {
@@ -195,8 +195,9 @@ async function guardarPromo() {
 
 async function eliminarPromo(id) {
   if (!confirm('¿Eliminar promoción?')) return;
-  await fetch(`/api/pos/promociones/${id}`, {method: 'DELETE'});
-  cargarPromos();
+  const r = await fetch(`/api/pos/promociones/${id}`, {method: 'DELETE'});
+  if (r.ok) cargarPromos();
+  else { const d = await r.json(); toast(d.error || 'Error al eliminar', 'error'); }
 }
 
 cargarResumen();

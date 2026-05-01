@@ -427,9 +427,13 @@ def api_pos_venta():
 def api_pos_carrito_sync():
     """Cajero sincroniza el estado actual del carrito al servidor (debounced desde JS)."""
     d = request.get_json(silent=True) or {}
+    try:
+        total = float(d.get('total', 0))
+    except (TypeError, ValueError):
+        total = 0.0
     _pos_carrito_activo.update({
         "items":  d.get('items', []),
-        "total":  float(d.get('total', 0)),
+        "total":  total,
         "estado": "en_curso" if d.get('items') else "esperando"
     })
     return jsonify({'ok': True})
