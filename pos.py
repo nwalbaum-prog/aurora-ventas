@@ -137,3 +137,68 @@ def api_turno_resumen(tid):
         'diferencia':     round((turno['monto_declarado_efectivo'] or 0) -
                                 (turno['monto_inicial_efectivo'] + total_efectivo), 0)
     })
+
+
+# ── API: Productos y Frecuentes ───────────────────────────────────────────────
+
+@pos_bp.route('/api/pos/productos')
+@login_required
+def api_pos_productos():
+    q = request.args.get('q', '').strip()
+    with db() as c:
+        if q:
+            productos = c.execute(
+                "SELECT id,nombre,precio,stock FROM productos WHERE activo=1 AND nombre LIKE ? ORDER BY nombre LIMIT 20",
+                (f'%{q}%',)
+            ).fetchall()
+        else:
+            productos = c.execute(
+                "SELECT id,nombre,precio,stock FROM productos WHERE activo=1 ORDER BY nombre LIMIT 50"
+            ).fetchall()
+        frecuentes_rows = c.execute(
+            """SELECT pf.id as frec_id, pf.orden, p.id, p.nombre, p.precio, p.stock
+               FROM pos_frecuentes pf JOIN productos p ON p.id=pf.producto_id
+               WHERE p.activo=1 ORDER BY pf.orden"""
+        ).fetchall()
+    return jsonify({
+        'productos':  [dict(p) for p in productos],
+        'frecuentes': [dict(f) for f in frecuentes_rows]
+    })
+
+
+@pos_bp.route('/api/pos/frecuentes', methods=['GET'])
+@login_required
+def api_frecuentes_list():
+    with db() as c:
+        rows = c.execute(
+            """SELECT pf.id, pf.orden, p.id as producto_id, p.nombre, p.precio
+               FROM pos_frecuentes pf JOIN productos p ON p.id=pf.producto_id
+               ORDER BY pf.orden"""
+        ).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+@pos_bp.route('/api/pos/frecuentes', methods=['POST'])
+@login_required
+def api_frecuentes_add():
+    body = request.get_json(silent=True) or {}
+    producto_id = body.get('producto_id')
+    if not producto_id:
+        return jsonify({'error': 'producto_id requerido'}), 400
+    with db() as c:
+        existente = c.execute("SELECT id FROM pos_frecuentes WHERE producto_id=?", (producto_id,)).fetchone()
+        if existente:
+            return jsonify({'error': 'Ya es frecuente'}), 400
+        count = c.execute("SELECT COUNT(*) FROM pos_frecuentes").fetchone()[0]
+        if count >= 8:
+            return jsonify({'error': 'Máximo 8 frecuentes'}), 400
+        c.execute("INSERT INTO pos_frecuentes (producto_id, orden) VALUES (?,?)", (producto_id, count))
+    return jsonify({'ok': True})
+
+
+@pos_bp.route('/api/pos/frecuentes/<int:fid>', methods=['DELETE'])
+@login_required
+def api_frecuentes_delete(fid):
+    with db() as c:
+        c.execute("DELETE FROM pos_frecuentes WHERE id=?", (fid,))
+    return jsonify({'ok': True})
