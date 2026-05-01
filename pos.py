@@ -418,3 +418,24 @@ def api_pos_venta():
         'boleta':    dte_resp,
         'promos':    detalle_promos
     })
+
+
+# ── API: Carrito y Pantalla Cliente ──────────────────────────────────────────
+
+@pos_bp.route('/api/pos/carrito', methods=['POST'])
+@login_required
+def api_pos_carrito_sync():
+    """Cajero sincroniza el estado actual del carrito al servidor (debounced desde JS)."""
+    d = request.get_json(silent=True) or {}
+    _pos_carrito_activo.update({
+        "items":  d.get('items', []),
+        "total":  float(d.get('total', 0)),
+        "estado": "en_curso" if d.get('items') else "esperando"
+    })
+    return jsonify({'ok': True})
+
+
+@pos_bp.route('/api/pos/cliente/estado')
+def api_cliente_estado():
+    """Polling desde /pos/cliente — no requiere login."""
+    return jsonify(_pos_carrito_activo)
