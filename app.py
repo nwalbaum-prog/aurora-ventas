@@ -278,6 +278,7 @@ def init_db():
             ("productos",     "precio_mayorista",   "ALTER TABLE productos ADD COLUMN precio_mayorista REAL NOT NULL DEFAULT 0"),
             ("productos",     "categoria",          "ALTER TABLE productos ADD COLUMN categoria TEXT NOT NULL DEFAULT 'pan'"),
             ("suscripciones", "entregas_realizadas","ALTER TABLE suscripciones ADD COLUMN entregas_realizadas INTEGER NOT NULL DEFAULT 0"),
+            ("productos",     "peso_unitario_kg",   "ALTER TABLE productos ADD COLUMN peso_unitario_kg REAL NOT NULL DEFAULT 0"),
         ]
         for table, col, sql in migrations:
             if not _col_exists(c, table, col):
@@ -465,6 +466,13 @@ Aurora Bakers | panypasta.cl""",
                 proveedor             TEXT    NOT NULL DEFAULT '',
                 precio_kg             REAL    NOT NULL DEFAULT 0,
                 ultima_actualizacion  TEXT    NOT NULL DEFAULT (date('now'))
+            );
+            CREATE TABLE IF NOT EXISTS recetas (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                producto_id  INTEGER NOT NULL REFERENCES productos(id) ON DELETE CASCADE,
+                ingrediente  TEXT    NOT NULL,
+                porcentaje   REAL    NOT NULL DEFAULT 0,
+                UNIQUE(producto_id, ingrediente)
             );
             CREATE TABLE IF NOT EXISTS plan_produccion (
                 id               INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2492,6 +2500,68 @@ def api_inventario_ajustar(iid):
 
 
 # ════════════════════════════════════════════════════════════════════════════
+# RECETAS (ingredientes por producto en %)
+# ════════════════════════════════════════════════════════════════════════════
+
+@app.route('/api/recetas/<int:producto_id>', methods=['GET'])
+@login_required
+def api_receta_get(producto_id):
+    with db() as c:
+        prod = c.execute("SELECT id, nombre, peso_unitario_kg FROM productos WHERE id=?", (producto_id,)).fetchone()
+        if not prod:
+            return jsonify({'error': 'Producto no encontrado'}), 404
+        ingredientes = c.execute(
+            "SELECT ingrediente, porcentaje FROM recetas WHERE producto_id=? ORDER BY ingrediente",
+            (producto_id,)
+        ).fetchall()
+    return jsonify({
+        'producto_id':     prod['id'],
+        'nombre':          prod['nombre'],
+        'peso_unitario_kg': prod['peso_unitario_kg'],
+        'ingredientes':    [dict(r) for r in ingredientes]
+    })
+
+
+@app.route('/api/recetas/<int:producto_id>', methods=['POST'])
+@login_required
+def api_receta_save(producto_id):
+    """Guarda/reemplaza la receta completa de un producto."""
+    d = request.get_json(silent=True) or {}
+    peso = float(d.get('peso_unitario_kg', 0))
+    ingredientes = d.get('ingredientes', [])  # [{ingrediente, porcentaje}]
+    with db() as c:
+        prod = c.execute("SELECT id FROM productos WHERE id=?", (producto_id,)).fetchone()
+        if not prod:
+            return jsonify({'error': 'Producto no encontrado'}), 404
+        c.execute("UPDATE productos SET peso_unitario_kg=? WHERE id=?", (peso, producto_id))
+        c.execute("DELETE FROM recetas WHERE producto_id=?", (producto_id,))
+        for ing in ingredientes:
+            nombre = ing.get('ingrediente', '').strip()
+            pct    = float(ing.get('porcentaje', 0))
+            if nombre and pct > 0:
+                c.execute(
+                    "INSERT INTO recetas (producto_id, ingrediente, porcentaje) VALUES (?,?,?)",
+                    (producto_id, nombre, pct)
+                )
+    return jsonify({'ok': True})
+
+
+@app.route('/api/recetas/productos', methods=['GET'])
+@login_required
+def api_recetas_productos():
+    """Lista de productos activos con su peso_unitario_kg para el selector de recetas."""
+    with db() as c:
+        prods = c.execute(
+            "SELECT id, nombre, peso_unitario_kg FROM productos WHERE activo=1 ORDER BY nombre"
+        ).fetchall()
+        ings  = c.execute("SELECT DISTINCT ingrediente FROM inventario ORDER BY ingrediente").fetchall()
+    return jsonify({
+        'productos':    [dict(p) for p in prods],
+        'ingredientes': [r['ingrediente'] for r in ings]
+    })
+
+
+# ════════════════════════════════════════════════════════════════════════════
 # PLAN DE PRODUCCIÓN
 # ════════════════════════════════════════════════════════════════════════════
 
@@ -2552,7 +2622,6 @@ def api_plan_confirmar(fecha):
     4. Retorna resumen de descuentos y alertas de stock bajo
     Accesible por UI (login_required) y por agentes (X-Agent-Key).
     """
-    import json as _j
     with db() as c:
         plan = c.execute(
             "SELECT * FROM plan_produccion WHERE fecha=? AND estado != 'listo'", (fecha,)
@@ -2566,27 +2635,35 @@ def api_plan_confirmar(fecha):
                 return jsonify({'ok': False, 'error': f'Producción del {fecha} ya fue confirmada anteriormente'})
             return jsonify({'ok': False, 'error': f'Sin plan de producción pendiente para {fecha}'})
 
-        config_row = c.execute("SELECT valor FROM config_negocio WHERE clave='recetas'").fetchone()
+        # Calcular descuentos de ingredientes y sumar stock de pan
+        descuentos: dict[str, float] = {}
+        stock_sumado = []
 
-    recetas = {}
-    if config_row:
-        try:
-            recetas = _j.loads(config_row['valor'])
-        except Exception:
-            pass
+        for item in plan:
+            nombre   = item['nombre_producto']
+            cantidad = item['cantidad']
 
-    # Calcular ingredientes totales a descontar
-    descuentos: dict[str, float] = {}
-    for item in plan:
-        codigo   = item['codigo_producto'].upper()
-        cantidad = item['cantidad']
-        if codigo in recetas:
-            for ing, gramos in recetas[codigo].get('ingredientes', {}).items():
-                descuentos[ing] = descuentos.get(ing, 0) + (gramos * cantidad / 1000)  # → kg
+            # Buscar producto por nombre para obtener receta y peso
+            prod = c.execute(
+                "SELECT id, peso_unitario_kg FROM productos WHERE nombre=?", (nombre,)
+            ).fetchone()
 
-    # Descontar inventario y recoger alertas
-    alertas = []
-    with db() as c:
+            if prod and prod['peso_unitario_kg'] > 0:
+                total_kg = cantidad * prod['peso_unitario_kg']
+                ings = c.execute(
+                    "SELECT ingrediente, porcentaje FROM recetas WHERE producto_id=?",
+                    (prod['id'],)
+                ).fetchall()
+                for ing in ings:
+                    kg = (ing['porcentaje'] / 100) * total_kg
+                    descuentos[ing['ingrediente']] = descuentos.get(ing['ingrediente'], 0) + kg
+
+                # Sumar al stock del producto
+                c.execute("UPDATE productos SET stock=stock+? WHERE id=?", (cantidad, prod['id']))
+                stock_sumado.append({'nombre': nombre, 'cantidad': cantidad})
+
+        # Descontar inventario y recoger alertas
+        alertas = []
         for ing, kg in descuentos.items():
             row = c.execute(
                 "SELECT id, stock_kg, alerta_minimo_kg FROM inventario WHERE ingrediente=?", (ing,)
@@ -2610,11 +2687,12 @@ def api_plan_confirmar(fecha):
         )
 
     return jsonify({
-        'ok':        True,
-        'fecha':     fecha,
+        'ok':              True,
+        'fecha':           fecha,
         'items_confirmados': len(plan),
-        'descuentos': {k: round(v, 3) for k, v in descuentos.items()},
-        'alertas_stock': alertas,
+        'stock_sumado':    stock_sumado,
+        'descuentos':      {k: round(v, 3) for k, v in descuentos.items()},
+        'alertas_stock':   alertas,
     })
 
 

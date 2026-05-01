@@ -73,6 +73,39 @@
   <div id="ingredientes-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:.5rem"></div>
 </div>
 
+<!-- ══════════════ RECETAS ══════════════ -->
+<div class="card" style="margin-top:1.25rem">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.9rem">
+    <span style="font-size:.9rem;font-weight:700"><i class="bi bi-journal-text"></i> Recetas de producción</span>
+  </div>
+  <div style="display:flex;gap:.75rem;align-items:flex-end;margin-bottom:1rem;flex-wrap:wrap">
+    <div class="form-group" style="margin:0;flex:1;min-width:200px">
+      <label>Producto</label>
+      <select id="receta-prod-sel" onchange="cargarReceta()" style="width:100%">
+        <option value="">— Seleccionar producto —</option>
+      </select>
+    </div>
+    <div class="form-group" style="margin:0;width:160px">
+      <label>Peso por unidad (kg)</label>
+      <input id="receta-peso" type="number" step="0.001" min="0" placeholder="ej: 0.5">
+    </div>
+  </div>
+  <div id="receta-ingredientes" style="display:none">
+    <table style="width:100%;border-collapse:collapse;font-size:.85rem;margin-bottom:.75rem">
+      <thead><tr>
+        <th style="text-align:left;padding:.35rem .5rem;color:var(--muted);font-size:.72rem;text-transform:uppercase">Ingrediente</th>
+        <th style="text-align:right;padding:.35rem .5rem;color:var(--muted);font-size:.72rem;text-transform:uppercase;width:120px">% del peso</th>
+        <th style="width:36px"></th>
+      </tr></thead>
+      <tbody id="receta-tbody"></tbody>
+    </table>
+    <button class="btn btn-secondary btn-sm" onclick="agregarFilaReceta()"><i class="bi bi-plus"></i> Agregar ingrediente</button>
+    <button class="btn btn-primary btn-sm" style="margin-left:.5rem" onclick="guardarReceta()"><i class="bi bi-floppy"></i> Guardar receta</button>
+    <span id="receta-status" style="margin-left:.75rem;font-size:.82rem"></span>
+  </div>
+  <div id="receta-empty" style="color:var(--muted);font-size:.85rem">Selecciona un producto para editar su receta.</div>
+</div>
+
 <!-- ══════════════ MODAL ══════════════ -->
 <div id="modal-prod" class="modal-overlay">
   <div class="modal" style="max-width:440px">
@@ -410,9 +443,88 @@ async function confirmarProduccion() {
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 async function init() {
-  await loadPlan();    // carga el plan primero para que renderPedidos sepa qué ya está
-  await loadPedidos(); // luego los pedidos (compara con plan)
+  await loadPlan();
+  await loadPedidos();
+  initRecetas();
 }
 init();
+
+// ── Recetas ───────────────────────────────────────────────────────────────────
+let _ingDisponibles = [];
+
+async function initRecetas() {
+  const r = await fetch('/api/recetas/productos');
+  const d = await r.json();
+  _ingDisponibles = d.ingredientes || [];
+  const sel = document.getElementById('receta-prod-sel');
+  d.productos.forEach(p => {
+    const opt = document.createElement('option');
+    opt.value = p.id;
+    opt.textContent = p.nombre + (p.peso_unitario_kg > 0 ? ` (${p.peso_unitario_kg} kg/u)` : '');
+    sel.appendChild(opt);
+  });
+}
+
+async function cargarReceta() {
+  const pid = document.getElementById('receta-prod-sel').value;
+  document.getElementById('receta-empty').style.display = pid ? 'none' : '';
+  document.getElementById('receta-ingredientes').style.display = pid ? '' : 'none';
+  document.getElementById('receta-status').textContent = '';
+  if (!pid) return;
+
+  const r = await fetch(`/api/recetas/${pid}`);
+  const d = await r.json();
+  document.getElementById('receta-peso').value = d.peso_unitario_kg || '';
+  const tbody = document.getElementById('receta-tbody');
+  tbody.innerHTML = '';
+  (d.ingredientes || []).forEach(i => agregarFilaReceta(i.ingrediente, i.porcentaje));
+}
+
+function agregarFilaReceta(ingrediente = '', porcentaje = '') {
+  const tbody = document.getElementById('receta-tbody');
+  const tr = document.createElement('tr');
+  const opts = _ingDisponibles.map(i =>
+    `<option value="${i}" ${i === ingrediente ? 'selected' : ''}>${i}</option>`
+  ).join('');
+  tr.innerHTML = `
+    <td style="padding:.3rem .5rem">
+      <select style="width:100%;font-size:.85rem" class="form-control">
+        <option value="">— Ingrediente —</option>
+        ${opts}
+      </select>
+    </td>
+    <td style="padding:.3rem .5rem">
+      <input type="number" min="0" max="100" step="0.1" value="${porcentaje}"
+             placeholder="%" style="width:100%;font-size:.85rem" class="form-control">
+    </td>
+    <td style="padding:.3rem .5rem;text-align:center">
+      <button onclick="this.closest('tr').remove()" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:1rem">✕</button>
+    </td>`;
+  tbody.appendChild(tr);
+}
+
+async function guardarReceta() {
+  const pid  = document.getElementById('receta-prod-sel').value;
+  const peso = parseFloat(document.getElementById('receta-peso').value) || 0;
+  if (!pid) return;
+
+  const filas = document.querySelectorAll('#receta-tbody tr');
+  const ingredientes = [];
+  filas.forEach(tr => {
+    const sel = tr.querySelector('select').value;
+    const pct = parseFloat(tr.querySelector('input').value) || 0;
+    if (sel && pct > 0) ingredientes.push({ ingrediente: sel, porcentaje: pct });
+  });
+
+  const r = await fetch(`/api/recetas/${pid}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ peso_unitario_kg: peso, ingredientes })
+  });
+  const st = document.getElementById('receta-status');
+  st.textContent = r.ok ? '✅ Guardado' : '❌ Error';
+  st.style.color = r.ok ? 'var(--green)' : 'var(--red)';
+  if (r.ok) setTimeout(() => { st.textContent = ''; }, 3000);
+}
 </script>
 {% endblock %}
