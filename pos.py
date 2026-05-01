@@ -383,12 +383,12 @@ def api_pos_venta():
 
     metodo_pago = body.get('metodo_pago', 'efectivo')
     if metodo_pago == 'efectivo':
-        monto_efectivo_real = monto_efectivo  # validated above
+        monto_efectivo_real = total_final   # neto que queda en caja (sin vuelto)
         monto_tarjeta       = 0.0
     else:
         monto_efectivo_real = 0.0
         monto_tarjeta       = total_final
-    vuelto = round(max(0.0, monto_efectivo_real - total_final)) if metodo_pago == 'efectivo' else 0
+    vuelto = round(max(0.0, monto_efectivo - total_final)) if metodo_pago == 'efectivo' else 0
 
     with db() as c:
         cur = c.execute(
