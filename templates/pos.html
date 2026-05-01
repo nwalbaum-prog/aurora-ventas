@@ -105,7 +105,7 @@ async function init() {
 function renderFrecuentes() {
   const g = document.getElementById('grid-frecuentes');
   g.innerHTML = frecuentes.map(f =>
-    `<button class="btn btn-sm" onclick="agregarProducto(${f.producto_id},${JSON.stringify(f.nombre)},${f.precio})"
+    `<button class="btn btn-sm" onclick='agregarProducto(${f.producto_id},${JSON.stringify(f.nombre)},${f.precio})'
              style="background:var(--bg-3);border:1px solid var(--border);padding:.4rem .3rem;font-size:.75rem;text-align:center;line-height:1.2">
        🍞<br>${f.nombre}<br><span style="color:var(--green)">${fmt(f.precio)}</span>
      </button>`
@@ -145,7 +145,7 @@ function renderProductos(prods) {
   if (!prods.length) { el.innerHTML = '<p style="color:var(--text-3);font-size:.8rem;padding:.5rem">Sin resultados</p>'; return; }
   el.innerHTML = prods.map(p => {
     const promo = promoActivas.find(x => x.producto_id == p.id);
-    return `<div class="prod-row" onclick="agregarProducto(${p.id},${JSON.stringify(p.nombre)},${p.precio})"
+    return `<div class="prod-row" onclick='agregarProducto(${p.id},${JSON.stringify(p.nombre)},${p.precio})'
           style="background:var(--bg-2);border:1px solid var(--border);border-radius:.4rem;padding:.45rem .75rem;
                  margin-bottom:.3rem;display:flex;justify-content:space-between;align-items:center;cursor:pointer">
       <div>

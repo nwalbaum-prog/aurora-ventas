@@ -1,7 +1,30 @@
 # pos.py — Blueprint POS para Aurora Bakers
 from flask import Blueprint, render_template, request, jsonify, redirect, url_for, session
 from datetime import date, datetime
-from app import db, login_required, _load_config, _save_config
+from contextlib import contextmanager
+from functools import wraps
+
+def login_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not session.get('user_id'):
+            return redirect(url_for('page_login', next=request.path))
+        return f(*args, **kwargs)
+    return decorated
+
+@contextmanager
+def db():
+    import app as _app
+    with _app.db() as conn:
+        yield conn
+
+def _load_config():
+    import app as _app
+    return _app._load_config()
+
+def _save_config(data):
+    import app as _app
+    return _app._save_config(data)
 
 pos_bp = Blueprint('pos', __name__)
 
