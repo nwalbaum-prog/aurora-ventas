@@ -432,6 +432,15 @@ def api_pos_venta():
     _pos_carrito_activo.update({"items": [], "total": 0, "estado": "finalizado",
                                 "total_cobrado": total_final})
 
+    # Auto plan producción día siguiente (error silencioso para no bloquear la venta)
+    try:
+        import app as _app
+        items_plan = [{'nombre_producto': i['nombre'], 'cantidad': float(i['cantidad'])} for i in items]
+        with db() as c:
+            _app._auto_plan_produccion(items_plan, c)
+    except Exception as _e:
+        print(f"[pos] auto_plan_produccion: {_e}")
+
     return jsonify({
         'ok':        True,
         'venta_id':  venta_id,

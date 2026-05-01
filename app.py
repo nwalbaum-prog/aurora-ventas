@@ -49,6 +49,31 @@ def _cfg(key: str, default: str = '') -> str:
     """Lee config: env var tiene prioridad, luego aurora_config.json."""
     return os.environ.get(key.upper(), '') or _load_config().get(key, default)
 
+def _auto_plan_produccion(items, c):
+    """Agrega/incrementa items en plan_produccion para el día siguiente.
+    items: lista de {'nombre_producto': str, 'cantidad': float}
+    c: conexión SQLite activa (se ejecuta dentro de la transacción del llamador).
+    """
+    from datetime import date, timedelta
+    fecha = str(date.today() + timedelta(days=1))
+    for item in items:
+        nombre   = item['nombre_producto']
+        cantidad = max(1, round(float(item['cantidad'])))
+        existente = c.execute(
+            "SELECT id FROM plan_produccion WHERE fecha=? AND nombre_producto=?",
+            (fecha, nombre)
+        ).fetchone()
+        if existente:
+            c.execute("UPDATE plan_produccion SET cantidad=cantidad+? WHERE id=?",
+                      (cantidad, existente['id']))
+        else:
+            c.execute(
+                """INSERT INTO plan_produccion
+                   (fecha, codigo_producto, nombre_producto, cantidad, estado, notas)
+                   VALUES (?,?,?,?,?,?)""",
+                (fecha, nombre, nombre, cantidad, 'pendiente', 'Auto-venta')
+            )
+
 
 # ── Evolution API (agente WhatsApp) ───────────────────────────────────────────
 
@@ -1060,6 +1085,7 @@ def api_ventas_create():
             )
         )
         vid = cur.lastrowid
+        items_plan = []
         for i in items:
             c.execute(
                 "INSERT INTO venta_items (venta_id,producto_id,cantidad,precio_unitario) VALUES (?,?,?,?)",
@@ -1067,6 +1093,11 @@ def api_ventas_create():
             )
             c.execute("UPDATE productos SET stock=stock-? WHERE id=?",
                       (float(i['cantidad']), i['producto_id']))
+            p = c.execute("SELECT nombre FROM productos WHERE id=?", (i['producto_id'],)).fetchone()
+            if p:
+                items_plan.append({'nombre_producto': p['nombre'], 'cantidad': float(i['cantidad'])})
+
+        _auto_plan_produccion(items_plan, c)
 
         # Auto-crear suscripción si el canal es 'suscripcion' y hay cliente
         sub_id = None
