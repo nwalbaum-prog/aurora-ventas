@@ -297,9 +297,12 @@ def init_db():
                 rol         TEXT    NOT NULL DEFAULT 'usuario',
                 activo      INTEGER NOT NULL DEFAULT 1,
                 creado_en   TEXT    NOT NULL DEFAULT (datetime('now')),
-                ultimo_login TEXT   NOT NULL DEFAULT ''
+                ultimo_login TEXT   NOT NULL DEFAULT '',
+                permisos    TEXT    NOT NULL DEFAULT '[]'
             )
         """)
+        if not _col_exists(c, 'usuarios', 'permisos'):
+            c.execute("ALTER TABLE usuarios ADD COLUMN permisos TEXT NOT NULL DEFAULT '[]'")
         # Admin por defecto si no hay usuarios
         if c.execute("SELECT COUNT(*) FROM usuarios").fetchone()[0] == 0:
             c.execute(
@@ -746,6 +749,55 @@ def admin_required(f):
         return f(*args, **kwargs)
     return decorated
 
+# ── Módulos y permisos ────────────────────────────────────────────────────────
+import json as _json_mod
+
+MODULOS = [
+    ('pos',            'POS / Caja',     'bi-cash-register'),
+    ('ventas',         'Ventas',         'bi-receipt'),
+    ('despacho',       'Despacho',       'bi-truck'),
+    ('clientes',       'Clientes',       'bi-people'),
+    ('productos',      'Productos',      'bi-basket'),
+    ('suscripciones',  'Suscripciones',  'bi-calendar-check'),
+    ('crm',            'CRM',            'bi-diagram-3'),
+    ('reportes',       'Reportes',       'bi-bar-chart-line'),
+    ('reporte_ventas', 'Reporte Ventas', 'bi-table'),
+    ('finanzas',       'Finanzas',       'bi-currency-dollar'),
+    ('produccion',     'Producción',     'bi-fire'),
+    ('inventario',     'Inventario',     'bi-boxes'),
+    ('gastos',         'Gastos',         'bi-cash-coin'),
+    ('agenda',         'Agenda',         'bi-calendar3'),
+    ('config_negocio', 'Configuración',  'bi-gear'),
+    ('agentes',        'Agentes',        'bi-robot'),
+]
+MODULOS_DEFAULT = ['pos', 'ventas', 'clientes', 'despacho', 'agenda']
+
+def has_module(key):
+    """True si el usuario actual tiene acceso al módulo."""
+    if session.get('user_rol') == 'admin':
+        return True
+    return key in session.get('user_permisos', [])
+
+def module_required(key):
+    """Decorator de ruta: requiere login + permiso de módulo."""
+    def decorator(f):
+        @wraps(f)
+        def decorated(*args, **kwargs):
+            if not session.get('user_id'):
+                return redirect(url_for('page_login', next=request.path))
+            if not has_module(key):
+                return redirect(url_for('page_inicio'))
+            return f(*args, **kwargs)
+        return decorated
+    return decorator
+
+@app.context_processor
+def inject_nav_permisos():
+    return {
+        'user_permisos': session.get('user_permisos', []),
+        'user_es_admin': session.get('user_rol') == 'admin',
+    }
+
 @app.route('/login', methods=['GET','POST'])
 def page_login():
     if session.get('user_id'):
@@ -757,10 +809,15 @@ def page_login():
         with db() as c:
             u = c.execute("SELECT * FROM usuarios WHERE email=? AND activo=1", (email,)).fetchone()
         if u and check_password_hash(u['password'], password):
-            session.permanent = True
-            session['user_id']   = u['id']
+            session.permanent = False  # expira al cerrar el navegador
+            session['user_id']     = u['id']
             session['user_nombre'] = u['nombre']
             session['user_rol']    = u['rol']
+            raw = u['permisos'] if 'permisos' in u.keys() else '[]'
+            permisos = _json_mod.loads(raw or '[]')
+            if not permisos and u['rol'] != 'admin':
+                permisos = MODULOS_DEFAULT
+            session['user_permisos'] = permisos
             with db() as c:
                 c.execute("UPDATE usuarios SET ultimo_login=? WHERE id=?",
                           (datetime.now().strftime('%Y-%m-%d %H:%M'), u['id']))
@@ -791,8 +848,14 @@ def api_admin_usuarios_list():
     if u['rol'] != 'admin':
         return jsonify({'error': 'Forbidden'}), 403
     with db() as c:
-        rows = c.execute("SELECT id,nombre,email,rol,activo,creado_en,ultimo_login FROM usuarios ORDER BY id").fetchall()
+        rows = c.execute("SELECT id,nombre,email,rol,activo,creado_en,ultimo_login,permisos FROM usuarios ORDER BY id").fetchall()
         return jsonify([dict(r) for r in rows])
+
+@app.route('/api/admin/modulos', methods=['GET'])
+@login_required
+def api_admin_modulos():
+    """Lista de módulos disponibles para asignar permisos."""
+    return jsonify([{'key': k, 'nombre': n, 'icono': i} for k, n, i in MODULOS])
 
 @app.route('/api/admin/usuarios', methods=['POST'])
 @login_required
@@ -803,15 +866,16 @@ def api_admin_usuarios_create():
     d = request.json
     if not d.get('email') or not d.get('password'):
         return jsonify({'error': 'Email y contraseña son requeridos'}), 400
+    permisos = _json_mod.dumps(d.get('permisos', MODULOS_DEFAULT))
     try:
         with db() as c:
             c.execute(
-                "INSERT INTO usuarios (nombre,email,password,rol) VALUES (?,?,?,?)",
+                "INSERT INTO usuarios (nombre,email,password,rol,permisos) VALUES (?,?,?,?,?)",
                 (d.get('nombre',''), d['email'].lower().strip(),
-                 generate_password_hash(d['password']), d.get('rol','usuario'))
+                 generate_password_hash(d['password']), d.get('rol','usuario'), permisos)
             )
         return jsonify({'ok': True}), 201
-    except Exception as e:
+    except Exception:
         return jsonify({'error': 'El correo ya está registrado'}), 400
 
 @app.route('/api/admin/usuarios/<int:uid>', methods=['PUT'])
@@ -828,6 +892,9 @@ def api_admin_usuarios_update(uid):
         for col in ('nombre', 'email', 'rol', 'activo'):
             if col in d:
                 c.execute(f"UPDATE usuarios SET {col}=? WHERE id=?", (d[col], uid))
+        if 'permisos' in d:
+            c.execute("UPDATE usuarios SET permisos=? WHERE id=?",
+                      (_json_mod.dumps(d['permisos']), uid))
     return jsonify({'ok': True})
 
 @app.route('/api/admin/usuarios/<int:uid>', methods=['DELETE'])
@@ -867,36 +934,56 @@ def api_admin_mi_perfil():
 @login_required
 def index():              return redirect('/ventas')
 
-@app.route('/ventas')
+@app.route('/inicio')
 @login_required
+def page_inicio():
+    """Página de inicio: redirige al primer módulo habilitado del usuario."""
+    modulos_orden = ['pos', 'ventas', 'despacho', 'reportes', 'produccion', 'clientes', 'agenda']
+    for m in modulos_orden:
+        if has_module(m):
+            rutas = {
+                'pos': '/pos/caja', 'ventas': '/ventas', 'despacho': '/despacho',
+                'reportes': '/reportes', 'produccion': '/produccion',
+                'clientes': '/clientes', 'agenda': '/agenda',
+            }
+            return redirect(rutas[m])
+    return redirect('/movil')
+
+@app.route('/movil')
+@login_required
+def page_movil():
+    return render_template('movil.html', active='movil')
+
+@app.route('/ventas')
+@module_required('ventas')
 def page_ventas():        return render_template('ventas.html',        active='ventas')
 
 @app.route('/clientes')
-@login_required
+@module_required('clientes')
 def page_clientes():      return render_template('clientes.html',      active='clientes')
 
 @app.route('/productos')
-@login_required
+@module_required('productos')
 def page_productos():     return render_template('productos.html',      active='productos')
 
 @app.route('/suscripciones')
-@login_required
+@module_required('suscripciones')
 def page_suscripciones(): return render_template('suscripciones.html', active='suscripciones')
 
 @app.route('/reportes')
-@login_required
+@module_required('reportes')
 def page_reportes():      return render_template('reportes.html',       active='reportes')
 
 @app.route('/reporte-ventas')
-@login_required
+@module_required('reporte_ventas')
 def page_reporte_ventas(): return render_template('reporte_ventas.html', active='reporte_ventas')
 
 @app.route('/finanzas')
-@login_required
+@module_required('finanzas')
 def page_finanzas():      return render_template('finanzas.html',        active='finanzas')
 
 @app.route('/despacho')
-@login_required
+@module_required('despacho')
 def page_despacho():      return render_template('despacho.html',        active='despacho')
 
 # ── API: Productos ────────────────────────────────────────────────────────────
@@ -1525,22 +1612,22 @@ def api_agentes_despachos():
 # ── CRM: Páginas ─────────────────────────────────────────────────────────────
 
 @app.route('/crm')
-@login_required
+@module_required('crm')
 def page_crm():
     return render_template('crm.html', active='crm')
 
 @app.route('/crm/lead/<int:lid>')
-@login_required
+@module_required('crm')
 def page_crm_lead(lid):
     return render_template('crm_lead.html', active='crm', lead_id=lid)
 
 @app.route('/crm/buscar')
-@login_required
+@module_required('crm')
 def page_crm_buscar():
     return render_template('crm_buscar.html', active='crm')
 
 @app.route('/crm/email-masivo')
-@login_required
+@module_required('crm')
 def page_crm_email_masivo():
     return render_template('crm_email_masivo.html', active='crm')
 
@@ -2193,7 +2280,7 @@ def api_crm_email_masivo():
 # ── WhatsApp masivo ───────────────────────────────────────────────────────────
 
 @app.route('/crm/whatsapp-masivo')
-@login_required
+@module_required('crm')
 def page_crm_whatsapp_masivo():
     return render_template('crm_whatsapp_masivo.html', active='crm')
 
@@ -2308,7 +2395,7 @@ def api_crm_whatsapp_masivo():
 # ── Configuración CRM ────────────────────────────────────────────────────────
 
 @app.route('/crm/configuracion')
-@login_required
+@module_required('crm')
 def page_crm_configuracion():
     return render_template('crm_configuracion.html', active='crm')
 
@@ -2447,7 +2534,7 @@ def api_crm_wa_check_numbers():
 # ════════════════════════════════════════════════════════════════════════════
 
 @app.route('/inventario')
-@login_required
+@module_required('inventario')
 def page_inventario():
     return render_template('inventario.html', active='inventario')
 
@@ -2570,7 +2657,7 @@ def api_recetas_productos():
 # ════════════════════════════════════════════════════════════════════════════
 
 @app.route('/produccion')
-@login_required
+@module_required('produccion')
 def page_produccion():
     return render_template('produccion.html', active='produccion')
 
@@ -2834,7 +2921,7 @@ def api_plan_generar_desde_ventas(fecha):
 # ════════════════════════════════════════════════════════════════════════════
 
 @app.route('/gastos')
-@login_required
+@module_required('gastos')
 def page_gastos():
     return render_template('gastos.html', active='gastos')
 
@@ -2930,11 +3017,88 @@ def api_gastos_aplicar_fijos():
 
 
 # ════════════════════════════════════════════════════════════════════════════
+# DASHBOARD MÓVIL
+# ════════════════════════════════════════════════════════════════════════════
+
+@app.route('/api/movil/stats')
+@login_required
+def api_movil_stats():
+    from datetime import date as _date, timedelta
+    hoy        = _date.today()
+    semana_ini = (hoy - timedelta(days=hoy.weekday())).isoformat()
+    mes_ini    = hoy.replace(day=1).isoformat()
+    mes_ant    = (hoy.replace(day=1) - timedelta(days=1)).replace(day=1).isoformat()
+    mes_ant_fin= (hoy.replace(day=1) - timedelta(days=1)).isoformat()
+
+    with db() as c:
+        def vsum(desde, hasta):
+            r = c.execute("SELECT COALESCE(SUM(total),0), COUNT(*) FROM ventas WHERE fecha BETWEEN ? AND ?",
+                          (desde, hasta)).fetchone()
+            return float(r[0]), int(r[1])
+
+        v_hoy,  t_hoy    = vsum(hoy.isoformat(), hoy.isoformat())
+        v_sem,  t_sem    = vsum(semana_ini, hoy.isoformat())
+        v_mes,  _        = vsum(mes_ini, hoy.isoformat())
+        v_ant,  _        = vsum(mes_ant, mes_ant_fin)
+
+        costo_mes = c.execute(
+            "SELECT COALESCE(SUM(vi.cantidad * vi.precio_unitario * (p.costo / NULLIF(p.precio,0))),0) "
+            "FROM venta_items vi JOIN ventas v ON v.id=vi.venta_id "
+            "JOIN productos p ON p.id=vi.producto_id WHERE v.fecha >= ?", (mes_ini,)
+        ).fetchone()[0]
+        gasto_mes = c.execute(
+            "SELECT COALESCE(SUM(monto),0) FROM gastos WHERE fecha >= ?", (mes_ini,)
+        ).fetchone()[0]
+        margen = ((v_mes - costo_mes) / v_mes * 100) if v_mes > 0 else 0
+
+        despachos_pendientes = c.execute(
+            "SELECT COUNT(*) FROM ventas WHERE estado_despacho='PENDIENTE' AND con_despacho=1"
+        ).fetchone()[0]
+
+        top = c.execute(
+            """SELECT p.nombre, SUM(vi.cantidad) as qty, SUM(vi.cantidad * vi.precio_unitario) as total
+               FROM venta_items vi JOIN ventas v ON v.id=vi.venta_id JOIN productos p ON p.id=vi.producto_id
+               WHERE v.fecha >= ? GROUP BY p.nombre ORDER BY total DESC LIMIT 5""",
+            (semana_ini,)
+        ).fetchall()
+
+    return jsonify({
+        'ventas_hoy': v_hoy, 'transacciones_hoy': t_hoy,
+        'ventas_semana': v_sem, 'trans_semana': t_sem,
+        'ventas_mes': v_mes, 'ventas_mes_anterior': v_ant,
+        'gastos_mes': gasto_mes, 'margen_mes': round(margen, 1),
+        'despachos_pendientes': despachos_pendientes,
+        'top_productos': [{'nombre': r['nombre'], 'qty': r['qty'], 'total': r['total']} for r in top],
+    })
+
+@app.route('/api/movil/stock-critico')
+@login_required
+def api_movil_stock_critico():
+    with db() as c:
+        rows = c.execute(
+            "SELECT nombre, stock, unidad FROM productos WHERE activo=1 AND stock <= 5 ORDER BY stock ASC LIMIT 8"
+        ).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+@app.route('/api/movil/ultimas-ventas')
+@login_required
+def api_movil_ultimas_ventas():
+    with db() as c:
+        rows = c.execute(
+            """SELECT v.id, v.fecha, v.total, v.canal,
+                      COALESCE(c.nombre,'—') as cliente
+               FROM ventas v LEFT JOIN clientes c ON c.id=v.cliente_id
+               ORDER BY v.id DESC LIMIT 10"""
+        ).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+# ════════════════════════════════════════════════════════════════════════════
 # AGENDA
 # ════════════════════════════════════════════════════════════════════════════
 
 @app.route('/agenda')
-@login_required
+@module_required('agenda')
 def page_agenda():
     return render_template('agenda.html', active='agenda')
 
@@ -3059,7 +3223,7 @@ def api_agenda_subtarea_completar(sid):
 # ════════════════════════════════════════════════════════════════════════════
 
 @app.route('/configuracion-negocio')
-@login_required
+@module_required('config_negocio')
 def page_config_negocio():
     return render_template('config_negocio.html', active='config_negocio')
 
@@ -3548,7 +3712,7 @@ def api_agentes_estado():
 
 
 @app.route('/agentes')
-@login_required
+@module_required('agentes')
 def page_agentes():
     railway_url = os.environ.get('RAILWAY_BAKERS_URL', 'https://web-production-40d5b.up.railway.app')
     return render_template('agentes.html', active='agentes', railway_url=railway_url)

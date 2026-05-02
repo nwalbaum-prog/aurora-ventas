@@ -15,28 +15,61 @@
     <img class="logo-img" src="/static/img/logo.png" alt="Aurora Bakers">
   </div>
   <nav class="sidebar-nav">
+    {% if user_es_admin or 'pos' in user_permisos %}
     <a href="/pos/caja"      class="nav-item {% if active=='pos'           %}active{% endif %}"><i class="bi bi-cash-register"></i> POS / Caja</a>
+    {% endif %}
+    {% if user_es_admin or 'ventas' in user_permisos %}
     <a href="/ventas"        class="nav-item {% if active=='ventas'        %}active{% endif %}"><i class="bi bi-receipt"></i> Ventas</a>
+    {% endif %}
+    {% if user_es_admin or 'despacho' in user_permisos %}
     <a href="/despacho"      class="nav-item {% if active=='despacho'      %}active{% endif %}"><i class="bi bi-truck"></i> Despacho</a>
+    {% endif %}
+    {% if user_es_admin or 'clientes' in user_permisos %}
     <a href="/clientes"      class="nav-item {% if active=='clientes'      %}active{% endif %}"><i class="bi bi-people"></i> Clientes</a>
+    {% endif %}
+    {% if user_es_admin or 'productos' in user_permisos %}
     <a href="/productos"     class="nav-item {% if active=='productos'     %}active{% endif %}"><i class="bi bi-basket"></i> Productos</a>
+    {% endif %}
+    {% if user_es_admin or 'suscripciones' in user_permisos %}
     <a href="/suscripciones" class="nav-item {% if active=='suscripciones' %}active{% endif %}"><i class="bi bi-calendar-check"></i> Suscripciones</a>
+    {% endif %}
+    {% if user_es_admin or 'crm' in user_permisos %}
     <a href="/crm"           class="nav-item {% if active=='crm'           %}active{% endif %}"><i class="bi bi-diagram-3"></i> CRM</a>
+    {% endif %}
     <div class="nav-divider">ANÁLISIS</div>
+    {% if user_es_admin or 'reportes' in user_permisos %}
     <a href="/reportes"        class="nav-item {% if active=='reportes'        %}active{% endif %}"><i class="bi bi-bar-chart-line"></i> Reportes</a>
+    {% endif %}
+    {% if user_es_admin or 'reporte_ventas' in user_permisos %}
     <a href="/reporte-ventas"  class="nav-item {% if active=='reporte_ventas'  %}active{% endif %}"><i class="bi bi-table"></i> Reporte Ventas</a>
+    {% endif %}
+    {% if user_es_admin or 'finanzas' in user_permisos %}
     <a href="/finanzas"        class="nav-item {% if active=='finanzas'        %}active{% endif %}"><i class="bi bi-currency-dollar"></i> Finanzas</a>
+    {% endif %}
     <div class="nav-divider">ERP</div>
+    {% if user_es_admin or 'produccion' in user_permisos %}
     <a href="/produccion"    class="nav-item {% if active=='produccion'    %}active{% endif %}"><i class="bi bi-fire"></i> Producción</a>
+    {% endif %}
+    {% if user_es_admin or 'inventario' in user_permisos %}
     <a href="/inventario"    class="nav-item {% if active=='inventario'    %}active{% endif %}"><i class="bi bi-boxes"></i> Inventario</a>
+    {% endif %}
+    {% if user_es_admin or 'gastos' in user_permisos %}
     <a href="/gastos"        class="nav-item {% if active=='gastos'        %}active{% endif %}"><i class="bi bi-cash-coin"></i> Gastos</a>
+    {% endif %}
+    {% if user_es_admin or 'agenda' in user_permisos %}
     <a href="/agenda"        class="nav-item {% if active=='agenda'        %}active{% endif %}"><i class="bi bi-calendar3"></i> Agenda</a>
+    {% endif %}
+    {% if user_es_admin or 'config_negocio' in user_permisos %}
     <a href="/configuracion-negocio" class="nav-item {% if active=='config_negocio' %}active{% endif %}"><i class="bi bi-gear"></i> Configuración</a>
+    {% endif %}
     <div class="nav-divider">SISTEMA</div>
+    {% if user_es_admin or 'agentes' in user_permisos %}
     <a href="/agentes"        class="nav-item {% if active=='agentes'        %}active{% endif %}"><i class="bi bi-robot"></i> Agentes</a>
-    {% if session.get('user_rol') == 'admin' %}
+    {% endif %}
+    {% if user_es_admin %}
     <a href="/admin/usuarios" class="nav-item {% if active=='admin' %}active{% endif %}"><i class="bi bi-people-fill"></i> Usuarios</a>
     {% endif %}
+    <a href="/movil" class="nav-item {% if active=='movil' %}active{% endif %}"><i class="bi bi-phone"></i> Dashboard</a>
   </nav>
   <div class="sidebar-footer" id="sb-date">
     {% if session.get('user_nombre') %}

@@ -1,0 +1,143 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — Aurora Bakers{% endblock %}
+{% block page_title %}Dashboard{% endblock %}
+
+{% block content %}
+<style>
+.kpi-grid { display:grid; grid-template-columns:1fr 1fr; gap:.75rem; margin-bottom:1.25rem; }
+@media(min-width:600px){ .kpi-grid { grid-template-columns:repeat(4,1fr); } }
+.kpi { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:1rem 1.1rem; }
+.kpi-label { font-size:.72rem; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; margin-bottom:.3rem; }
+.kpi-value { font-size:1.55rem; font-weight:800; color:var(--text); font-family:monospace; line-height:1; }
+.kpi-sub   { font-size:.75rem; color:var(--muted); margin-top:.2rem; }
+.kpi-accent { border-left:3px solid var(--aurora); }
+.kpi-ok     { border-left:3px solid #22c55e; }
+.kpi-warn   { border-left:3px solid #f59e0b; }
+.kpi-danger { border-left:3px solid #ef4444; }
+
+.section-title { font-size:.78rem; font-weight:700; color:var(--muted); text-transform:uppercase;
+                 letter-spacing:.05em; margin:1.25rem 0 .6rem; }
+
+.item-row { display:flex; align-items:center; gap:.75rem; padding:.6rem 0;
+            border-bottom:1px solid var(--border); }
+.item-row:last-child { border-bottom:none; }
+.item-name  { flex:1; font-size:.85rem; font-weight:600; color:var(--text); }
+.item-meta  { font-size:.75rem; color:var(--muted); }
+.item-value { font-size:.9rem; font-weight:700; font-family:monospace; }
+
+.alert-row { background:#fef3c7; border-radius:8px; padding:.5rem .85rem; margin-bottom:.5rem;
+             display:flex; align-items:center; gap:.6rem; font-size:.83rem; }
+.alert-row.critical { background:#fee2e2; }
+
+#refresh-btn { position:fixed; bottom:1.5rem; right:1.5rem; background:var(--aurora);
+               color:#fff; border:none; border-radius:50%; width:44px; height:44px;
+               font-size:1.1rem; cursor:pointer; box-shadow:0 2px 12px rgba(0,0,0,.25);
+               display:flex; align-items:center; justify-content:center; }
+</style>
+
+<div id="dash-content">
+  <div style="text-align:center;padding:3rem;color:var(--muted)"><i class="bi bi-arrow-clockwise"></i> Cargando…</div>
+</div>
+
+<button id="refresh-btn" onclick="loadDash()" title="Actualizar"><i class="bi bi-arrow-clockwise"></i></button>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+let _refreshTimer = null;
+
+async function loadDash() {
+  const btn = document.getElementById('refresh-btn');
+  btn.querySelector('i').className = 'bi bi-hourglass-split';
+
+  const [stats, stock, ventas] = await Promise.all([
+    fetch('/api/movil/stats').then(r => r.json()),
+    fetch('/api/movil/stock-critico').then(r => r.json()),
+    fetch('/api/movil/ultimas-ventas').then(r => r.json()),
+  ]);
+
+  btn.querySelector('i').className = 'bi bi-arrow-clockwise';
+
+  const c = document.getElementById('dash-content');
+  c.innerHTML = `
+    <!-- KPIs principales -->
+    <div class="kpi-grid">
+      <div class="kpi kpi-accent">
+        <div class="kpi-label">Ventas hoy</div>
+        <div class="kpi-value">${clp(stats.ventas_hoy)}</div>
+        <div class="kpi-sub">${stats.transacciones_hoy} transacciones</div>
+      </div>
+      <div class="kpi kpi-accent">
+        <div class="kpi-label">Esta semana</div>
+        <div class="kpi-value">${clp(stats.ventas_semana)}</div>
+        <div class="kpi-sub">${stats.trans_semana} transacciones</div>
+      </div>
+      <div class="kpi kpi-ok">
+        <div class="kpi-label">Este mes</div>
+        <div class="kpi-value">${clp(stats.ventas_mes)}</div>
+        <div class="kpi-sub">vs ${clp(stats.ventas_mes_anterior)} mes ant.</div>
+      </div>
+      <div class="kpi ${stats.margen_mes >= 50 ? 'kpi-ok' : stats.margen_mes >= 30 ? 'kpi-warn' : 'kpi-danger'}">
+        <div class="kpi-label">Margen mes</div>
+        <div class="kpi-value">${stats.margen_mes.toFixed(1)}%</div>
+        <div class="kpi-sub">Gastos: ${clp(stats.gastos_mes)}</div>
+      </div>
+    </div>
+
+    <!-- Alertas de stock -->
+    ${stock.length > 0 ? `
+      <div class="section-title"><i class="bi bi-exclamation-triangle"></i> Stock bajo</div>
+      ${stock.map(s => `
+        <div class="alert-row ${s.stock <= 0 ? 'critical' : ''}">
+          <i class="bi bi-box-seam"></i>
+          <span style="flex:1"><strong>${s.nombre}</strong></span>
+          <span style="font-weight:700;font-family:monospace">${s.stock} ${s.unidad}</span>
+        </div>`).join('')}` : ''}
+
+    <!-- Despachos pendientes -->
+    ${stats.despachos_pendientes > 0 ? `
+      <div class="section-title"><i class="bi bi-truck"></i> Despacho</div>
+      <div class="alert-row">
+        <i class="bi bi-clock"></i>
+        <span style="flex:1">${stats.despachos_pendientes} entrega(s) pendiente(s)</span>
+        <a href="/despacho" style="font-size:.78rem;color:var(--aurora)">Ver →</a>
+      </div>` : ''}
+
+    <!-- Top productos -->
+    ${stats.top_productos?.length > 0 ? `
+      <div class="section-title"><i class="bi bi-star"></i> Top productos esta semana</div>
+      <div class="card" style="padding:.5rem .9rem">
+        ${stats.top_productos.map((p, i) => `
+          <div class="item-row">
+            <span style="font-size:.75rem;color:var(--muted);width:18px">${i+1}</span>
+            <span class="item-name">${p.nombre}</span>
+            <span class="item-value">${clp(p.total)}</span>
+            <span class="item-meta">${p.qty} u.</span>
+          </div>`).join('')}
+      </div>` : ''}
+
+    <!-- Últimas ventas -->
+    <div class="section-title"><i class="bi bi-receipt"></i> Últimas ventas</div>
+    <div class="card" style="padding:.5rem .9rem">
+      ${ventas.length ? ventas.map(v => `
+        <div class="item-row">
+          <div style="flex:1">
+            <div class="item-name">${v.cliente || 'Cliente sin nombre'}</div>
+            <div class="item-meta">${v.fecha} · ${v.canal}</div>
+          </div>
+          <span class="item-value">${clp(v.total)}</span>
+        </div>`).join('') : '<div style="color:var(--muted);font-size:.85rem;padding:.5rem 0">Sin ventas recientes</div>'}
+    </div>
+
+    <div style="font-size:.7rem;color:var(--muted);text-align:right;margin-top:.75rem">
+      Actualizado ${new Date().toLocaleTimeString('es-CL')}
+    </div>
+  `;
+}
+
+loadDash();
+// Auto-refresh cada 2 minutos
+_refreshTimer = setInterval(loadDash, 120000);
+</script>
+{% endblock %}

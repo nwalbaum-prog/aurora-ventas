@@ -93,11 +93,16 @@
         </div>
         <div class="form-group" style="margin:0">
           <label class="form-label">Rol</label>
-          <select id="u-rol" class="form-control">
-            <option value="usuario">Usuario — acceso a ventas y CRM</option>
-            <option value="admin">Admin — gestión completa + usuarios</option>
+          <select id="u-rol" class="form-control" onchange="onRolChange()">
+            <option value="usuario">Usuario (permisos personalizados)</option>
+            <option value="admin">Admin — acceso total</option>
           </select>
         </div>
+      </div>
+      <!-- Permisos por módulo -->
+      <div id="permisos-section" class="form-group" style="margin:0">
+        <label class="form-label">Módulos habilitados</label>
+        <div id="permisos-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:.35rem .75rem;max-height:220px;overflow-y:auto;padding:.5rem;background:var(--bg);border:1px solid var(--border);border-radius:6px"></div>
       </div>
     </div>
     <div class="modal-footer">
@@ -111,10 +116,31 @@
 {% block scripts %}
 <script>
 let usuarios = [];
+let modulos  = [];
 
 async function loadUsuarios() {
-  usuarios = await api('GET', '/api/admin/usuarios');
+  [usuarios, modulos] = await Promise.all([
+    api('GET', '/api/admin/usuarios'),
+    api('GET', '/api/admin/modulos'),
+  ]);
   renderTabla();
+  renderPermisosGrid([]);
+}
+
+function renderPermisosGrid(seleccionados) {
+  const grid = document.getElementById('permisos-grid');
+  grid.innerHTML = modulos.map(m => `
+    <label style="display:flex;align-items:center;gap:.4rem;cursor:pointer;font-size:.8rem">
+      <input type="checkbox" class="perm-check" value="${m.key}"
+             ${seleccionados.includes(m.key) ? 'checked' : ''}
+             style="accent-color:var(--aurora)">
+      <i class="bi ${m.icono}" style="font-size:.8rem;color:var(--muted)"></i> ${m.nombre}
+    </label>`).join('');
+}
+
+function onRolChange() {
+  const rol = document.getElementById('u-rol').value;
+  document.getElementById('permisos-section').style.display = rol === 'admin' ? 'none' : '';
 }
 
 function renderTabla() {
@@ -148,6 +174,8 @@ function abrirNuevo() {
   document.getElementById('u-rol').value    = 'usuario';
   document.getElementById('pw-label').textContent = 'Contraseña *';
   document.getElementById('pw-hint').textContent  = '';
+  renderPermisosGrid(['pos','ventas','clientes','despacho','agenda']);
+  document.getElementById('permisos-section').style.display = '';
   _origOpenModal('modal-nuevo');
 }
 
@@ -162,6 +190,10 @@ function editarUsuario(id) {
   document.getElementById('u-rol').value    = u.rol;
   document.getElementById('pw-label').textContent = 'Nueva contraseña (dejar vacío para no cambiar)';
   document.getElementById('pw-hint').textContent  = '';
+  let permisos = [];
+  try { permisos = JSON.parse(u.permisos || '[]'); } catch(e) {}
+  renderPermisosGrid(permisos);
+  document.getElementById('permisos-section').style.display = u.rol === 'admin' ? 'none' : '';
   _origOpenModal('modal-nuevo');
 }
 
@@ -173,13 +205,15 @@ async function guardarUsuario() {
   const rol    = document.getElementById('u-rol').value;
   if (!nombre || !email) { toast('Nombre y correo son obligatorios', 'error'); return; }
   if (!id && !pass) { toast('Ingresa una contraseña', 'error'); return; }
+  const permisos = rol === 'admin' ? [] :
+    [...document.querySelectorAll('.perm-check:checked')].map(el => el.value);
   try {
     if (id) {
-      const body = { nombre, email, rol };
+      const body = { nombre, email, rol, permisos };
       if (pass) body.password = pass;
       await api('PUT', `/api/admin/usuarios/${id}`, body);
     } else {
-      await api('POST', '/api/admin/usuarios', { nombre, email, password: pass, rol });
+      await api('POST', '/api/admin/usuarios', { nombre, email, password: pass, rol, permisos });
     }
     closeModal('modal-nuevo');
     await loadUsuarios();

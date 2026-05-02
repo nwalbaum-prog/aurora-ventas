@@ -12,6 +12,17 @@ def login_required(f):
         return f(*args, **kwargs)
     return decorated
 
+def pos_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not session.get('user_id'):
+            return redirect(url_for('page_login', next=request.path))
+        rol = session.get('user_rol')
+        if rol != 'admin' and 'pos' not in session.get('user_permisos', []):
+            return redirect(url_for('page_inicio'))
+        return f(*args, **kwargs)
+    return decorated
+
 @contextmanager
 def db():
     import app as _app
@@ -38,7 +49,7 @@ _pos_carrito_activo = {
 
 
 @pos_bp.route('/pos')
-@login_required
+@pos_required
 def page_pos():
     with db() as c:
         uid = session.get('user_id')
@@ -52,7 +63,7 @@ def page_pos():
 
 
 @pos_bp.route('/pos/caja')
-@login_required
+@pos_required
 def page_caja():
     msg = request.args.get('msg', '')
     uid = session.get('user_id')
