@@ -1,0 +1,43 @@
+{
+  "name": "Aurora Bakers",
+  "short_name": "Aurora",
+  "description": "Sistema de ventas Aurora Bakers",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0f0f0f",
+  "theme_color": "#c8914a",
+  "lang": "es-CL",
+  "icons": [
+    {
+      "src": "/static/img/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/static/img/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "POS / Caja",
+      "url": "/pos/caja",
+      "icons": [{ "src": "/static/img/icons/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Ventas",
+      "url": "/ventas",
+      "icons": [{ "src": "/static/img/icons/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Dashboard",
+      "url": "/movil",
+      "icons": [{ "src": "/static/img/icons/icon-192.png", "sizes": "192x192" }]
+    }
+  ]
+}
