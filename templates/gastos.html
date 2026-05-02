@@ -3,31 +3,45 @@
 {% block page_title %}Gastos{% endblock %}
 {% block content %}
 
-<div style="display:flex;gap:1rem;margin-bottom:1.5rem;flex-wrap:wrap;align-items:center">
+<!-- Toolbar -->
+<div style="display:flex;gap:1rem;margin-bottom:1.25rem;flex-wrap:wrap;align-items:center">
   <div style="display:flex;gap:.5rem;align-items:center">
     <input id="f-desde" type="date" class="input" style="width:145px" />
     <span style="color:var(--muted)">—</span>
     <input id="f-hasta" type="date" class="input" style="width:145px" />
     <button class="btn btn-ghost" onclick="load()"><i class="bi bi-search"></i> Filtrar</button>
   </div>
-  <button class="btn btn-primary" onclick="abrirNuevo()"><i class="bi bi-plus-lg"></i> Registrar Gasto</button>
-  <div id="total-badge" style="margin-left:auto;font-size:.9rem;font-weight:600;color:var(--text)"></div>
+  <div style="display:flex;gap:.5rem;margin-left:auto">
+    <button class="btn btn-secondary btn-sm" onclick="verFijos()">
+      <i class="bi bi-arrow-repeat"></i> Gastos fijos
+    </button>
+    <button class="btn btn-primary" onclick="abrirNuevo()">
+      <i class="bi bi-plus-lg"></i> Registrar Gasto
+    </button>
+  </div>
 </div>
 
-<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:.75rem;margin-bottom:1.5rem" id="kpi-cats"></div>
+<!-- KPIs por categoría -->
+<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:.75rem;margin-bottom:1.25rem" id="kpi-cats"></div>
 
+<!-- Total -->
+<div id="total-badge" style="font-size:.92rem;font-weight:600;color:var(--text);margin-bottom:.75rem"></div>
+
+<!-- Tabla gastos -->
 <div class="card">
-  <table class="table">
-    <thead><tr>
-      <th>Fecha</th>
-      <th>Descripción</th>
-      <th>Categoría</th>
-      <th>Monto</th>
-      <th>Proveedor</th>
-      <th>Acciones</th>
-    </tr></thead>
-    <tbody id="tbody"></tbody>
-  </table>
+  <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th>Fecha</th>
+        <th>Descripción</th>
+        <th>Categoría</th>
+        <th class="right">Monto</th>
+        <th>Proveedor</th>
+        <th></th>
+      </tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
 </div>
 
 <!-- Modal gasto -->
@@ -39,22 +53,50 @@
     </div>
     <div style="display:grid;gap:.75rem">
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem">
-        <div class="form-group"><label class="label">Fecha</label><input id="gf-fecha" type="date" class="input" /></div>
         <div class="form-group">
-          <label class="label">Categoría</label>
-          <select id="gf-cat" class="input">
-            <option>Ingredientes</option><option>Packaging</option><option>Luz</option><option>Gas</option>
-            <option>Arriendo</option><option>Internet</option><option>Contabilidad</option>
-            <option>Mantención</option><option>Transporte</option><option>Marketing</option>
-            <option>Seguro</option><option>General</option>
+          <label>Fecha</label>
+          <input id="gf-fecha" type="date" class="form-control" />
+        </div>
+        <div class="form-group">
+          <label>Categoría</label>
+          <select id="gf-cat" class="form-control">
+            <option>Ingredientes</option>
+            <option>Packaging</option>
+            <option>Luz</option>
+            <option>Gas</option>
+            <option>Arriendo</option>
+            <option>Internet</option>
+            <option>Contabilidad</option>
+            <option>Mantención</option>
+            <option>Transporte</option>
+            <option>Marketing</option>
+            <option>Seguro</option>
+            <option>General</option>
           </select>
         </div>
       </div>
-      <div class="form-group"><label class="label">Descripción</label><input id="gf-desc" class="input" placeholder="Ej: Compra harina blanca" /></div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem">
-        <div class="form-group"><label class="label">Monto (CLP)</label><input id="gf-monto" type="number" class="input" placeholder="0" /></div>
-        <div class="form-group"><label class="label">Proveedor</label><input id="gf-prov" class="input" placeholder="Opcional" /></div>
+      <div class="form-group">
+        <label>Descripción</label>
+        <input id="gf-desc" class="form-control" placeholder="Ej: Arriendo local" />
       </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem">
+        <div class="form-group">
+          <label>Monto (CLP)</label>
+          <input id="gf-monto" type="number" class="form-control" placeholder="0" />
+        </div>
+        <div class="form-group">
+          <label>Proveedor</label>
+          <input id="gf-prov" class="form-control" placeholder="Opcional" />
+        </div>
+      </div>
+      <!-- Recurrente -->
+      <label style="display:flex;align-items:center;gap:.6rem;cursor:pointer;padding:.6rem .8rem;background:var(--bg);border:1px solid var(--border);border-radius:8px;font-size:.85rem">
+        <input type="checkbox" id="gf-recurrente" style="accent-color:var(--aurora);width:16px;height:16px">
+        <div>
+          <div style="font-weight:600">Gasto fijo mensual</div>
+          <div style="font-size:.75rem;color:var(--muted)">Se puede aplicar cada mes con un clic desde "Gastos fijos"</div>
+        </div>
+      </label>
     </div>
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeModal('modal-gasto')">Cancelar</button>
@@ -63,6 +105,30 @@
   </div>
 </div>
 
+<!-- Modal gastos fijos -->
+<div id="modal-fijos" class="modal-overlay">
+  <div class="modal" style="max-width:520px">
+    <div class="modal-header">
+      <span class="modal-title"><i class="bi bi-arrow-repeat"></i> Gastos Fijos Mensuales</span>
+      <button class="modal-close" onclick="closeModal('modal-fijos')"><i class="bi bi-x-lg"></i></button>
+    </div>
+    <p style="font-size:.84rem;color:var(--muted);margin-bottom:1rem">
+      Estos gastos se repiten cada mes. Haz clic en "Aplicar al mes actual" para registrarlos automáticamente.
+    </p>
+    <div id="fijos-list" style="margin-bottom:1rem"></div>
+    <div id="fijos-total" style="font-weight:700;font-size:.95rem;margin-bottom:1rem;text-align:right"></div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-fijos')">Cerrar</button>
+      <button class="btn btn-primary" onclick="aplicarFijos()">
+        <i class="bi bi-calendar-check"></i> Aplicar al mes actual
+      </button>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
 <script>
 let editId = null;
 
@@ -80,29 +146,34 @@ async function load() {
   const gastos = await api('GET', `/api/gastos?desde=${desde}&hasta=${hasta}`);
 
   const total = gastos.reduce((s,g) => s + g.monto, 0);
-  document.getElementById('total-badge').textContent = `Total: $${total.toLocaleString('es-CL')}`;
+  document.getElementById('total-badge').textContent = `Total período: $${total.toLocaleString('es-CL')}`;
 
   const byCat = {};
   gastos.forEach(g => { byCat[g.categoria] = (byCat[g.categoria] || 0) + g.monto; });
   document.getElementById('kpi-cats').innerHTML = Object.entries(byCat)
     .sort((a,b) => b[1]-a[1])
-    .map(([cat,tot]) => `
-      <div style="background:var(--bg-input);border:1px solid var(--border);border-radius:var(--r);padding:.75rem 1rem">
-        <div style="font-size:.72rem;color:var(--muted);margin-bottom:.25rem">${cat}</div>
-        <div style="font-weight:700;font-size:1.1rem">$${tot.toLocaleString('es-CL')}</div>
+    .map(([cat, tot]) => `
+      <div style="background:var(--bg-input,#faf8f6);border:1px solid var(--border);border-radius:8px;padding:.65rem .9rem">
+        <div style="font-size:.72rem;color:var(--muted);margin-bottom:.2rem">${cat}</div>
+        <div style="font-weight:700;font-size:1rem">$${tot.toLocaleString('es-CL')}</div>
       </div>`).join('') || '';
 
-  document.getElementById('tbody').innerHTML = gastos.map(g => `<tr>
-    <td>${g.fecha}</td>
-    <td>${g.descripcion}</td>
-    <td><span class="badge badge-blue">${g.categoria}</span></td>
-    <td><strong>$${g.monto.toLocaleString('es-CL')}</strong></td>
-    <td style="color:var(--muted)">${g.proveedor || '—'}</td>
+  document.getElementById('tbody').innerHTML = gastos.length ? gastos.map(g => `<tr>
+    <td class="text-muted">${g.fecha}</td>
     <td>
-      <button class="btn btn-secondary btn-sm btn-icon" onclick='abrirEditar(${JSON.stringify(g).replace(/"/g,"&quot;")})' title="Editar"><i class="bi bi-pencil"></i></button>
-      <button class="btn btn-danger btn-sm btn-icon" onclick="eliminar(${g.id})" title="Eliminar"><i class="bi bi-trash3"></i></button>
+      ${g.descripcion}
+      ${g.recurrente ? '<span style="font-size:.72rem;background:rgba(180,130,70,.15);color:#d4a85a;border-radius:4px;padding:.1rem .4rem;margin-left:.35rem">fijo</span>' : ''}
     </td>
-  </tr>`).join('') || '<tr><td colspan="6"><div class="empty"><i class="bi bi-cash-coin"></i><p>Sin gastos en el período</p></div></td></tr>';
+    <td><span class="badge">${g.categoria}</span></td>
+    <td class="right mono fw-600">$${g.monto.toLocaleString('es-CL')}</td>
+    <td class="text-muted text-sm">${g.proveedor || '—'}</td>
+    <td>
+      <div class="flex gap-8">
+        <button class="btn btn-secondary btn-icon btn-sm" onclick='abrirEditar(${JSON.stringify(g).replace(/"/g,"&quot;")})' title="Editar"><i class="bi bi-pencil"></i></button>
+        <button class="btn btn-danger btn-icon btn-sm" onclick="eliminar(${g.id})" title="Eliminar"><i class="bi bi-trash3"></i></button>
+      </div>
+    </td>
+  </tr>`).join('') : '<tr><td colspan="6"><div class="empty"><i class="bi bi-cash-coin"></i><p>Sin gastos en el período</p></div></td></tr>';
 }
 
 function abrirNuevo() {
@@ -112,6 +183,7 @@ function abrirNuevo() {
   document.getElementById('gf-monto').value = '';
   document.getElementById('gf-prov').value = '';
   document.getElementById('gf-cat').value = 'Ingredientes';
+  document.getElementById('gf-recurrente').checked = false;
   openModal('modal-gasto');
 }
 
@@ -123,19 +195,21 @@ function abrirEditar(g) {
   document.getElementById('gf-desc').value = g.descripcion;
   document.getElementById('gf-monto').value = g.monto;
   document.getElementById('gf-prov').value = g.proveedor || '';
+  document.getElementById('gf-recurrente').checked = !!g.recurrente;
   openModal('modal-gasto');
 }
 
 async function guardar() {
-  const desc = document.getElementById('gf-desc').value.trim();
+  const desc  = document.getElementById('gf-desc').value.trim();
   const monto = parseFloat(document.getElementById('gf-monto').value);
   if (!desc || !monto) { toast('Descripción y monto son obligatorios', 'error'); return; }
   const body = {
-    fecha:      document.getElementById('gf-fecha').value,
+    fecha:       document.getElementById('gf-fecha').value,
     descripcion: desc,
-    categoria:  document.getElementById('gf-cat').value,
+    categoria:   document.getElementById('gf-cat').value,
     monto,
-    proveedor:  document.getElementById('gf-prov').value,
+    proveedor:   document.getElementById('gf-prov').value,
+    recurrente:  document.getElementById('gf-recurrente').checked,
   };
   try {
     const url = editId ? `/api/gastos/${editId}` : '/api/gastos';
@@ -152,6 +226,45 @@ async function eliminar(id) {
     await api('DELETE', `/api/gastos/${id}`);
     load();
     toast('Eliminado');
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+// ── Gastos fijos ──────────────────────────────────────────────────────────────
+async function verFijos() {
+  const fijos = await api('GET', '/api/gastos?fijos=1');
+  const total = fijos.reduce((s, g) => s + g.monto, 0);
+  document.getElementById('fijos-list').innerHTML = fijos.length
+    ? `<table style="width:100%;border-collapse:collapse;font-size:.85rem">
+        <thead><tr>
+          <th style="text-align:left;padding:.3rem .4rem;color:var(--muted);font-size:.72rem;text-transform:uppercase">Concepto</th>
+          <th style="text-align:left;padding:.3rem .4rem;color:var(--muted);font-size:.72rem;text-transform:uppercase">Categoría</th>
+          <th style="text-align:right;padding:.3rem .4rem;color:var(--muted);font-size:.72rem;text-transform:uppercase">Monto</th>
+          <th style="width:32px"></th>
+        </tr></thead>
+        <tbody>
+          ${fijos.map(g => `<tr>
+            <td style="padding:.3rem .4rem">${g.descripcion}</td>
+            <td style="padding:.3rem .4rem;color:var(--muted)">${g.categoria}</td>
+            <td style="padding:.3rem .4rem;text-align:right;font-weight:600;font-family:monospace">$${g.monto.toLocaleString('es-CL')}</td>
+            <td style="padding:.3rem .4rem;text-align:center">
+              <button onclick='abrirEditar(${JSON.stringify(g).replace(/"/g,"&quot;")});closeModal("modal-fijos")'
+                      style="background:none;border:none;color:var(--muted);cursor:pointer" title="Editar"><i class="bi bi-pencil" style="font-size:.85rem"></i></button>
+            </td>
+          </tr>`).join('')}
+        </tbody>
+      </table>`
+    : '<div style="color:var(--muted);font-size:.85rem;text-align:center;padding:1.5rem">No hay gastos fijos configurados.<br>Registra un gasto y marca "Gasto fijo mensual".</div>';
+  document.getElementById('fijos-total').textContent = total > 0
+    ? `Total fijos: $${total.toLocaleString('es-CL')}/mes` : '';
+  openModal('modal-fijos');
+}
+
+async function aplicarFijos() {
+  try {
+    const r = await api('POST', '/api/gastos/aplicar-fijos', {});
+    closeModal('modal-fijos');
+    load();
+    toast(r.creados > 0 ? `${r.creados} gasto(s) fijo(s) registrado(s) este mes` : 'Los gastos fijos ya estaban registrados este mes');
   } catch(e) { toast(e.message, 'error'); }
 }
 

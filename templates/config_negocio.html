@@ -8,7 +8,9 @@
   <!-- Datos básicos -->
   <div class="card">
     <div class="card-header"><h3><i class="bi bi-shop"></i> Datos del Negocio</h3></div>
-    <div class="card-body" style="display:grid;grid-template-columns:1fr 1fr;gap:1rem" id="datos-basicos"></div>
+    <div class="card-body">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem" id="datos-basicos"></div>
+    </div>
     <div class="card-footer"><button class="btn btn-primary" onclick="saveDatosBasicos()">Guardar cambios</button></div>
   </div>
 
@@ -21,37 +23,33 @@
     <div class="card-footer"><button class="btn btn-primary" onclick="saveDias()">Guardar días</button></div>
   </div>
 
-  <!-- Precios mayoristas -->
-  <div class="card">
-    <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
-      <h3><i class="bi bi-tag"></i> Precios Mayoristas</h3>
-      <button class="btn btn-ghost btn-sm" onclick="addPrecio()"><i class="bi bi-plus-lg"></i> Agregar</button>
-    </div>
-    <div class="card-body">
-      <table class="table" style="font-size:.85rem">
-        <thead><tr><th>Producto</th><th>Precio (CLP)</th><th>Formato</th><th></th></tr></thead>
-        <tbody id="precios-tbody"></tbody>
-      </table>
-    </div>
-    <div class="card-footer"><button class="btn btn-primary" onclick="savePrecios()">Guardar precios</button></div>
-  </div>
+  <!-- Redirectores a módulos correctos -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem">
 
-  <!-- Costos fijos -->
-  <div class="card">
-    <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
-      <h3><i class="bi bi-receipt"></i> Costos Fijos Mensuales</h3>
-      <button class="btn btn-ghost btn-sm" onclick="addCosto()"><i class="bi bi-plus-lg"></i> Agregar</button>
+    <div class="card" style="border-style:dashed;opacity:.85">
+      <div class="card-header"><h3><i class="bi bi-tag"></i> Precios Mayoristas</h3></div>
+      <div class="card-body">
+        <p style="font-size:.85rem;color:var(--muted);margin-bottom:1rem">
+          El precio mayorista de cada producto se administra directamente en el catálogo de productos.
+        </p>
+        <a href="/productos" class="btn btn-secondary btn-sm">
+          <i class="bi bi-basket"></i> Ir a Productos
+        </a>
+      </div>
     </div>
-    <div class="card-body">
-      <table class="table" style="font-size:.85rem">
-        <thead><tr><th>Concepto</th><th>Monto (CLP)</th><th></th></tr></thead>
-        <tbody id="costos-tbody"></tbody>
-      </table>
+
+    <div class="card" style="border-style:dashed;opacity:.85">
+      <div class="card-header"><h3><i class="bi bi-receipt"></i> Costos Fijos Mensuales</h3></div>
+      <div class="card-body">
+        <p style="font-size:.85rem;color:var(--muted);margin-bottom:1rem">
+          Los gastos fijos (arriendo, luz, gas, etc.) se registran en el módulo Gastos marcando la opción "Recurrente".
+        </p>
+        <a href="/gastos" class="btn btn-secondary btn-sm">
+          <i class="bi bi-cash-coin"></i> Ir a Gastos
+        </a>
+      </div>
     </div>
-    <div class="card-footer">
-      <span id="total-costos" style="font-weight:600;color:var(--text)"></span>
-      <button class="btn btn-primary" onclick="saveCostos()">Guardar costos</button>
-    </div>
+
   </div>
 
 </div>
@@ -64,105 +62,52 @@ async function load() {
   const res = await fetch('/api/config-negocio');
   config = await res.json();
 
-  // Datos básicos
-  const basicos = {nombre_negocio:'Nombre negocio', telefono_owner:'Teléfono dueño', email_owner:'Email dueño', url_web:'Sitio web'};
-  document.getElementById('datos-basicos').innerHTML = Object.entries(basicos).map(([k,label]) => `
+  // Datos básicos ampliados
+  const campos = [
+    ['nombre_negocio',  'Nombre del negocio'],
+    ['rut_negocio',     'RUT'],
+    ['giro_negocio',    'Giro'],
+    ['direccion',       'Dirección'],
+    ['telefono_owner',  'Teléfono'],
+    ['email_owner',     'Email'],
+    ['url_web',         'Sitio web'],
+  ];
+  document.getElementById('datos-basicos').innerHTML = campos.map(([k, label]) => `
     <div>
       <label class="label">${label}</label>
-      <input id="cfg-${k}" class="input" value="${config[k]?.valor||''}" />
+      <input id="cfg-${k}" class="input" value="${config[k]?.valor || ''}" />
     </div>`).join('');
 
   // Días
   const diasActivos = config.dias_despacho?.valor || [];
   document.getElementById('dias-check').innerHTML = DIAS_SEMANA.map(d => `
-    <label style="display:flex;align-items:center;gap:.4rem;cursor:pointer;padding:.4rem .8rem;background:var(--bg-2);border-radius:var(--r);${diasActivos.includes(d)?'border:1px solid var(--accent);color:var(--accent)':'border:1px solid var(--border)'}">
-      <input type="checkbox" id="dia-${d}" ${diasActivos.includes(d)?'checked':''} style="accent-color:var(--accent)"> ${d}
+    <label style="display:flex;align-items:center;gap:.4rem;cursor:pointer;padding:.4rem .8rem;background:var(--bg-2);border-radius:var(--r);${diasActivos.includes(d) ? 'border:1px solid var(--accent);color:var(--accent)' : 'border:1px solid var(--border)'}">
+      <input type="checkbox" id="dia-${d}" ${diasActivos.includes(d) ? 'checked' : ''} style="accent-color:var(--accent)"> ${d}
     </label>`).join('');
-
-  // Precios
-  const precios = config.precios_mayoristas?.valor || {};
-  renderPrecios(precios);
-
-  // Costos
-  const costos = config.costo_fijo_mensual?.valor || {};
-  renderCostos(costos);
-}
-
-function renderPrecios(precios) {
-  document.getElementById('precios-tbody').innerHTML = Object.entries(precios).map(([key,val]) => `
-    <tr id="precio-row-${key}">
-      <td><input class="input input-sm" style="width:180px" value="${key}" id="pk-${key}" /></td>
-      <td><input class="input input-sm" type="number" style="width:120px" value="${val.precio||0}" id="pv-${key}" /></td>
-      <td><input class="input input-sm" style="width:140px" value="${val.formato||''}" id="pf-${key}" /></td>
-      <td><button class="btn-icon text-danger" onclick="this.closest('tr').remove();calcTotales()"><i class="bi bi-trash"></i></button></td>
-    </tr>`).join('');
-}
-
-function renderCostos(costos) {
-  document.getElementById('costos-tbody').innerHTML = Object.entries(costos).map(([key,val]) => `
-    <tr>
-      <td><input class="input input-sm" style="width:180px" value="${key}" id="ck-${key}" /></td>
-      <td><input class="input input-sm" type="number" style="width:120px" value="${val||0}" id="cv-${key}" onchange="calcTotales()" /></td>
-      <td><button class="btn-icon text-danger" onclick="this.closest('tr').remove();calcTotales()"><i class="bi bi-trash"></i></button></td>
-    </tr>`).join('');
-  calcTotales();
-}
-
-function calcTotales() {
-  const rows = document.querySelectorAll('#costos-tbody tr');
-  let total = 0;
-  rows.forEach(r => { const v = parseFloat(r.querySelector('input[type=number]')?.value||0); total+=v; });
-  document.getElementById('total-costos').textContent = `Total: $${total.toLocaleString('es-CL')}/mes`;
-}
-
-function addPrecio() {
-  const tbody = document.getElementById('precios-tbody');
-  const key = 'nuevo_producto_' + Date.now();
-  const tr = document.createElement('tr');
-  tr.innerHTML = `<td><input class="input input-sm" style="width:180px" value="nuevo_producto" id="pk-${key}" /></td><td><input class="input input-sm" type="number" style="width:120px" value="0" id="pv-${key}" /></td><td><input class="input input-sm" style="width:140px" value="1 unidad" id="pf-${key}" /></td><td><button class="btn-icon text-danger" onclick="this.closest('tr').remove()"><i class="bi bi-trash"></i></button></td>`;
-  tbody.appendChild(tr);
-}
-
-function addCosto() {
-  const tbody = document.getElementById('costos-tbody');
-  const key = 'nuevo_costo_' + Date.now();
-  const tr = document.createElement('tr');
-  tr.innerHTML = `<td><input class="input input-sm" style="width:180px" value="Nuevo concepto" id="ck-${key}" /></td><td><input class="input input-sm" type="number" style="width:120px" value="0" id="cv-${key}" onchange="calcTotales()" /></td><td><button class="btn-icon text-danger" onclick="this.closest('tr').remove();calcTotales()"><i class="bi bi-trash"></i></button></td>`;
-  tbody.appendChild(tr);
 }
 
 async function saveDatosBasicos() {
-  for (const k of ['nombre_negocio','telefono_owner','email_owner','url_web']) {
-    const el = document.getElementById('cfg-'+k);
-    if(el) await fetch(`/api/config-negocio/${k}`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({valor: el.value, tipo:'texto'})});
+  const campos = ['nombre_negocio','rut_negocio','giro_negocio','direccion','telefono_owner','email_owner','url_web'];
+  for (const k of campos) {
+    const el = document.getElementById('cfg-' + k);
+    if (el) await fetch(`/api/config-negocio/${k}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ valor: el.value, tipo: 'texto' })
+    });
   }
-  showToast('Datos guardados','success');
+  toast('Datos guardados');
 }
 
 async function saveDias() {
-  const activos = DIAS_SEMANA.filter(d => document.getElementById('dia-'+d)?.checked);
-  await fetch('/api/config-negocio/dias_despacho', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({valor: activos, tipo:'json', descripcion:'Días de despacho activos'})});
-  showToast('Días guardados','success'); load();
-}
-
-async function savePrecios() {
-  const precios = {};
-  document.querySelectorAll('#precios-tbody tr').forEach(tr => {
-    const inputs = tr.querySelectorAll('input');
-    if(inputs.length>=3) precios[inputs[0].value] = {precio: parseFloat(inputs[1].value)||0, formato: inputs[2].value};
+  const activos = DIAS_SEMANA.filter(d => document.getElementById('dia-' + d)?.checked);
+  await fetch('/api/config-negocio/dias_despacho', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ valor: activos, tipo: 'json', descripcion: 'Días de despacho activos' })
   });
-  await fetch('/api/config-negocio/precios_mayoristas', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({valor: precios, tipo:'json', descripcion:'Precios para HORECA'})});
-  showToast('Precios guardados','success');
-}
-
-async function saveCostos() {
-  const costos = {};
-  document.querySelectorAll('#costos-tbody tr').forEach(tr => {
-    const inputs = tr.querySelectorAll('input');
-    if(inputs.length>=2) costos[inputs[0].value] = parseFloat(inputs[1].value)||0;
-  });
-  await fetch('/api/config-negocio/costo_fijo_mensual', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({valor: costos, tipo:'json', descripcion:'Costos fijos mensuales'})});
-  showToast('Costos guardados','success');
+  toast('Días guardados');
+  load();
 }
 
 load();

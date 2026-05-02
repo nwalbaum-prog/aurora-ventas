@@ -205,6 +205,8 @@ def db():
 
 def _col_exists(c, table, col):
     info = c.execute(f"PRAGMA table_info({table})").fetchall()
+    if not info:   # tabla aún no existe → se creará con la columna incluida
+        return True
     return any(r['name'] == col for r in info)
 
 def init_db():
@@ -279,6 +281,7 @@ def init_db():
             ("productos",     "categoria",          "ALTER TABLE productos ADD COLUMN categoria TEXT NOT NULL DEFAULT 'pan'"),
             ("suscripciones", "entregas_realizadas","ALTER TABLE suscripciones ADD COLUMN entregas_realizadas INTEGER NOT NULL DEFAULT 0"),
             ("productos",     "peso_unitario_kg",   "ALTER TABLE productos ADD COLUMN peso_unitario_kg REAL NOT NULL DEFAULT 0"),
+            ("gastos",        "recurrente",         "ALTER TABLE gastos ADD COLUMN recurrente INTEGER NOT NULL DEFAULT 0"),
         ]
         for table, col, sql in migrations:
             if not _col_exists(c, table, col):
@@ -490,7 +493,8 @@ Aurora Bakers | panypasta.cl""",
                 categoria   TEXT    NOT NULL DEFAULT 'General',
                 monto       REAL    NOT NULL DEFAULT 0,
                 proveedor   TEXT    NOT NULL DEFAULT '',
-                comprobante TEXT    NOT NULL DEFAULT ''
+                comprobante TEXT    NOT NULL DEFAULT '',
+                recurrente  INTEGER NOT NULL DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS agenda (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2839,11 +2843,17 @@ def page_gastos():
 def api_gastos_list():
     desde = request.args.get('desde', (datetime.now().replace(day=1)).strftime('%Y-%m-%d'))
     hasta = request.args.get('hasta', date.today().isoformat())
+    solo_fijos = request.args.get('fijos') == '1'
     with db() as c:
-        rows = c.execute(
-            "SELECT * FROM gastos WHERE fecha BETWEEN ? AND ? ORDER BY fecha DESC",
-            (desde, hasta)
-        ).fetchall()
+        if solo_fijos:
+            rows = c.execute(
+                "SELECT * FROM gastos WHERE recurrente=1 ORDER BY descripcion"
+            ).fetchall()
+        else:
+            rows = c.execute(
+                "SELECT * FROM gastos WHERE fecha BETWEEN ? AND ? ORDER BY fecha DESC",
+                (desde, hasta)
+            ).fetchall()
     return jsonify([dict(r) for r in rows])
 
 @app.route('/api/gastos', methods=['POST'])
@@ -2852,10 +2862,10 @@ def api_gastos_create():
     d = request.get_json(silent=True) or {}
     with db() as c:
         cur = c.execute(
-            "INSERT INTO gastos (fecha, descripcion, categoria, monto, proveedor, comprobante) VALUES (?,?,?,?,?,?)",
+            "INSERT INTO gastos (fecha, descripcion, categoria, monto, proveedor, comprobante, recurrente) VALUES (?,?,?,?,?,?,?)",
             (d.get('fecha', date.today().isoformat()), d.get('descripcion',''),
              d.get('categoria','General'), float(d.get('monto',0)),
-             d.get('proveedor',''), d.get('comprobante',''))
+             d.get('proveedor',''), d.get('comprobante',''), 1 if d.get('recurrente') else 0)
         )
         rid = cur.lastrowid
     return jsonify({'ok': True, 'id': rid})
@@ -2866,10 +2876,10 @@ def api_gastos_update(gid):
     d = request.get_json(silent=True) or {}
     with db() as c:
         c.execute(
-            "UPDATE gastos SET fecha=?, descripcion=?, categoria=?, monto=?, proveedor=?, comprobante=? WHERE id=?",
+            "UPDATE gastos SET fecha=?, descripcion=?, categoria=?, monto=?, proveedor=?, comprobante=?, recurrente=? WHERE id=?",
             (d.get('fecha', date.today().isoformat()), d.get('descripcion',''),
              d.get('categoria','General'), float(d.get('monto',0)),
-             d.get('proveedor',''), d.get('comprobante',''), gid)
+             d.get('proveedor',''), d.get('comprobante',''), 1 if d.get('recurrente') else 0, gid)
         )
     return jsonify({'ok': True})
 
@@ -2893,6 +2903,30 @@ def api_gastos_resumen():
             (mes_inicio,)
         ).fetchall()
     return jsonify({'total_mes': total_mes, 'por_categoria': [dict(r) for r in por_categoria]})
+
+@app.route('/api/gastos/aplicar-fijos', methods=['POST'])
+@login_required
+def api_gastos_aplicar_fijos():
+    """Crea registros de gastos para el mes actual a partir de los gastos recurrentes."""
+    from datetime import date as _date
+    hoy = _date.today()
+    mes_inicio = hoy.replace(day=1).isoformat()
+    mes_fin    = (hoy.replace(day=28) + __import__('datetime').timedelta(days=4)).replace(day=1).isoformat()
+    with db() as c:
+        fijos = c.execute("SELECT * FROM gastos WHERE recurrente=1").fetchall()
+        creados = 0
+        for f in fijos:
+            ya_existe = c.execute(
+                "SELECT id FROM gastos WHERE recurrente=0 AND descripcion=? AND fecha BETWEEN ? AND ?",
+                (f['descripcion'], mes_inicio, mes_fin)
+            ).fetchone()
+            if not ya_existe:
+                c.execute(
+                    "INSERT INTO gastos (fecha, descripcion, categoria, monto, proveedor, comprobante, recurrente) VALUES (?,?,?,?,?,?,0)",
+                    (mes_inicio, f['descripcion'], f['categoria'], f['monto'], f['proveedor'], '')
+                )
+                creados += 1
+    return jsonify({'ok': True, 'creados': creados})
 
 
 # ════════════════════════════════════════════════════════════════════════════
