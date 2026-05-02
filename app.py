@@ -282,6 +282,8 @@ def init_db():
             ("suscripciones", "entregas_realizadas","ALTER TABLE suscripciones ADD COLUMN entregas_realizadas INTEGER NOT NULL DEFAULT 0"),
             ("productos",     "peso_unitario_kg",   "ALTER TABLE productos ADD COLUMN peso_unitario_kg REAL NOT NULL DEFAULT 0"),
             ("gastos",        "recurrente",         "ALTER TABLE gastos ADD COLUMN recurrente INTEGER NOT NULL DEFAULT 0"),
+            ("inventario",    "bodega",             "ALTER TABLE inventario ADD COLUMN bodega TEXT NOT NULL DEFAULT 'ingredientes'"),
+            ("inventario",    "unidad",             "ALTER TABLE inventario ADD COLUMN unidad TEXT NOT NULL DEFAULT 'kg'"),
         ]
         for table, col, sql in migrations:
             if not _col_exists(c, table, col):
@@ -471,7 +473,9 @@ Aurora Bakers | panypasta.cl""",
                 alerta_minimo_kg      REAL    NOT NULL DEFAULT 1,
                 proveedor             TEXT    NOT NULL DEFAULT '',
                 precio_kg             REAL    NOT NULL DEFAULT 0,
-                ultima_actualizacion  TEXT    NOT NULL DEFAULT (date('now'))
+                ultima_actualizacion  TEXT    NOT NULL DEFAULT (date('now')),
+                bodega                TEXT    NOT NULL DEFAULT 'ingredientes',
+                unidad                TEXT    NOT NULL DEFAULT 'kg'
             );
             CREATE TABLE IF NOT EXISTS recetas (
                 id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2541,8 +2545,12 @@ def page_inventario():
 @app.route('/api/inventario', methods=['GET'])
 @login_required
 def api_inventario_list():
+    bodega = request.args.get('bodega')
     with db() as c:
-        rows = c.execute("SELECT * FROM inventario ORDER BY ingrediente").fetchall()
+        if bodega:
+            rows = c.execute("SELECT * FROM inventario WHERE bodega=? ORDER BY ingrediente", (bodega,)).fetchall()
+        else:
+            rows = c.execute("SELECT * FROM inventario ORDER BY bodega, ingrediente").fetchall()
     return jsonify([dict(r) for r in rows])
 
 @app.route('/api/inventario', methods=['POST'])
@@ -2551,9 +2559,10 @@ def api_inventario_create():
     d = request.get_json(silent=True) or {}
     with db() as c:
         c.execute(
-            "INSERT OR REPLACE INTO inventario (ingrediente, stock_kg, alerta_minimo_kg, proveedor, precio_kg, ultima_actualizacion) VALUES (?,?,?,?,?,?)",
+            "INSERT OR REPLACE INTO inventario (ingrediente, stock_kg, alerta_minimo_kg, proveedor, precio_kg, ultima_actualizacion, bodega, unidad) VALUES (?,?,?,?,?,?,?,?)",
             (d.get('ingrediente',''), float(d.get('stock_kg',0)), float(d.get('alerta_minimo_kg',1)),
-             d.get('proveedor',''), float(d.get('precio_kg',0)), date.today().isoformat())
+             d.get('proveedor',''), float(d.get('precio_kg',0)), date.today().isoformat(),
+             d.get('bodega','ingredientes'), d.get('unidad','kg'))
         )
     return jsonify({'ok': True})
 
@@ -2563,9 +2572,10 @@ def api_inventario_update(iid):
     d = request.get_json(silent=True) or {}
     with db() as c:
         c.execute(
-            "UPDATE inventario SET stock_kg=?, alerta_minimo_kg=?, proveedor=?, precio_kg=?, ultima_actualizacion=? WHERE id=?",
+            "UPDATE inventario SET stock_kg=?, alerta_minimo_kg=?, proveedor=?, precio_kg=?, ultima_actualizacion=?, bodega=?, unidad=? WHERE id=?",
             (float(d.get('stock_kg',0)), float(d.get('alerta_minimo_kg',1)),
-             d.get('proveedor',''), float(d.get('precio_kg',0)), date.today().isoformat(), iid)
+             d.get('proveedor',''), float(d.get('precio_kg',0)), date.today().isoformat(),
+             d.get('bodega','ingredientes'), d.get('unidad','kg'), iid)
         )
     return jsonify({'ok': True})
 

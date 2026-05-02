@@ -1,68 +1,134 @@
 {% extends "base.html" %}
 {% block title %}Inventario — Aurora Bakers{% endblock %}
-{% block page_title %}Inventario de Ingredientes{% endblock %}
-{% block content %}
+{% block page_title %}Inventario{% endblock %}
 
-<div style="display:flex;gap:1rem;margin-bottom:1.5rem;flex-wrap:wrap;align-items:center">
-  <button class="btn btn-primary" onclick="abrirNuevo()"><i class="bi bi-plus-lg"></i> Agregar Ingrediente</button>
-  <span id="alerta-badge" style="display:none" class="badge badge-red"><i class="bi bi-exclamation-triangle"></i> <span id="alerta-count">0</span> alertas de reposición</span>
+{% block content %}
+<style>
+.bodega-tabs { display:flex; gap:.5rem; flex-wrap:wrap; margin-bottom:1.25rem; }
+.bodega-tab  {
+  display:flex; align-items:center; gap:.5rem;
+  padding:.5rem 1rem; border-radius:8px; cursor:pointer; font-size:.84rem; font-weight:600;
+  border:1.5px solid var(--border); background:var(--surface); color:var(--muted);
+  transition:all .15s;
+}
+.bodega-tab:hover  { border-color:var(--aurora); color:var(--aurora); }
+.bodega-tab.active { background:var(--aurora); border-color:var(--aurora); color:#fff; }
+.bodega-tab .count { font-size:.7rem; background:rgba(255,255,255,.25); border-radius:10px; padding:.05rem .4rem; }
+.bodega-tab:not(.active) .count { background:var(--bg); color:var(--muted); }
+
+.alerta-strip {
+  background:#fef3c7; border:1px solid #f59e0b; border-radius:8px;
+  padding:.6rem 1rem; font-size:.83rem; font-weight:600; color:#92400e;
+  display:flex; align-items:center; gap:.6rem; margin-bottom:1rem;
+}
+.alerta-strip.danger { background:#fee2e2; border-color:#ef4444; color:#991b1b; }
+</style>
+
+<!-- Toolbar -->
+<div style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem;flex-wrap:wrap">
+  <div class="bodega-tabs" id="bodega-tabs">
+    <div class="bodega-tab active" data-key="ingredientes"        onclick="setTab(this)"><i class="bi bi-moisture"></i> Ingredientes        <span class="count" id="cnt-ingredientes">0</span></div>
+    <div class="bodega-tab"        data-key="productos_terminados" onclick="setTab(this)"><i class="bi bi-bag-check"></i> Prod. Terminados     <span class="count" id="cnt-productos_terminados">0</span></div>
+    <div class="bodega-tab"        data-key="limpieza"             onclick="setTab(this)"><i class="bi bi-droplet"></i> Limpieza             <span class="count" id="cnt-limpieza">0</span></div>
+    <div class="bodega-tab"        data-key="produccion"           onclick="setTab(this)"><i class="bi bi-tools"></i> Insumos Producción    <span class="count" id="cnt-produccion">0</span></div>
+  </div>
+  <button class="btn btn-primary" style="margin-left:auto" onclick="abrirNuevo()">
+    <i class="bi bi-plus-lg"></i> Agregar
+  </button>
 </div>
 
+<!-- Alertas -->
+<div id="alerta-strip" style="display:none"></div>
+
+<!-- Tabla -->
 <div class="card">
-  <table class="table" id="tabla-inv">
-    <thead><tr>
-      <th>Ingrediente</th>
-      <th>Stock actual</th>
-      <th>Alerta mínimo</th>
-      <th>Estado</th>
-      <th>Proveedor</th>
-      <th>Precio/kg</th>
-      <th>Actualizado</th>
-      <th>Acciones</th>
-    </tr></thead>
-    <tbody id="tbody"></tbody>
-  </table>
+  <div class="table-wrap">
+    <table>
+      <thead id="thead-inv"></thead>
+      <tbody id="tbody-inv"></tbody>
+    </table>
+  </div>
 </div>
 
 <!-- Modal nuevo/editar -->
-<div id="modal-ing" class="modal-overlay">
-  <div class="modal" style="max-width:480px">
+<div id="modal-inv" class="modal-overlay">
+  <div class="modal" style="max-width:500px">
     <div class="modal-header">
-      <span class="modal-title" id="modal-title">Ingrediente</span>
-      <button class="modal-close" onclick="closeModal('modal-ing')"><i class="bi bi-x-lg"></i></button>
+      <span class="modal-title" id="modal-inv-title">Nuevo ítem</span>
+      <button class="modal-close" onclick="closeModal('modal-inv')"><i class="bi bi-x-lg"></i></button>
     </div>
+    <input type="hidden" id="f-id">
     <div style="display:grid;gap:.75rem">
-      <div class="form-group">
-        <label class="label">Nombre del ingrediente</label>
-        <input id="f-ingrediente" class="input" placeholder="Ej: harina_blanca" />
+      <div class="form-row fr-2">
+        <div class="form-group">
+          <label>Nombre *</label>
+          <input id="f-nombre" class="form-control" placeholder="Ej: Harina blanca">
+        </div>
+        <div class="form-group">
+          <label>Bodega</label>
+          <select id="f-bodega" class="form-control" onchange="onBodegaChange()">
+            <option value="ingredientes">Ingredientes</option>
+            <option value="productos_terminados">Prod. Terminados</option>
+            <option value="limpieza">Limpieza</option>
+            <option value="produccion">Insumos Producción</option>
+          </select>
+        </div>
       </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem">
-        <div class="form-group"><label class="label">Stock actual (kg)</label><input id="f-stock" type="number" step="0.01" class="input" placeholder="0.0" /></div>
-        <div class="form-group"><label class="label">Alerta mínimo (kg)</label><input id="f-alerta" type="number" step="0.01" class="input" placeholder="1.0" /></div>
+      <div class="form-row fr-3">
+        <div class="form-group">
+          <label>Stock actual</label>
+          <input id="f-stock" type="number" step="0.01" class="form-control" placeholder="0">
+        </div>
+        <div class="form-group">
+          <label>Alerta mínimo</label>
+          <input id="f-alerta" type="number" step="0.01" class="form-control" placeholder="1">
+        </div>
+        <div class="form-group">
+          <label>Unidad</label>
+          <select id="f-unidad" class="form-control">
+            <option value="kg">kg</option>
+            <option value="g">gramos</option>
+            <option value="litros">litros</option>
+            <option value="ml">ml</option>
+            <option value="unidades">unidades</option>
+            <option value="cajas">cajas</option>
+            <option value="bolsas">bolsas</option>
+            <option value="rollos">rollos</option>
+          </select>
+        </div>
       </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem">
-        <div class="form-group"><label class="label">Proveedor</label><input id="f-proveedor" class="input" placeholder="Nombre proveedor" /></div>
-        <div class="form-group"><label class="label">Precio/kg (CLP)</label><input id="f-precio" type="number" class="input" placeholder="0" /></div>
+      <div class="form-row fr-2">
+        <div class="form-group">
+          <label>Proveedor</label>
+          <input id="f-proveedor" class="form-control" placeholder="Opcional">
+        </div>
+        <div class="form-group">
+          <label id="precio-label">Precio / unidad (CLP)</label>
+          <input id="f-precio" type="number" class="form-control" placeholder="0">
+        </div>
       </div>
     </div>
     <div class="modal-footer">
-      <button class="btn btn-secondary" onclick="closeModal('modal-ing')">Cancelar</button>
-      <button class="btn btn-primary" onclick="guardar()">Guardar</button>
+      <button class="btn btn-secondary" onclick="closeModal('modal-inv')">Cancelar</button>
+      <button class="btn btn-primary" onclick="guardar()"><i class="bi bi-check-lg"></i> Guardar</button>
     </div>
   </div>
 </div>
 
 <!-- Modal ajustar stock -->
 <div id="modal-ajuste" class="modal-overlay">
-  <div class="modal" style="max-width:360px">
+  <div class="modal" style="max-width:340px">
     <div class="modal-header">
       <span class="modal-title">Ajustar Stock</span>
       <button class="modal-close" onclick="closeModal('modal-ajuste')"><i class="bi bi-x-lg"></i></button>
     </div>
     <p id="ajuste-nombre" style="font-weight:600;color:var(--text);margin-bottom:.75rem"></p>
     <div class="form-group">
-      <label class="label">Delta (+ agregar / − descontar kg)</label>
-      <input id="f-delta" type="number" step="0.01" class="input" placeholder="ej: 5 ó -1.5" />
+      <label>Delta (+ agregar / − descontar)</label>
+      <div style="display:flex;gap:.5rem;align-items:center">
+        <input id="f-delta" type="number" step="0.01" class="form-control" placeholder="ej: 5 ó -1.5" style="flex:1">
+        <span id="ajuste-unidad" style="color:var(--muted);font-size:.85rem;white-space:nowrap"></span>
+      </div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeModal('modal-ajuste')">Cancelar</button>
@@ -71,84 +137,172 @@
   </div>
 </div>
 
+{% endblock %}
+
+{% block scripts %}
 <script>
-let editId = null, ajusteId = null;
-const tbody = document.getElementById('tbody');
+const BODEGAS = {
+  ingredientes:        { label: 'Ingredientes',          icon: 'bi-moisture',  unidad_default: 'kg'       },
+  productos_terminados:{ label: 'Prod. Terminados',      icon: 'bi-bag-check', unidad_default: 'unidades' },
+  limpieza:            { label: 'Insumos de Limpieza',   icon: 'bi-droplet',   unidad_default: 'unidades' },
+  produccion:          { label: 'Insumos de Producción', icon: 'bi-tools',     unidad_default: 'unidades' },
+};
+
+let todosItems = [];
+let tabActual  = 'ingredientes';
+let editId     = null;
+let ajusteId   = null;
 
 async function load() {
-  const res = await fetch('/api/inventario');
-  const items = await res.json();
-  const alertas = items.filter(i => i.stock_kg <= i.alerta_minimo_kg);
-  document.getElementById('alerta-count').textContent = alertas.length;
-  document.getElementById('alerta-badge').style.display = alertas.length ? 'inline-flex' : 'none';
+  todosItems = await api('GET', '/api/inventario');
 
-  tbody.innerHTML = items.map(i => {
-    const badge = i.stock_kg <= 0 ? '<span class="badge badge-red">Sin stock</span>'
-                : i.stock_kg <= i.alerta_minimo_kg ? '<span class="badge badge-yellow">Reponer</span>'
-                : '<span class="badge badge-green">OK</span>';
-    return `<tr>
-      <td><strong>${i.ingrediente}</strong></td>
-      <td>${i.stock_kg.toFixed(2)} kg</td>
-      <td>${i.alerta_minimo_kg.toFixed(2)} kg</td>
-      <td>${badge}</td>
-      <td>${i.proveedor || '—'}</td>
-      <td>${i.precio_kg > 0 ? '$' + i.precio_kg.toLocaleString('es-CL') : '—'}</td>
-      <td style="font-size:.75rem;color:var(--muted)">${i.ultima_actualizacion || '—'}</td>
-      <td>
-        <button class="btn btn-secondary btn-sm btn-icon" title="Ajustar stock" onclick="abrirAjuste(${i.id},'${i.ingrediente}')"><i class="bi bi-plus-slash-minus"></i></button>
-        <button class="btn btn-secondary btn-sm btn-icon" title="Editar" onclick='abrirEditar(${JSON.stringify(i).replace(/"/g,"&quot;")})'><i class="bi bi-pencil"></i></button>
-        <button class="btn btn-danger btn-sm btn-icon" title="Eliminar" onclick="eliminar(${i.id})"><i class="bi bi-trash3"></i></button>
-      </td>
-    </tr>`;
-  }).join('') || '<tr><td colspan="8"><div class="empty"><i class="bi bi-boxes"></i><p>Sin ingredientes registrados</p></div></td></tr>';
+  // Contadores por tab
+  Object.keys(BODEGAS).forEach(key => {
+    const cnt = document.getElementById('cnt-' + key);
+    if (cnt) cnt.textContent = todosItems.filter(i => i.bodega === key).length;
+  });
+
+  renderTab();
+}
+
+function setTab(el) {
+  document.querySelectorAll('.bodega-tab').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  tabActual = el.dataset.key;
+  renderTab();
+}
+
+function renderTab() {
+  const items = todosItems.filter(i => i.bodega === tabActual);
+  const alertas = items.filter(i => i.stock_kg <= 0);
+  const reponer = items.filter(i => i.stock_kg > 0 && i.stock_kg <= i.alerta_minimo_kg);
+
+  // Alerta strip
+  const strip = document.getElementById('alerta-strip');
+  if (alertas.length > 0) {
+    strip.style.display = '';
+    strip.className = 'alerta-strip danger';
+    strip.innerHTML = `<i class="bi bi-exclamation-octagon-fill"></i> ${alertas.length} ítem(s) sin stock: ${alertas.map(a => a.ingrediente).join(', ')}`;
+  } else if (reponer.length > 0) {
+    strip.style.display = '';
+    strip.className = 'alerta-strip';
+    strip.innerHTML = `<i class="bi bi-exclamation-triangle-fill"></i> ${reponer.length} ítem(s) para reponer: ${reponer.map(a => a.ingrediente).join(', ')}`;
+  } else {
+    strip.style.display = 'none';
+  }
+
+  // Cabecera
+  document.getElementById('thead-inv').innerHTML = `<tr>
+    <th>Ítem</th>
+    <th class="right">Stock</th>
+    <th class="right">Alerta mín.</th>
+    <th>Estado</th>
+    <th>Proveedor</th>
+    <th class="right">Precio / u.</th>
+    <th>Actualizado</th>
+    <th></th>
+  </tr>`;
+
+  // Filas
+  document.getElementById('tbody-inv').innerHTML = items.length
+    ? items.map(i => {
+        const u = i.unidad || 'kg';
+        const badge = i.stock_kg <= 0
+          ? '<span class="badge" style="background:#fee2e2;color:#991b1b">Sin stock</span>'
+          : i.stock_kg <= i.alerta_minimo_kg
+            ? '<span class="badge" style="background:#fef3c7;color:#92400e">Reponer</span>'
+            : '<span class="badge" style="background:#dcfce7;color:#166534">OK</span>';
+        return `<tr>
+          <td class="fw-600">${i.ingrediente}</td>
+          <td class="right mono">${i.stock_kg % 1 === 0 ? i.stock_kg : i.stock_kg.toFixed(2)} ${u}</td>
+          <td class="right mono text-muted">${i.alerta_minimo_kg % 1 === 0 ? i.alerta_minimo_kg : i.alerta_minimo_kg.toFixed(2)} ${u}</td>
+          <td>${badge}</td>
+          <td class="text-muted text-sm">${i.proveedor || '—'}</td>
+          <td class="right mono text-muted">${i.precio_kg > 0 ? '$' + Math.round(i.precio_kg).toLocaleString('es-CL') : '—'}</td>
+          <td class="text-muted text-sm">${i.ultima_actualizacion || '—'}</td>
+          <td>
+            <div class="flex gap-8">
+              <button class="btn btn-secondary btn-icon btn-sm" title="Ajustar stock"
+                      onclick="abrirAjuste(${i.id},'${i.ingrediente}','${u}')">
+                <i class="bi bi-plus-slash-minus"></i>
+              </button>
+              <button class="btn btn-secondary btn-icon btn-sm" title="Editar"
+                      onclick='abrirEditar(${JSON.stringify(i).replace(/"/g,"&quot;")})'>
+                <i class="bi bi-pencil"></i>
+              </button>
+              <button class="btn btn-danger btn-icon btn-sm" title="Eliminar"
+                      onclick="eliminar(${i.id})">
+                <i class="bi bi-trash3"></i>
+              </button>
+            </div>
+          </td>
+        </tr>`;
+      }).join('')
+    : `<tr><td colspan="8"><div class="empty"><i class="bi bi-inbox"></i><p>Sin ítems en esta bodega</p></div></td></tr>`;
+}
+
+function onBodegaChange() {
+  const b = document.getElementById('f-bodega').value;
+  const u = document.getElementById('f-unidad');
+  u.value = BODEGAS[b]?.unidad_default || 'kg';
 }
 
 function abrirNuevo() {
   editId = null;
-  document.getElementById('modal-title').textContent = 'Nuevo Ingrediente';
-  document.getElementById('f-ingrediente').value = '';
-  document.getElementById('f-ingrediente').disabled = false;
+  document.getElementById('modal-inv-title').textContent = 'Nuevo ítem';
+  document.getElementById('f-id').value = '';
+  document.getElementById('f-nombre').value = '';
+  document.getElementById('f-nombre').disabled = false;
+  document.getElementById('f-bodega').value = tabActual;
+  document.getElementById('f-unidad').value = BODEGAS[tabActual]?.unidad_default || 'kg';
   document.getElementById('f-stock').value = '';
   document.getElementById('f-alerta').value = '1';
   document.getElementById('f-proveedor').value = '';
   document.getElementById('f-precio').value = '';
-  openModal('modal-ing');
+  openModal('modal-inv');
 }
 
 function abrirEditar(i) {
   editId = i.id;
-  document.getElementById('modal-title').textContent = 'Editar ' + i.ingrediente;
-  document.getElementById('f-ingrediente').value = i.ingrediente;
-  document.getElementById('f-ingrediente').disabled = true;
+  document.getElementById('modal-inv-title').textContent = 'Editar — ' + i.ingrediente;
+  document.getElementById('f-id').value = i.id;
+  document.getElementById('f-nombre').value = i.ingrediente;
+  document.getElementById('f-nombre').disabled = false;
+  document.getElementById('f-bodega').value = i.bodega || 'ingredientes';
+  document.getElementById('f-unidad').value = i.unidad || 'kg';
   document.getElementById('f-stock').value = i.stock_kg;
   document.getElementById('f-alerta').value = i.alerta_minimo_kg;
   document.getElementById('f-proveedor').value = i.proveedor || '';
   document.getElementById('f-precio').value = i.precio_kg || 0;
-  openModal('modal-ing');
+  openModal('modal-inv');
 }
 
-function abrirAjuste(id, nombre) {
+function abrirAjuste(id, nombre, unidad) {
   ajusteId = id;
   document.getElementById('ajuste-nombre').textContent = nombre;
+  document.getElementById('ajuste-unidad').textContent = unidad;
   document.getElementById('f-delta').value = '';
   openModal('modal-ajuste');
 }
 
 async function guardar() {
+  const nombre = document.getElementById('f-nombre').value.trim();
+  if (!nombre) { toast('Ingresa el nombre', 'error'); return; }
   const body = {
-    ingrediente:      document.getElementById('f-ingrediente').value.trim(),
+    ingrediente:      nombre,
+    bodega:           document.getElementById('f-bodega').value,
+    unidad:           document.getElementById('f-unidad').value,
     stock_kg:         parseFloat(document.getElementById('f-stock').value) || 0,
     alerta_minimo_kg: parseFloat(document.getElementById('f-alerta').value) || 1,
     proveedor:        document.getElementById('f-proveedor').value.trim(),
     precio_kg:        parseFloat(document.getElementById('f-precio').value) || 0,
   };
-  if (!body.ingrediente) { toast('Ingresa el nombre del ingrediente', 'error'); return; }
   try {
-    const url = editId ? `/api/inventario/${editId}` : '/api/inventario';
-    await api(editId ? 'PUT' : 'POST', url, body);
-    closeModal('modal-ing');
-    load();
-    toast(editId ? 'Actualizado' : 'Ingrediente creado');
+    if (editId) await api('PUT', `/api/inventario/${editId}`, body);
+    else        await api('POST', '/api/inventario', body);
+    closeModal('modal-inv');
+    await load();
+    toast(editId ? 'Actualizado' : 'Ítem creado');
   } catch(e) { toast(e.message, 'error'); }
 }
 
@@ -157,16 +311,16 @@ async function ajustar() {
   try {
     await api('POST', `/api/inventario/${ajusteId}/ajustar`, { delta });
     closeModal('modal-ajuste');
-    load();
+    await load();
     toast('Stock ajustado');
   } catch(e) { toast(e.message, 'error'); }
 }
 
 async function eliminar(id) {
-  if (!confirm('¿Eliminar ingrediente?')) return;
+  if (!confirm('¿Eliminar este ítem?')) return;
   try {
     await api('DELETE', `/api/inventario/${id}`);
-    load();
+    await load();
     toast('Eliminado');
   } catch(e) { toast(e.message, 'error'); }
 }
