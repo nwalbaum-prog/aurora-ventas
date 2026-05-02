@@ -2749,19 +2749,21 @@ def api_plan_confirmar(fecha):
                 "SELECT id, peso_unitario_kg FROM productos WHERE nombre=?", (nombre,)
             ).fetchone()
 
-            if prod and prod['peso_unitario_kg'] > 0:
-                total_kg = cantidad * prod['peso_unitario_kg']
-                ings = c.execute(
-                    "SELECT ingrediente, porcentaje FROM recetas WHERE producto_id=?",
-                    (prod['id'],)
-                ).fetchall()
-                for ing in ings:
-                    kg = (ing['porcentaje'] / 100) * total_kg
-                    descuentos[ing['ingrediente']] = descuentos.get(ing['ingrediente'], 0) + kg
-
-                # Sumar al stock del producto
+            if prod:
+                # Siempre sumar stock al confirmar producción
                 c.execute("UPDATE productos SET stock=stock+? WHERE id=?", (cantidad, prod['id']))
                 stock_sumado.append({'nombre': nombre, 'cantidad': cantidad})
+
+                # Descontar ingredientes solo si tiene peso y receta configurados
+                if prod['peso_unitario_kg'] > 0:
+                    total_kg = cantidad * prod['peso_unitario_kg']
+                    ings = c.execute(
+                        "SELECT ingrediente, porcentaje FROM recetas WHERE producto_id=?",
+                        (prod['id'],)
+                    ).fetchall()
+                    for ing in ings:
+                        kg = (ing['porcentaje'] / 100) * total_kg
+                        descuentos[ing['ingrediente']] = descuentos.get(ing['ingrediente'], 0) + kg
 
         # Descontar inventario y recoger alertas
         alertas = []
