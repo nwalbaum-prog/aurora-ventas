@@ -284,6 +284,11 @@ def init_db():
             ("gastos",        "recurrente",         "ALTER TABLE gastos ADD COLUMN recurrente INTEGER NOT NULL DEFAULT 0"),
             ("inventario",    "bodega",             "ALTER TABLE inventario ADD COLUMN bodega TEXT NOT NULL DEFAULT 'ingredientes'"),
             ("inventario",    "unidad",             "ALTER TABLE inventario ADD COLUMN unidad TEXT NOT NULL DEFAULT 'kg'"),
+            ("pos_promociones","cantidad_minima",   "ALTER TABLE pos_promociones ADD COLUMN cantidad_minima INTEGER NOT NULL DEFAULT 0"),
+            ("productos",     "subcategoria",       "ALTER TABLE productos ADD COLUMN subcategoria TEXT NOT NULL DEFAULT ''"),
+            ("inventario", "categoria",    "ALTER TABLE inventario ADD COLUMN categoria TEXT NOT NULL DEFAULT ''"),
+            ("inventario", "subcategoria", "ALTER TABLE inventario ADD COLUMN subcategoria TEXT NOT NULL DEFAULT ''"),
+            ("recetas",    "inventario_id","ALTER TABLE recetas ADD COLUMN inventario_id INTEGER REFERENCES inventario(id) ON DELETE SET NULL"),
         ]
         for table, col, sql in migrations:
             if not _col_exists(c, table, col):
@@ -666,20 +671,40 @@ Aurora Bakers""",
                 boleta_pdf_url TEXT,
                 boleta_estado  TEXT NOT NULL DEFAULT 'pendiente'
             );
+            CREATE TABLE IF NOT EXISTS producto_lotes (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                producto_id       INTEGER NOT NULL REFERENCES productos(id) ON DELETE CASCADE,
+                fecha_elaboracion TEXT    NOT NULL,
+                cantidad_inicial  REAL    NOT NULL,
+                cantidad_actual   REAL    NOT NULL,
+                merma             REAL    NOT NULL DEFAULT 0,
+                notas             TEXT    NOT NULL DEFAULT '',
+                creado_en         TEXT    NOT NULL DEFAULT (datetime('now'))
+            );
+            CREATE TABLE IF NOT EXISTS lote_movimientos (
+                id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                lote_id   INTEGER NOT NULL REFERENCES producto_lotes(id) ON DELETE CASCADE,
+                tipo      TEXT    NOT NULL,
+                cantidad  REAL    NOT NULL,
+                venta_id  INTEGER REFERENCES ventas(id) ON DELETE SET NULL,
+                notas     TEXT    NOT NULL DEFAULT '',
+                creado_en TEXT    NOT NULL DEFAULT (datetime('now'))
+            );
             CREATE TABLE IF NOT EXISTS pos_frecuentes (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
                 producto_id INTEGER NOT NULL REFERENCES productos(id),
                 orden       INTEGER NOT NULL DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS pos_promociones (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                nombre      TEXT NOT NULL,
-                tipo        TEXT NOT NULL,
-                valor       REAL NOT NULL DEFAULT 0,
-                producto_id INTEGER,
-                activa      INTEGER NOT NULL DEFAULT 1,
-                fecha_inicio TEXT,
-                fecha_fin    TEXT
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                nombre           TEXT NOT NULL,
+                tipo             TEXT NOT NULL,
+                valor            REAL NOT NULL DEFAULT 0,
+                producto_id      INTEGER,
+                activa           INTEGER NOT NULL DEFAULT 1,
+                fecha_inicio     TEXT,
+                fecha_fin        TEXT,
+                cantidad_minima  INTEGER NOT NULL DEFAULT 0
             );
         """)
 
@@ -1003,11 +1028,11 @@ def api_productos_create():
     d = request.json
     with db() as c:
         cur = c.execute(
-            "INSERT INTO productos (nombre,descripcion,precio,precio_mayorista,costo,stock,unidad,categoria) VALUES (?,?,?,?,?,?,?,?)",
+            "INSERT INTO productos (nombre,descripcion,precio,precio_mayorista,costo,stock,unidad,categoria,subcategoria) VALUES (?,?,?,?,?,?,?,?,?)",
             (d['nombre'], d.get('descripcion',''), float(d['precio']),
              float(d.get('precio_mayorista',0)),
              float(d.get('costo',0)), float(d.get('stock',0)), d.get('unidad','unidad'),
-             d.get('categoria','pan'))
+             d.get('categoria','pan'), d.get('subcategoria',''))
         )
         return jsonify(dict(c.execute("SELECT * FROM productos WHERE id=?", (cur.lastrowid,)).fetchone())), 201
 
@@ -1016,11 +1041,11 @@ def api_productos_update(pid):
     d = request.json
     with db() as c:
         c.execute(
-            "UPDATE productos SET nombre=?,descripcion=?,precio=?,precio_mayorista=?,costo=?,stock=?,unidad=?,categoria=?,activo=? WHERE id=?",
+            "UPDATE productos SET nombre=?,descripcion=?,precio=?,precio_mayorista=?,costo=?,stock=?,unidad=?,categoria=?,subcategoria=?,activo=? WHERE id=?",
             (d['nombre'], d.get('descripcion',''), float(d['precio']),
              float(d.get('precio_mayorista',0)),
              float(d.get('costo',0)), float(d.get('stock',0)), d.get('unidad','unidad'),
-             d.get('categoria','pan'), int(d.get('activo',1)), pid)
+             d.get('categoria','pan'), d.get('subcategoria',''), int(d.get('activo',1)), pid)
         )
         return jsonify(dict(c.execute("SELECT * FROM productos WHERE id=?", (pid,)).fetchone()))
 
@@ -1241,22 +1266,50 @@ def api_ventas_create():
 
 @app.route('/api/ventas/<int:vid>', methods=['PUT'])
 def api_ventas_update(vid):
-    """Actualiza campos de estado de una venta (pago, despacho)."""
+    """Actualiza una venta: cabecera y/o items con corrección de stock."""
     d = request.json
     with db() as c:
-        # Solo permitir actualizar estado_pago y estado_despacho
-        if 'estado_pago' in d:
-            c.execute("UPDATE ventas SET estado_pago=? WHERE id=?", (d['estado_pago'], vid))
-        if 'estado_despacho' in d:
-            c.execute("UPDATE ventas SET estado_despacho=? WHERE id=?", (d['estado_despacho'], vid))
-        if 'fecha_despacho' in d:
-            c.execute("UPDATE ventas SET fecha_despacho=? WHERE id=?", (d['fecha_despacho'], vid))
-        row = c.execute(
-            "SELECT v.*,c.nombre AS cliente_nombre FROM ventas v LEFT JOIN clientes c ON c.id=v.cliente_id WHERE v.id=?",
-            (vid,)).fetchone()
-        if not row:
+        if not c.execute("SELECT id FROM ventas WHERE id=?", (vid,)).fetchone():
             return jsonify({'error': 'Venta no encontrada'}), 404
-        vd = dict(row)
+
+        # Campos de cabecera editables
+        campos = {}
+        for campo in ('fecha', 'canal', 'tipo_cliente', 'estado_pago',
+                      'estado_despacho', 'fecha_despacho', 'notas'):
+            if campo in d:
+                campos[campo] = d[campo]
+        # cliente_id puede ser null
+        if 'cliente_id' in d:
+            campos['cliente_id'] = d['cliente_id'] or None
+
+        # Si vienen items: reemplazar con corrección de stock
+        if 'items' in d:
+            items_nuevos = d['items']
+            # Restaurar stock de items anteriores
+            for i in c.execute("SELECT producto_id, cantidad FROM venta_items WHERE venta_id=?", (vid,)).fetchall():
+                c.execute("UPDATE productos SET stock=stock+? WHERE id=?", (i['cantidad'], i['producto_id']))
+            c.execute("DELETE FROM venta_items WHERE venta_id=?", (vid,))
+            # Insertar nuevos items y descontar stock
+            total = 0.0
+            for i in items_nuevos:
+                cant   = float(i['cantidad'])
+                precio = float(i['precio_unitario'])
+                c.execute(
+                    "INSERT INTO venta_items (venta_id,producto_id,cantidad,precio_unitario) VALUES (?,?,?,?)",
+                    (vid, int(i['producto_id']), cant, precio)
+                )
+                c.execute("UPDATE productos SET stock=stock-? WHERE id=?", (cant, int(i['producto_id'])))
+                total += cant * precio
+            campos['total'] = total
+
+        if campos:
+            sets = ', '.join(f'{k}=?' for k in campos)
+            vals = list(campos.values()) + [vid]
+            c.execute(f"UPDATE ventas SET {sets} WHERE id=?", vals)
+
+        vd = dict(c.execute(
+            "SELECT v.*,cl.nombre AS cliente_nombre FROM ventas v LEFT JOIN clientes cl ON cl.id=v.cliente_id WHERE v.id=?",
+            (vid,)).fetchone())
         vd['items'] = [dict(i) for i in c.execute(
             "SELECT vi.*,p.nombre FROM venta_items vi JOIN productos p ON p.id=vi.producto_id WHERE vi.venta_id=?",
             (vid,)).fetchall()]
@@ -1265,8 +1318,10 @@ def api_ventas_update(vid):
 @app.route('/api/ventas/<int:vid>', methods=['DELETE'])
 def api_ventas_delete(vid):
     with db() as c:
-        for i in c.execute("SELECT * FROM venta_items WHERE venta_id=?", (vid,)).fetchall():
+        for i in c.execute("SELECT producto_id, cantidad FROM venta_items WHERE venta_id=?", (vid,)).fetchall():
             c.execute("UPDATE productos SET stock=stock+? WHERE id=?", (i['cantidad'], i['producto_id']))
+        # pos_ventas no tiene ON DELETE CASCADE → borrar antes
+        c.execute("DELETE FROM pos_ventas WHERE venta_id=?", (vid,))
         c.execute("DELETE FROM ventas WHERE id=?", (vid,))
         return jsonify({'ok': True})
 
