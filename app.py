@@ -2608,16 +2608,40 @@ def api_inventario_list():
             rows = c.execute("SELECT * FROM inventario ORDER BY bodega, ingrediente").fetchall()
     return jsonify([dict(r) for r in rows])
 
+@app.route('/api/inventario/categorias', methods=['GET'])
+@login_required
+def api_inventario_categorias():
+    with db() as c:
+        rows = c.execute(
+            "SELECT DISTINCT categoria, subcategoria FROM inventario WHERE categoria != '' ORDER BY categoria, subcategoria"
+        ).fetchall()
+    cats = {}
+    for r in rows:
+        cat = r['categoria']
+        sub = r['subcategoria']
+        if cat not in cats:
+            cats[cat] = []
+        if sub and sub not in cats[cat]:
+            cats[cat].append(sub)
+    return jsonify({
+        'categorias': sorted(cats.keys()),
+        'subcategorias': cats
+    })
+
 @app.route('/api/inventario', methods=['POST'])
 @login_required
 def api_inventario_create():
     d = request.get_json(silent=True) or {}
     with db() as c:
         c.execute(
-            "INSERT OR REPLACE INTO inventario (ingrediente, stock_kg, alerta_minimo_kg, proveedor, precio_kg, ultima_actualizacion, bodega, unidad) VALUES (?,?,?,?,?,?,?,?)",
+            """INSERT OR REPLACE INTO inventario
+               (ingrediente, stock_kg, alerta_minimo_kg, proveedor, precio_kg,
+                ultima_actualizacion, bodega, unidad, categoria, subcategoria)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
             (d.get('ingrediente',''), float(d.get('stock_kg',0)), float(d.get('alerta_minimo_kg',1)),
              d.get('proveedor',''), float(d.get('precio_kg',0)), date.today().isoformat(),
-             d.get('bodega','ingredientes'), d.get('unidad','kg'))
+             d.get('bodega','ingredientes'), d.get('unidad','kg'),
+             d.get('categoria',''), d.get('subcategoria',''))
         )
     return jsonify({'ok': True})
 
@@ -2627,10 +2651,14 @@ def api_inventario_update(iid):
     d = request.get_json(silent=True) or {}
     with db() as c:
         c.execute(
-            "UPDATE inventario SET stock_kg=?, alerta_minimo_kg=?, proveedor=?, precio_kg=?, ultima_actualizacion=?, bodega=?, unidad=? WHERE id=?",
+            """UPDATE inventario SET
+               stock_kg=?, alerta_minimo_kg=?, proveedor=?, precio_kg=?,
+               ultima_actualizacion=?, bodega=?, unidad=?, categoria=?, subcategoria=?
+               WHERE id=?""",
             (float(d.get('stock_kg',0)), float(d.get('alerta_minimo_kg',1)),
              d.get('proveedor',''), float(d.get('precio_kg',0)), date.today().isoformat(),
-             d.get('bodega','ingredientes'), d.get('unidad','kg'), iid)
+             d.get('bodega','ingredientes'), d.get('unidad','kg'),
+             d.get('categoria',''), d.get('subcategoria',''), iid)
         )
     return jsonify({'ok': True})
 
