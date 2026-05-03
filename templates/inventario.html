@@ -117,14 +117,14 @@
       </div>
       <div class="form-row fr-2">
         <div class="form-group">
-          <label class="label">Categoría</label>
+          <label>Categoría</label>
           <input id="f-categoria" type="text" class="form-control" list="dl-categorias"
                  placeholder="Ej: Harina, Grasa, Levadura…" style="width:100%"
                  oninput="filtrarSubcategorias()">
           <datalist id="dl-categorias"></datalist>
         </div>
         <div class="form-group">
-          <label class="label">Subcategoría</label>
+          <label>Subcategoría</label>
           <input id="f-subcategoria" type="text" class="form-control" list="dl-subcategorias"
                  placeholder="Ej: Blanca, Integral…" style="width:100%">
           <datalist id="dl-subcategorias"></datalist>
@@ -199,12 +199,13 @@ function filtrarSubcategorias() {
 function filtrarPorCategoria() {
   const cat    = document.getElementById('f-cat-filter').value;
   const subcat = document.getElementById('f-subcat-filter').value;
-  // Actualizar subcategorías disponibles en el segundo select
+  // Repopulate subcat options based on category
   const subs = cat ? (categoriasData.subcategorias[cat] || []) : [];
   const selSub = document.getElementById('f-subcat-filter');
+  const prevSubcat = selSub.value;
   selSub.innerHTML = '<option value="">Todas las subcategorías</option>' +
     subs.map(s => `<option value="${s}">${s}</option>`).join('');
-  // Filtrar items mostrados
+  if (subs.includes(prevSubcat)) selSub.value = prevSubcat;
   renderTab(cat, selSub.value);
 }
 
@@ -225,6 +226,15 @@ function setTab(el) {
   document.querySelectorAll('.bodega-tab').forEach(t => t.classList.remove('active'));
   el.classList.add('active');
   tabActual = el.dataset.key;
+  // Reset and hide category filter bar when not on ingredientes tab
+  const catBar = document.getElementById('cat-filter-bar');
+  if (catBar) {
+    catBar.style.display = tabActual === 'ingredientes' ? 'flex' : 'none';
+    if (tabActual !== 'ingredientes') {
+      document.getElementById('f-cat-filter').value = '';
+      document.getElementById('f-subcat-filter').innerHTML = '<option value="">Todas las subcategorías</option>';
+    }
+  }
   renderTab();
 }
 
