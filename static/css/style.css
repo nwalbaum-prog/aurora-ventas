@@ -1,31 +1,36 @@
-/* Aurora Bakers — dashboard — paleta oficial */
+/* Aurora Bakers — Manual de Lineamientos Gráficos, enero 2026 */
+/* Paleta principal: Fuego #d41e2f · Corteza #816b50 · Miga #e4e1d7 */
+/* Paleta extendida: Horno #e17d34 · Sol #e8b036 · Cielo #4995aa · Oliva #729763 */
+/* Tipografía: Courier Prime 400/700 (Google Fonts) */
+@import url('https://fonts.googleapis.com/css2?family=Courier+Prime:ital,wght@0,400;0,700;1,400&display=swap');
+
 :root {
-  /* Área de contenido — fondo blanco/crema */
-  --bg:          #f2ede8;
+  /* ── Fondos — inspirados en Miga ────────────────────────── */
+  --bg:          #f5f1ea;   /* miga suavizado */
   --bg-card:     #ffffff;
-  --bg-input:    #faf8f6;
-  --border:      #e0d4c8;
-  --text:        #1a1410;
-  --muted:       #7a6958;
+  --bg-input:    #faf8f4;
+  --border:      #ddd6c8;   /* miga oscuro */
+  --text:        #1a1208;   /* negro cálido */
+  --muted:       #816b50;   /* corteza — color oficial */
 
-  /* Aurora Bakers rojo oficial */
-  --accent:      #C8312E;
-  --accent-h:    #a82826;
-  --accent-dim:  rgba(200,49,46,.1);
+  /* ── Fuego — color primario de marca ────────────────────── */
+  --accent:      #d41e2f;   /* fuego oficial */
+  --accent-h:    #b01826;
+  --accent-dim:  rgba(212,30,47,.1);
 
-  /* Trigo dorado (lema "Tu pan de cada día") */
-  --aurora:      #9B7A50;
-  --aurora-dim:  rgba(155,122,80,.12);
+  /* ── Horno — naranja secundario (paleta extendida) ───────── */
+  --aurora:      #e17d34;   /* horno oficial */
+  --aurora-dim:  rgba(225,125,52,.12);
 
-  /* Estados funcionales — ajustados a fondo claro */
-  --success:     #1e7e42;
-  --success-dim: rgba(30,126,66,.1);
-  --warning:     #b87a10;
-  --warning-dim: rgba(184,122,16,.1);
-  --danger:      #c83030;
-  --danger-dim:  rgba(200,48,48,.1);
-  --info:        #1d66b0;
-  --info-dim:    rgba(29,102,176,.1);
+  /* ── Estados usando paleta extendida oficial ─────────────── */
+  --success:     #527a3b;   /* oliva #729763 oscurecido para legibilidad */
+  --success-dim: rgba(114,151,99,.13);
+  --warning:     #966b00;   /* sol #e8b036 oscurecido */
+  --warning-dim: rgba(232,176,54,.15);
+  --danger:      #d41e2f;   /* fuego */
+  --danger-dim:  rgba(212,30,47,.1);
+  --info:        #2d7d96;   /* cielo #4995aa oscurecido */
+  --info-dim:    rgba(73,149,170,.13);
 
   --sw:  225px;
   --th:  58px;
@@ -37,8 +42,8 @@
 
 body {
   background:var(--bg); color:var(--text);
-  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
-  font-size:13.5px; line-height:1.5;
+  font-family:'Courier Prime','Courier New',Courier,monospace;
+  font-size:13.5px; line-height:1.55;
 }
 a { color:inherit; text-decoration:none; }
 
@@ -50,11 +55,11 @@ a { color:inherit; text-decoration:none; }
   --border:     rgba(255,255,255,.08);
   --bg-card:    #111111;
   --bg-input:   #1e1e1e;
-  --accent-dim: rgba(200,49,46,.2);
+  --accent-dim: rgba(212,30,47,.2);
 
   position:fixed; top:0; left:0;
   width:var(--sw); height:100vh;
-  background:#111111;
+  background:#100d09;
   border-right:1px solid rgba(255,255,255,.07);
   display:flex; flex-direction:column; z-index:100;
 }
@@ -63,7 +68,7 @@ a { color:inherit; text-decoration:none; }
   display:flex; align-items:center; justify-content:center;
   padding:14px 16px;
   border-bottom:1px solid rgba(255,255,255,.08);
-  background:linear-gradient(135deg, rgba(200,49,46,.15) 0%, transparent 60%);
+  background:linear-gradient(135deg, rgba(212,30,47,.18) 0%, transparent 60%);
 }
 
 .logo-img {
@@ -87,10 +92,10 @@ a { color:inherit; text-decoration:none; }
   color:rgba(255,255,255,.5); font-size:13px; font-weight:500;
   transition:all .15s; cursor:pointer;
 }
-.nav-item:hover { background:rgba(200,49,46,.15); color:#fff; }
+.nav-item:hover { background:rgba(212,30,47,.16); color:#fff; }
 .nav-item.active {
-  background:rgba(200,49,46,.22);
-  color:#e86a68;
+  background:rgba(212,30,47,.24);
+  color:#f07070;
   border-left:2px solid var(--accent);
   padding-left:9px;
 }
@@ -163,7 +168,7 @@ a { color:inherit; text-decoration:none; }
   border-bottom:1px solid var(--border);
   margin:-20px -20px 16px;
   border-radius:var(--rl) var(--rl) 0 0;
-  background:#faf8f6;
+  background:#f0ebe2;
 }
 .card-header h3 { font-size:.85rem; font-weight:700; color:var(--text); display:flex; align-items:center; gap:.5rem; }
 .card-0p { padding:0; }
@@ -207,7 +212,7 @@ a { color:inherit; text-decoration:none; }
   font-family:inherit;
 }
 .filter-tab:hover  { color:var(--text); }
-.filter-tab.active { background:var(--accent); color:#fff; box-shadow:0 1px 3px rgba(200,49,46,.3); }
+.filter-tab.active { background:var(--accent); color:#fff; box-shadow:0 1px 3px rgba(212,30,47,.3); }
 
 .btn-ghost { background:transparent; color:var(--muted); border:1px solid var(--border); }
 .btn-ghost:hover { border-color:var(--muted); color:var(--text); }
@@ -225,10 +230,10 @@ thead th {
   color:var(--muted);
   border-bottom:2px solid var(--border);
   white-space:nowrap; text-align:left;
-  background:#faf8f6;
+  background:#f0ebe2;
 }
 tbody tr { border-bottom:1px solid var(--border); transition:background .12s; }
-tbody tr:hover { background:rgba(200,49,46,.03); }
+tbody tr:hover { background:rgba(212,30,47,.03); }
 tbody td { padding:10px 14px; color:var(--text); }
 td.mono { font-family:'SF Mono',Consolas,monospace; font-size:13px; }
 td.right,th.right { text-align:right; }
@@ -277,8 +282,8 @@ input[type="date"] { color-scheme:light; }
 .btn-secondary:hover { border-color:var(--muted); background:#ede8e2; }
 .btn-success  { background:var(--success-dim); color:var(--success); border:1px solid rgba(30,126,66,.2); }
 .btn-success:hover { background:rgba(30,126,66,.18); }
-.btn-danger   { background:var(--danger-dim); color:var(--danger); border:1px solid rgba(200,48,48,.2); }
-.btn-danger:hover { background:rgba(200,48,48,.18); }
+.btn-danger   { background:var(--danger-dim); color:var(--danger); border:1px solid rgba(212,30,47,.2); }
+.btn-danger:hover { background:rgba(212,30,47,.18); }
 .btn-warning  { background:var(--warning-dim); color:var(--warning); border:1px solid rgba(184,122,16,.2); }
 .btn-warning:hover { background:rgba(184,122,16,.18); }
 .btn-sm { padding:5px 10px; font-size:12px; }
@@ -471,8 +476,8 @@ input[type="date"] { color-scheme:light; }
   cursor:default;
 }
 .gantt-day-col.today {
-  background:rgba(200,49,46,.08);
-  border-right-color:rgba(200,49,46,.3);
+  background:rgba(212,30,47,.08);
+  border-right-color:rgba(212,30,47,.3);
 }
 .gantt-day-col.weekend { background:rgba(0,0,0,.025); }
 .gantt-cell-left {
@@ -480,9 +485,9 @@ input[type="date"] { color-scheme:light; }
   padding:5px 8px; border-bottom:1px solid var(--border);
   min-height:40px; overflow:hidden; transition:background .12s;
 }
-.gantt-cell-left:hover { background:rgba(200,49,46,.04); }
+.gantt-cell-left:hover { background:rgba(212,30,47,.04); }
 .gantt-cell-left.subtask { background:rgba(0,0,0,.02); min-height:34px; }
-.gantt-cell-left.subtask:hover { background:rgba(200,49,46,.05); }
+.gantt-cell-left.subtask:hover { background:rgba(212,30,47,.05); }
 .gantt-cell-left.done { opacity:.55; }
 .gantt-cell-right {
   position:relative; height:40px;
@@ -508,7 +513,7 @@ input[type="date"] { color-scheme:light; }
 .gantt-cell-left:hover .gantt-actions { opacity:1; }
 .gantt-today-line {
   position:absolute; top:0; bottom:0; width:1px;
-  background:rgba(200,49,46,.5); pointer-events:none; z-index:3;
+  background:rgba(212,30,47,.5); pointer-events:none; z-index:3;
 }
 .btn-icon {
   background:none; border:none; cursor:pointer; color:var(--muted);
