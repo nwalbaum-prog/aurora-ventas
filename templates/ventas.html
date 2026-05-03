@@ -211,6 +211,14 @@ async function init() {
   document.getElementById('v-fecha').value          = today;
   document.getElementById('v-fecha-despacho').value = today;
 
+  // Skeleton en tabla de stock mientras carga
+  const stockTbody = document.getElementById('stock-tbody');
+  if (stockTbody) {
+    stockTbody.innerHTML = Array(5).fill(
+      `<tr>${Array(7).fill('<td><div class="skeleton-text" style="width:80%"></div></td>').join('')}</tr>`
+    ).join('');
+  }
+
   [productos, clientes] = await Promise.all([
     api('GET', '/api/productos'),
     api('GET', '/api/clientes'),
@@ -228,6 +236,12 @@ async function init() {
 
   addItem();
   loadResumen();
+
+  // Auto-focus en el primer select de producto
+  setTimeout(() => {
+    const firstProd = document.querySelector('#items-box select.prod-select');
+    if (firstProd) firstProd.focus();
+  }, 100);
 }
 
 // ── Precios ───────────────────────────────────────────────────────────────────
@@ -247,7 +261,7 @@ function addItem() {
   const row = document.createElement('div');
   row.className = 'item-row';
   row.innerHTML = `
-    <select onchange="fillPrice(this)">
+    <select class="prod-select" onchange="fillPrice(this)">
       <option value="">— Producto —</option>
       ${productos.map(p=>`<option value="${p.id}" data-precio="${p.precio}" data-precio-mayorista="${p.precio_mayorista||0}">${p.nombre}</option>`).join('')}
     </select>

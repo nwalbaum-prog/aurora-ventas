@@ -84,8 +84,17 @@ let searchTimer   = null;
 
 function fmt(n) { return '$' + Math.round(n).toLocaleString('es-CL'); }
 
+// ── Skeleton helpers ──────────────────────────────────────────────────────────
+function showSkeleton() {
+  document.getElementById('grid-frecuentes').innerHTML =
+    Array(4).fill('<div class="skeleton" style="height:56px;border-radius:.4rem"></div>').join('');
+  document.getElementById('lista-productos').innerHTML =
+    Array(8).fill('<div class="skeleton-row" style="border-radius:.4rem;margin-bottom:.3rem"></div>').join('');
+}
+
 // ── Carga inicial ─────────────────────────────────────────────────────────────
 async function init() {
+  showSkeleton();
   const [rProd, rPromo] = await Promise.all([
     fetch('/api/pos/productos'),
     fetch('/api/pos/promociones')
@@ -99,6 +108,8 @@ async function init() {
 
   renderFrecuentes();
   renderProductos(todosProductos);
+  // Auto-focus en el buscador al cargar
+  document.getElementById('search-input').focus();
 }
 
 // ── Frecuentes ────────────────────────────────────────────────────────────────
@@ -145,9 +156,10 @@ function renderProductos(prods) {
   if (!prods.length) { el.innerHTML = '<p style="color:var(--text-3);font-size:.8rem;padding:.5rem">Sin resultados</p>'; return; }
   el.innerHTML = prods.map(p => {
     const promo = promoActivas.find(x => x.producto_id == p.id);
-    return `<div class="prod-row" onclick='agregarProducto(${p.id},${JSON.stringify(p.nombre)},${p.precio})'
-          style="background:var(--bg-2);border:1px solid var(--border);border-radius:.4rem;padding:.45rem .75rem;
-                 margin-bottom:.3rem;display:flex;justify-content:space-between;align-items:center;cursor:pointer">
+    return `<div class="prod-row" data-pid="${p.id}"
+               onclick='agregarProducto(${p.id},${JSON.stringify(p.nombre)},${p.precio},this)'
+               style="background:var(--bg-2);border:1px solid var(--border);border-radius:.4rem;padding:.45rem .75rem;
+                      margin-bottom:.3rem;display:flex;justify-content:space-between;align-items:center">
       <div>
         <span style="font-size:.85rem">${p.nombre}</span>
         ${promo ? `<span style="font-size:.7rem;color:var(--blue);margin-left:.4rem">🏷️ ${promo.nombre}</span>` : ''}
@@ -159,12 +171,26 @@ function renderProductos(prods) {
 }
 
 // ── Carrito ───────────────────────────────────────────────────────────────────
-function agregarProducto(id, nombre, precio) {
+function agregarProducto(id, nombre, precio, srcEl) {
   const existing = carrito.find(i => i.producto_id == id);
   if (existing) { existing.cantidad++; }
   else { carrito.push({producto_id: id, nombre, precio_unitario: precio, cantidad: 1}); }
   renderCarrito();
   syncCarrito();
+  // Flash visual en la fila del producto clicado
+  const row = srcEl || document.querySelector(`.prod-row[data-pid="${id}"]`);
+  if (row) {
+    row.classList.remove('flash-add');
+    void row.offsetWidth; // reflow para reiniciar animación
+    row.classList.add('flash-add');
+    setTimeout(() => row.classList.remove('flash-add'), 500);
+  }
+  // Pop en el total del carrito
+  const tv = document.getElementById('total-val');
+  tv.classList.remove('num-pop');
+  void tv.offsetWidth;
+  tv.classList.add('num-pop');
+  setTimeout(() => tv.classList.remove('num-pop'), 250);
 }
 
 function cambiarCantidad(id, delta) {
