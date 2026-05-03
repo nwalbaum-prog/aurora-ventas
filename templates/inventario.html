@@ -42,6 +42,14 @@
 
 <!-- Tabla -->
 <div class="card">
+  <div style="display:flex;gap:.5rem;margin-bottom:.75rem;flex-wrap:wrap" id="cat-filter-bar">
+    <select id="f-cat-filter" class="form-control" style="width:160px" onchange="filtrarPorCategoria()">
+      <option value="">Todas las categorías</option>
+    </select>
+    <select id="f-subcat-filter" class="form-control" style="width:160px" onchange="filtrarPorCategoria()">
+      <option value="">Todas las subcategorías</option>
+    </select>
+  </div>
   <div class="table-wrap">
     <table>
       <thead id="thead-inv"></thead>
@@ -107,6 +115,21 @@
           <input id="f-precio" type="number" class="form-control" placeholder="0">
         </div>
       </div>
+      <div class="form-row fr-2">
+        <div class="form-group">
+          <label class="label">Categoría</label>
+          <input id="f-categoria" type="text" class="form-control" list="dl-categorias"
+                 placeholder="Ej: Harina, Grasa, Levadura…" style="width:100%"
+                 oninput="filtrarSubcategorias()">
+          <datalist id="dl-categorias"></datalist>
+        </div>
+        <div class="form-group">
+          <label class="label">Subcategoría</label>
+          <input id="f-subcategoria" type="text" class="form-control" list="dl-subcategorias"
+                 placeholder="Ej: Blanca, Integral…" style="width:100%">
+          <datalist id="dl-subcategorias"></datalist>
+        </div>
+      </div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeModal('modal-inv')">Cancelar</button>
@@ -153,8 +176,41 @@ let tabActual  = 'ingredientes';
 let editId     = null;
 let ajusteId   = null;
 
+let categoriasData = { categorias: [], subcategorias: {} };
+
+async function cargarCategorias() {
+  categoriasData = await api('GET', '/api/inventario/categorias');
+  // Poblar datalist del modal
+  document.getElementById('dl-categorias').innerHTML =
+    categoriasData.categorias.map(c => `<option value="${c}">`).join('');
+  // Poblar select de filtro
+  const sel = document.getElementById('f-cat-filter');
+  sel.innerHTML = '<option value="">Todas las categorías</option>' +
+    categoriasData.categorias.map(c => `<option value="${c}">${c}</option>`).join('');
+}
+
+function filtrarSubcategorias() {
+  const cat = document.getElementById('f-categoria').value;
+  const subs = categoriasData.subcategorias[cat] || [];
+  document.getElementById('dl-subcategorias').innerHTML =
+    subs.map(s => `<option value="${s}">`).join('');
+}
+
+function filtrarPorCategoria() {
+  const cat    = document.getElementById('f-cat-filter').value;
+  const subcat = document.getElementById('f-subcat-filter').value;
+  // Actualizar subcategorías disponibles en el segundo select
+  const subs = cat ? (categoriasData.subcategorias[cat] || []) : [];
+  const selSub = document.getElementById('f-subcat-filter');
+  selSub.innerHTML = '<option value="">Todas las subcategorías</option>' +
+    subs.map(s => `<option value="${s}">${s}</option>`).join('');
+  // Filtrar items mostrados
+  renderTab(cat, selSub.value);
+}
+
 async function load() {
   todosItems = await api('GET', '/api/inventario');
+  await cargarCategorias();
 
   // Contadores por tab
   Object.keys(BODEGAS).forEach(key => {
@@ -172,8 +228,12 @@ function setTab(el) {
   renderTab();
 }
 
-function renderTab() {
-  const items = todosItems.filter(i => i.bodega === tabActual);
+function renderTab(cat, subcat) {
+  cat    = cat    !== undefined ? cat    : (document.getElementById('f-cat-filter')?.value    || '');
+  subcat = subcat !== undefined ? subcat : (document.getElementById('f-subcat-filter')?.value || '');
+  let items = todosItems.filter(i => i.bodega === tabActual);
+  if (cat)    items = items.filter(i => i.categoria    === cat);
+  if (subcat) items = items.filter(i => i.subcategoria === subcat);
   const alertas = items.filter(i => i.stock_kg <= 0);
   const reponer = items.filter(i => i.stock_kg > 0 && i.stock_kg <= i.alerta_minimo_kg);
 
@@ -194,6 +254,7 @@ function renderTab() {
   // Cabecera
   document.getElementById('thead-inv').innerHTML = `<tr>
     <th>Ítem</th>
+    <th>Categoría</th>
     <th class="right">Stock</th>
     <th class="right">Alerta mín.</th>
     <th>Estado</th>
@@ -212,8 +273,12 @@ function renderTab() {
           : i.stock_kg <= i.alerta_minimo_kg
             ? '<span class="badge" style="background:#fef3c7;color:#92400e">Reponer</span>'
             : '<span class="badge" style="background:#dcfce7;color:#166534">OK</span>';
+        const catLabel = i.categoria
+          ? (i.subcategoria ? `${i.categoria} / ${i.subcategoria}` : i.categoria)
+          : '<span style="color:var(--muted)">—</span>';
         return `<tr>
           <td class="fw-600">${i.ingrediente}</td>
+          <td style="font-size:.8rem">${catLabel}</td>
           <td class="right mono">${i.stock_kg % 1 === 0 ? i.stock_kg : i.stock_kg.toFixed(2)} ${u}</td>
           <td class="right mono text-muted">${i.alerta_minimo_kg % 1 === 0 ? i.alerta_minimo_kg : i.alerta_minimo_kg.toFixed(2)} ${u}</td>
           <td>${badge}</td>
@@ -238,7 +303,7 @@ function renderTab() {
           </td>
         </tr>`;
       }).join('')
-    : `<tr><td colspan="8"><div class="empty"><i class="bi bi-inbox"></i><p>Sin ítems en esta bodega</p></div></td></tr>`;
+    : `<tr><td colspan="9"><div class="empty"><i class="bi bi-inbox"></i><p>Sin ítems en esta bodega</p></div></td></tr>`;
 }
 
 function onBodegaChange() {
@@ -259,6 +324,8 @@ function abrirNuevo() {
   document.getElementById('f-alerta').value = '1';
   document.getElementById('f-proveedor').value = '';
   document.getElementById('f-precio').value = '';
+  document.getElementById('f-categoria').value    = '';
+  document.getElementById('f-subcategoria').value = '';
   openModal('modal-inv');
 }
 
@@ -274,6 +341,9 @@ function abrirEditar(i) {
   document.getElementById('f-alerta').value = i.alerta_minimo_kg;
   document.getElementById('f-proveedor').value = i.proveedor || '';
   document.getElementById('f-precio').value = i.precio_kg || 0;
+  document.getElementById('f-categoria').value    = i.categoria    || '';
+  document.getElementById('f-subcategoria').value = i.subcategoria || '';
+  filtrarSubcategorias();
   openModal('modal-inv');
 }
 
@@ -296,6 +366,8 @@ async function guardar() {
     alerta_minimo_kg: parseFloat(document.getElementById('f-alerta').value) || 1,
     proveedor:        document.getElementById('f-proveedor').value.trim(),
     precio_kg:        parseFloat(document.getElementById('f-precio').value) || 0,
+    categoria:        document.getElementById('f-categoria').value.trim(),
+    subcategoria:     document.getElementById('f-subcategoria').value.trim(),
   };
   try {
     if (editId) await api('PUT', `/api/inventario/${editId}`, body);
