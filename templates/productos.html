@@ -22,6 +22,7 @@
       <thead><tr>
         <th>Producto</th>
         <th>Categoría</th>
+        <th>Sub categoría</th>
         <th>Unidad</th>
         <th class="right">Precio retail</th>
         <th class="right">Precio mayorista</th>
@@ -30,7 +31,7 @@
         <th></th>
       </tr></thead>
       <tbody id="prod-tbody">
-        <tr><td colspan="7" class="text-center text-muted" style="padding:40px">Cargando...</td></tr>
+        <tr><td colspan="9" class="text-center text-muted" style="padding:40px">Cargando...</td></tr>
       </tbody>
     </table>
   </div>
@@ -48,17 +49,21 @@
       <label>Nombre *</label>
       <input type="text" id="p-nombre" placeholder="Ej: Hogaza Integral">
     </div>
+    <div class="form-group">
+      <label>Descripción</label>
+      <input type="text" id="p-descripcion" placeholder="Descripción breve">
+    </div>
     <div class="form-row fr-2">
-      <div class="form-group">
-        <label>Descripción</label>
-        <input type="text" id="p-descripcion" placeholder="Descripción breve">
-      </div>
       <div class="form-group">
         <label>Categoría</label>
         <select id="p-categoria">
           <option value="pan">🍞 Pan</option>
           <option value="suscripcion">📦 Suscripción</option>
         </select>
+      </div>
+      <div class="form-group">
+        <label>Sub categoría</label>
+        <input type="text" id="p-subcategoria" placeholder="Ej: Marraqueta, Hogaza, Bollos…">
       </div>
     </div>
 
@@ -119,6 +124,7 @@
       <button class="modal-close" onclick="closeModal('ficha-modal')"><i class="bi bi-x-lg"></i></button>
     </div>
     <input type="hidden" id="ficha-pid">
+    <input type="hidden" id="ficha-precio-prod">
 
     <!-- Harina base -->
     <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:.75rem 1rem;margin-bottom:1rem">
@@ -129,7 +135,7 @@
         <div class="form-group" style="margin:0">
           <label>Harina total por unidad (kg)</label>
           <input type="number" id="ficha-harina-kg" step="0.001" min="0" placeholder="ej: 0.080"
-                 oninput="fichaActualizarGramos()">
+                 oninput="fichaActualizarGramos();actualizarCostoFooter()">
           <div style="font-size:.75rem;color:var(--muted);margin-top:.25rem">
             Esta es la base del 100% panadero
           </div>
@@ -155,8 +161,10 @@
     <table style="width:100%;border-collapse:collapse;font-size:.84rem;margin-bottom:.6rem" id="ficha-table">
       <thead><tr>
         <th style="text-align:left;padding:.3rem .4rem;color:var(--muted);font-size:.7rem;text-transform:uppercase">Ingrediente</th>
-        <th style="text-align:right;padding:.3rem .4rem;color:var(--muted);font-size:.7rem;text-transform:uppercase;width:100px">% panadero</th>
-        <th style="text-align:right;padding:.3rem .4rem;color:var(--muted);font-size:.7rem;text-transform:uppercase;width:80px">g/unidad</th>
+        <th style="text-align:left;padding:.3rem .4rem;color:var(--muted);font-size:.7rem;text-transform:uppercase">Inventario</th>
+        <th style="text-align:right;padding:.3rem .4rem;color:var(--muted);font-size:.7rem;text-transform:uppercase;width:80px">% panadero</th>
+        <th style="text-align:right;padding:.3rem .4rem;color:var(--muted);font-size:.7rem;text-transform:uppercase;width:70px">g/unidad</th>
+        <th style="text-align:right;padding:.3rem .4rem;color:var(--muted);font-size:.7rem;text-transform:uppercase;width:80px">Costo unit.</th>
         <th style="width:32px"></th>
       </tr></thead>
       <tbody id="ficha-tbody"></tbody>
@@ -172,7 +180,12 @@
       <i class="bi bi-plus"></i> Agregar ingrediente
     </button>
 
-    <div class="modal-footer" style="margin-top:1rem">
+    <div id="ficha-costo-footer" style="font-size:.82rem;color:var(--muted);padding:.5rem 0;border-top:1px solid var(--border);margin-top:.75rem;margin-bottom:.5rem">
+      Costo teórico: <strong id="ficha-costo-teorico" style="color:var(--accent)">—</strong>
+      <span id="ficha-margen-teorico" style="margin-left:.75rem"></span>
+      <span id="ficha-sin-vincular-warn" style="margin-left:.5rem;color:#ca8a04;display:none">⚠️ Costo parcial</span>
+    </div>
+    <div class="modal-footer" style="margin-top:.5rem">
       <button class="btn btn-secondary" onclick="closeModal('ficha-modal')">Cancelar</button>
       <button class="btn btn-primary" onclick="fichaGuardar()"><i class="bi bi-floppy"></i> Guardar ficha</button>
     </div>
@@ -218,7 +231,7 @@ function render() {
   const tbody = document.getElementById('prod-tbody');
   const lista = filtroCat ? productos.filter(p => p.categoria === filtroCat) : productos;
   if (!lista.length) {
-    tbody.innerHTML = '<tr><td colspan="8"><div class="empty"><i class="bi bi-basket"></i><p>Sin productos</p></div></td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9"><div class="empty"><i class="bi bi-basket"></i><p>Sin productos</p></div></td></tr>';
     return;
   }
   tbody.innerHTML = lista.map(p => {
@@ -233,6 +246,7 @@ function render() {
         <div class="text-muted text-sm">${p.descripcion||''}</div>
       </td>
       <td>${catBadge(p.categoria||'pan')}</td>
+      <td class="text-muted text-sm">${p.subcategoria||'<span style="color:var(--text-3)">—</span>'}</td>
       <td class="text-muted">${p.unidad}</td>
       <td class="right">
         <div class="mono fw-600 text-white">${clp(p.precio)}</div>
@@ -251,7 +265,7 @@ function render() {
       <td class="right mono fw-600" style="color:${stockColor}">${p.stock}</td>
       <td>
         <div class="flex gap-8">
-          <button class="btn btn-secondary btn-icon btn-sm" onclick='openFicha(${p.id},${JSON.stringify(p.nombre)})' title="Ficha técnica"><i class="bi bi-journal-text"></i></button>
+          <button class="btn btn-secondary btn-icon btn-sm" onclick='openFicha(${p.id},${JSON.stringify(p.nombre)},${p.precio||0})' title="Ficha técnica"><i class="bi bi-journal-text"></i></button>
           <button class="btn btn-secondary btn-icon btn-sm" onclick="openEdit(${p.id})" title="Editar"><i class="bi bi-pencil"></i></button>
           <button class="btn btn-danger btn-icon btn-sm" onclick="deleteProducto(${p.id})" title="Eliminar"><i class="bi bi-trash3"></i></button>
         </div>
@@ -279,7 +293,7 @@ function calcMargen() {
 function openAdd() {
   document.getElementById('p-id').value = '';
   document.getElementById('prod-modal-title').textContent = 'Nuevo Producto';
-  ['nombre','descripcion','precio','precio-mayorista','costo','stock'].forEach(f =>
+  ['nombre','descripcion','precio','precio-mayorista','costo','stock','subcategoria'].forEach(f =>
     document.getElementById('p-'+f).value = ''
   );
   document.getElementById('p-unidad').value    = 'unidad';
@@ -302,6 +316,7 @@ function openEdit(id) {
   document.getElementById('p-stock').value                = p.stock;
   document.getElementById('p-unidad').value               = p.unidad;
   document.getElementById('p-categoria').value            = p.categoria||'pan';
+  document.getElementById('p-subcategoria').value         = p.subcategoria||'';
   calcMargen();
   openModal('prod-modal');
 }
@@ -319,6 +334,7 @@ async function saveProducto() {
     stock:            parseFloat(document.getElementById('p-stock').value)  || 0,
     unidad:           document.getElementById('p-unidad').value,
     categoria:        document.getElementById('p-categoria').value,
+    subcategoria:     document.getElementById('p-subcategoria').value.trim(),
   };
   const id = document.getElementById('p-id').value;
   try {
@@ -344,6 +360,7 @@ loadProductos();
 
 // ── Ficha técnica — % panadero ────────────────────────────────────────────────
 let _fichaIngDisponibles = [];
+let fichaInventario = [];  // items de inventario bodega:ingredientes
 
 document.getElementById('ficha-tipo-harina').addEventListener('change', function() {
   document.getElementById('ficha-mixta-hint').style.display = this.value === 'mixta' ? '' : 'none';
@@ -365,19 +382,119 @@ function fichaActualizarGramos() {
   });
 }
 
-async function openFicha(pid, nombre) {
+function fichaActualizarInv(sel) {
+  const tr = sel.closest('tr');
+  const invId = parseInt(sel.value) || null;
+  const inv = fichaInventario.find(i => i.id === invId);
+
+  // Actualizar badge sin vincular
+  let badge = tr.querySelector('.ficha-sin-vincular-badge');
+  if (invId) {
+    if (badge) badge.remove();
+  } else {
+    if (!badge) {
+      badge = document.createElement('span');
+      badge.className = 'ficha-sin-vincular-badge';
+      badge.style.cssText = 'background:rgba(234,179,8,.15);color:#ca8a04;font-size:.68rem;padding:1px 5px;border-radius:8px;margin-left:4px';
+      badge.textContent = '⚠️ Sin vincular';
+      sel.parentNode.appendChild(badge);
+    }
+  }
+
+  // Actualizar costo unitario en la columna
+  const costoEl = tr.querySelector('.ficha-costo-unit');
+  if (costoEl) {
+    const harinaKg = parseFloat(document.getElementById('ficha-harina-kg').value) || 0;
+    const pct = parseFloat(tr.querySelector('.ficha-pct').value) || 0;
+    if (inv && inv.precio_kg && harinaKg > 0) {
+      const costoUnit = harinaKg * pct / 100 * inv.precio_kg;
+      costoEl.textContent = '$' + Math.round(costoUnit).toLocaleString('es-CL');
+    } else {
+      costoEl.textContent = '—';
+    }
+  }
+
+  // Si hay un nombre de inventario, actualizar también el select de ingrediente
+  if (inv) {
+    const ingSel = tr.querySelector('.ficha-ing-sel');
+    if (ingSel) {
+      const match = Array.from(ingSel.options).find(o => o.value === inv.ingrediente);
+      if (match) ingSel.value = inv.ingrediente;
+    }
+  }
+
+  actualizarCostoFooter();
+}
+
+function actualizarCostoFooter() {
+  const harinaKg = parseFloat(document.getElementById('ficha-harina-kg').value) || 0;
+  // Precio retail del producto (guardado en el hidden input al abrir ficha)
+  const precio = parseFloat(document.getElementById('ficha-precio-prod').value) || 0;
+
+  let costo = 0;
+  let sinVincular = 0;
+  let totalFilas = 0;
+
+  document.querySelectorAll('#ficha-tbody tr').forEach(tr => {
+    totalFilas++;
+    const invSel = tr.querySelector('.ficha-inv-sel');
+    const pct = parseFloat(tr.querySelector('.ficha-pct')?.value) || 0;
+    const invId = invSel ? (parseInt(invSel.value) || null) : null;
+    const inv = invId ? fichaInventario.find(i => i.id === invId) : null;
+
+    if (inv && inv.precio_kg && harinaKg > 0 && pct > 0) {
+      costo += harinaKg * pct / 100 * inv.precio_kg;
+      // Actualizar columna costo unit
+      const costoEl = tr.querySelector('.ficha-costo-unit');
+      if (costoEl) costoEl.textContent = '$' + Math.round(harinaKg * pct / 100 * inv.precio_kg).toLocaleString('es-CL');
+    } else {
+      sinVincular++;
+    }
+  });
+
+  const costoEl = document.getElementById('ficha-costo-teorico');
+  if (costoEl) costoEl.textContent = costo > 0 ? '$' + Math.round(costo).toLocaleString('es-CL') : '—';
+
+  const margenEl = document.getElementById('ficha-margen-teorico');
+  if (margenEl && precio > 0 && costo > 0) {
+    const pctM = ((precio - costo) / precio * 100).toFixed(1);
+    const color = pctM >= 50 ? 'var(--success)' : pctM >= 30 ? 'var(--warning)' : 'var(--danger)';
+    margenEl.innerHTML = `Margen: <strong style="color:${color}">${pctM}%</strong>`;
+  } else if (margenEl) {
+    margenEl.innerHTML = '';
+  }
+
+  const sinVincularEl = document.getElementById('ficha-sin-vincular-warn');
+  if (sinVincularEl) sinVincularEl.style.display = sinVincular > 0 && totalFilas > 0 ? '' : 'none';
+}
+
+async function openFicha(pid, nombre, precio) {
   document.getElementById('ficha-pid').value = pid;
   document.getElementById('ficha-nombre').textContent = nombre;
+  document.getElementById('ficha-precio-prod').value = precio || 0;
   document.getElementById('ficha-tbody').innerHTML = '';
   document.getElementById('ficha-harina-kg').value = '';
   document.getElementById('ficha-tipo-harina').value = 'harina blanca';
   document.getElementById('ficha-mixta-hint').style.display = 'none';
+  // Reset footer
+  const costoEl = document.getElementById('ficha-costo-teorico');
+  if (costoEl) costoEl.textContent = '—';
+  const margenEl = document.getElementById('ficha-margen-teorico');
+  if (margenEl) margenEl.innerHTML = '';
+  const sinVinEl = document.getElementById('ficha-sin-vincular-warn');
+  if (sinVinEl) sinVinEl.style.display = 'none';
   openModal('ficha-modal');
 
+  // Carga en paralelo: ingredientes disponibles + inventario bodega ingredientes
   await _cargarIngDisponibles();
+  try {
+    const inv = await api('GET', '/api/inventario?bodega=ingredientes');
+    fichaInventario = Array.isArray(inv) ? inv : (inv.items || []);
+  } catch(e) {
+    fichaInventario = [];
+  }
 
-  const r = await fetch(`/api/recetas/${pid}`);
-  const d = await r.json();
+  const d = await api('GET', `/api/recetas/${pid}`);
   document.getElementById('ficha-harina-kg').value = d.peso_unitario_kg || '';
 
   // Detectar si tiene harinas mixtas en los ingredientes
@@ -396,34 +513,61 @@ async function openFicha(pid, nombre) {
   ings.forEach(i => {
     // Si no es mixta, las filas de harina están implícitas → no mostrar en tabla
     if (tipoActual !== 'mixta' && HARINAS.includes(i.ingrediente)) return;
-    fichaAgregarFila(i.ingrediente, i.porcentaje);
+    fichaAgregarFila(i.ingrediente, i.porcentaje, i.inventario_id || null, i.costo_unitario || null);
   });
   fichaActualizarGramos();
+  actualizarCostoFooter();
 }
 
-function fichaAgregarFila(ingrediente = '', porcentaje = '') {
+function fichaAgregarFila(ingrediente = '', porcentaje = '', inventarioId = null, costoUnitario = null) {
   const tbody = document.getElementById('ficha-tbody');
   const harinaKg = parseFloat(document.getElementById('ficha-harina-kg').value) || 0;
   const g = harinaKg > 0 && porcentaje > 0 ? (harinaKg * porcentaje / 100 * 1000).toFixed(1) + ' g' : '—';
+
+  // Select de ingrediente de texto (lista predefinida)
   const opts = _fichaIngDisponibles.map(i =>
     `<option value="${i}" ${i === ingrediente ? 'selected' : ''}>${i}</option>`
   ).join('');
+
+  // Select de vínculo con inventario
+  const invOpts = fichaInventario.map(i =>
+    `<option value="${i.id}" data-precio="${i.precio_kg || 0}" ${i.id == inventarioId ? 'selected' : ''}>${i.ingrediente} — $${(i.precio_kg || 0).toLocaleString('es-CL')}/kg</option>`
+  ).join('');
+
+  const vinculado = inventarioId != null;
+  const badge = vinculado ? '' : '<span class="ficha-sin-vincular-badge" style="background:rgba(234,179,8,.15);color:#ca8a04;font-size:.68rem;padding:1px 5px;border-radius:8px;margin-left:4px">⚠️ Sin vincular</span>';
+
+  const costoStr = costoUnitario != null
+    ? `$${Math.round(costoUnitario).toLocaleString('es-CL')}`
+    : '—';
+
   const tr = document.createElement('tr');
   tr.innerHTML = `
     <td style="padding:.3rem .4rem">
-      <select style="width:100%;font-size:.84rem" class="form-control">
+      <select style="width:100%;font-size:.84rem" class="form-control ficha-ing-sel">
         <option value="">— Ingrediente —</option>
         ${opts}
       </select>
     </td>
     <td style="padding:.3rem .4rem">
+      <div style="display:flex;align-items:center;gap:4px">
+        <select style="flex:1;font-size:.82rem" class="form-control ficha-inv-sel"
+                onchange="fichaActualizarInv(this)">
+          <option value="">— Inventario —</option>
+          ${invOpts}
+        </select>
+        ${badge}
+      </div>
+    </td>
+    <td style="padding:.3rem .4rem">
       <input type="number" min="0" max="500" step="0.1" value="${porcentaje}"
              placeholder="%" style="width:100%;font-size:.84rem;text-align:right" class="form-control ficha-pct"
-             oninput="fichaActualizarGramos()">
+             oninput="fichaActualizarGramos();actualizarCostoFooter()">
     </td>
     <td style="padding:.3rem .4rem;text-align:right;color:var(--muted);font-size:.8rem;white-space:nowrap" class="ficha-g">${g}</td>
+    <td style="padding:.3rem .4rem;text-align:right;color:var(--muted);font-size:.8rem;white-space:nowrap" class="ficha-costo-unit">${costoStr}</td>
     <td style="padding:.3rem .4rem;text-align:center">
-      <button onclick="this.closest('tr').remove()"
+      <button onclick="this.closest('tr').remove();actualizarCostoFooter()"
               style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:1rem">✕</button>
     </td>`;
   tbody.appendChild(tr);
@@ -441,16 +585,19 @@ async function fichaGuardar() {
 
   // Para blanca/integral: la harina va fija al 100%, sin aparecer en las filas
   if (tipo !== 'mixta') {
-    ingredientes.push({ ingrediente: tipo, porcentaje: 100 });
+    ingredientes.push({ ingrediente: tipo, porcentaje: 100, inventario_id: null });
   }
 
   // Leer todas las filas; en no-mixta se saltan las filas de harina (ya están arriba)
   document.querySelectorAll('#ficha-tbody tr').forEach(tr => {
-    const sel = tr.querySelector('select').value;
+    const ingSel = tr.querySelector('.ficha-ing-sel');
+    const invSel = tr.querySelector('.ficha-inv-sel');
+    const sel = ingSel ? ingSel.value : '';
     const pct = parseFloat(tr.querySelector('.ficha-pct').value) || 0;
     if (!sel || pct <= 0) return;
     if (tipo !== 'mixta' && HARINAS.includes(sel)) return;
-    ingredientes.push({ ingrediente: sel, porcentaje: pct });
+    const inventario_id = invSel ? (parseInt(invSel.value) || null) : null;
+    ingredientes.push({ ingrediente: sel, porcentaje: pct, inventario_id });
   });
 
   try {
