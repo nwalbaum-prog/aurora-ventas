@@ -1186,8 +1186,12 @@ def api_producto_lotes_create():
 @login_required
 def api_producto_lotes_ajustar(lid):
     d     = request.get_json(silent=True) or {}
-    delta = float(d.get('delta', 0))
+    try:
+        delta = float(d.get('delta', 0))
+    except (ValueError, TypeError):
+        return jsonify({'error': 'delta debe ser un número'}), 400
     tipo  = d.get('tipo', 'ajuste')   # 'merma' | 'ajuste'
+    tipo  = tipo if tipo in ('merma', 'ajuste') else 'ajuste'
     notas = d.get('notas', '')
     if delta == 0:
         return jsonify({'error': 'delta no puede ser 0'}), 400

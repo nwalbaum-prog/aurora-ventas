@@ -125,12 +125,18 @@ async function init() {
 // ── Frecuentes ────────────────────────────────────────────────────────────────
 function renderFrecuentes() {
   const g = document.getElementById('grid-frecuentes');
-  g.innerHTML = frecuentes.map(f =>
-    `<button class="btn btn-sm" onclick='agregarProducto(${f.producto_id},${JSON.stringify(f.nombre)},${f.precio})'
+  g.innerHTML = frecuentes.map(f => {
+    if (f.sin_stock) {
+      return `<button class="btn btn-sm" disabled
+               style="background:var(--bg-3);border:1px solid var(--border);padding:.4rem .3rem;font-size:.75rem;text-align:center;line-height:1.2;opacity:.4;pointer-events:none">
+         🍞<br>${f.nombre}<br><span style="color:var(--text-3)">Sin stock</span>
+       </button>`;
+    }
+    return `<button class="btn btn-sm" onclick='agregarProducto(${f.producto_id},${JSON.stringify(f.nombre)},${f.precio})'
              style="background:var(--bg-3);border:1px solid var(--border);padding:.4rem .3rem;font-size:.75rem;text-align:center;line-height:1.2">
        🍞<br>${f.nombre}<br><span style="color:var(--green)">${fmt(f.precio)}</span>
-     </button>`
-  ).join('') + `<button class="btn btn-sm" onclick="location.href='/pos/caja'"
+     </button>`;
+  }).join('') + `<button class="btn btn-sm" onclick="location.href='/pos/caja'"
      style="background:var(--bg-2);border:1px dashed var(--border);padding:.4rem;font-size:.75rem;color:var(--text-3)">
      +<br>Agregar
    </button>`;

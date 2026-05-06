@@ -277,11 +277,15 @@ async function load() {
   todosItems = await api('GET', '/api/inventario');
   await cargarCategorias();
 
-  // Contadores por tab
+  // Contadores por tab (productos_terminados usa lotes, no items de inventario)
   Object.keys(BODEGAS).forEach(key => {
     const cnt = document.getElementById('cnt-' + key);
-    if (cnt) cnt.textContent = todosItems.filter(i => i.bodega === key).length;
+    if (!cnt || key === 'productos_terminados') return;
+    cnt.textContent = todosItems.filter(i => i.bodega === key).length;
   });
+  // Hide the badge for productos_terminados — it shows lot data, not inventario items
+  const cntPT = document.getElementById('cnt-productos_terminados');
+  if (cntPT) cntPT.style.display = 'none';
 
   renderTab();
 }

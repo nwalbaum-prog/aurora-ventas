@@ -204,9 +204,14 @@ def api_pos_productos():
                    LIMIT 100"""
             ).fetchall()
         frecuentes_rows = c.execute(
-            """SELECT pf.id AS frec_id, pf.orden, p.id AS producto_id, p.nombre, p.precio, p.stock
-               FROM pos_frecuentes pf JOIN productos p ON p.id=pf.producto_id
-               WHERE p.activo=1 ORDER BY pf.orden"""
+            """SELECT pf.id AS frec_id, pf.orden, p.id AS producto_id, p.nombre, p.precio, p.stock,
+                      COALESCE(SUM(pl.cantidad_actual), 0) AS stock_lotes
+               FROM pos_frecuentes pf
+               JOIN productos p ON p.id=pf.producto_id
+               LEFT JOIN producto_lotes pl ON pl.producto_id = p.id
+               WHERE p.activo=1
+               GROUP BY pf.id
+               ORDER BY pf.orden"""
         ).fetchall()
     prods_data = []
     for p in productos:
@@ -215,7 +220,7 @@ def api_pos_productos():
         prods_data.append(d)
     return jsonify({
         'productos':  prods_data,
-        'frecuentes': [dict(f) for f in frecuentes_rows]
+        'frecuentes': [dict(f) | {'sin_stock': f['stock_lotes'] == 0} for f in frecuentes_rows]
     })
 
 
