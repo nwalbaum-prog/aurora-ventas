@@ -197,9 +197,16 @@
 <script>
 let productos = [];
 let filtroCat = '';
+let costosMap = {};
 
 async function loadProductos() {
-  productos = await api('GET', '/api/productos');
+  const [prods, costos] = await Promise.all([
+    api('GET', '/api/productos'),
+    api('GET', '/api/productos/costos')
+  ]);
+  productos = prods;
+  costosMap = {};
+  for (const c of costos) costosMap[c.producto_id] = c;
   render();
 }
 
@@ -220,6 +227,33 @@ function margenColor(pct) {
   if (pct >= 50) return 'var(--success)';
   if (pct >= 30) return 'var(--warning)';
   return 'var(--danger)';
+}
+
+function celdaCostoMargen(p, costoInfo) {
+  const precioR = p.precio || 0;
+  const costoR  = p.costo  || 0;
+  const margenR = precioR > 0 ? ((precioR - costoR) / precioR * 100).toFixed(1) : '—';
+  const mColorR = parseFloat(margenR) >= 50 ? 'var(--success)' : parseFloat(margenR) >= 30 ? 'var(--warning)' : 'var(--danger)';
+
+  let teoricoHtml = '';
+  if (costoInfo && costoInfo.costo_teorico > 0) {
+    const costoT  = costoInfo.costo_teorico;
+    const margenT = precioR > 0 ? ((precioR - costoT) / precioR * 100).toFixed(1) : '—';
+    const diff    = costoR > 0 ? Math.abs(costoT - costoR) / costoR * 100 : 0;
+    const tColor  = diff <= 15 ? 'var(--success)' : 'var(--danger)';
+    const parcial = costoInfo.ingredientes_sin_vincular > 0
+      ? '<span title="Costo parcial — hay ingredientes sin vincular" style="font-size:.65rem;color:#ca8a04">⚠️</span>' : '';
+    teoricoHtml = `<div style="font-size:.72rem;color:${tColor}">
+      Teórico: $${Math.round(costoT).toLocaleString('es-CL')} ${parcial}
+    </div>
+    <div style="font-size:.72rem;color:var(--muted)">M.teo: ${margenT}%</div>`;
+  }
+
+  return `<td class="right">
+    <div class="mono" style="font-size:.82rem">$${Math.round(costoR).toLocaleString('es-CL')}</div>
+    <div style="font-size:.75rem;color:${mColorR}">M: ${margenR}%</div>
+    ${teoricoHtml}
+  </td>`;
 }
 
 function catBadge(cat) {
@@ -259,9 +293,7 @@ function render() {
           : `<div class="text-muted text-sm">—</div>`
         }
       </td>
-      <td class="right">
-        <div class="mono text-muted">${clp(p.costo)}</div>
-      </td>
+      ${celdaCostoMargen(p, costosMap[p.id])}
       <td class="right mono fw-600" style="color:${stockColor}">${p.stock}</td>
       <td>
         <div class="flex gap-8">
