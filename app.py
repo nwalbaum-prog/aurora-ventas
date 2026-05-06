@@ -75,6 +75,54 @@ def _auto_plan_produccion(items, c):
             )
 
 
+def _descontar_lotes_fifo(c, producto_id, cantidad, venta_id, lote_id_override=None):
+    """
+    Descuenta `cantidad` unidades del producto desde lotes FIFO (más antiguos primero).
+    Si lote_id_override: intenta descontar de ese lote primero antes de los demás.
+    Registra cada movimiento en lote_movimientos.
+    Retorna lista de (lote_id, cantidad_descontada).
+    """
+    if lote_id_override:
+        lote_pref = c.execute(
+            "SELECT * FROM producto_lotes WHERE id=? AND producto_id=? AND cantidad_actual>0",
+            (lote_id_override, producto_id)
+        ).fetchall()
+        otros = c.execute(
+            """SELECT * FROM producto_lotes
+               WHERE producto_id=? AND id!=? AND cantidad_actual>0
+               ORDER BY fecha_elaboracion ASC""",
+            (producto_id, lote_id_override)
+        ).fetchall()
+        lotes = list(lote_pref) + list(otros)
+    else:
+        lotes = c.execute(
+            """SELECT * FROM producto_lotes
+               WHERE producto_id=? AND cantidad_actual>0
+               ORDER BY fecha_elaboracion ASC""",
+            (producto_id,)
+        ).fetchall()
+
+    movimientos = []
+    restante = cantidad
+    for lote in lotes:
+        if restante <= 0:
+            break
+        descontar = min(restante, lote['cantidad_actual'])
+        c.execute(
+            "UPDATE producto_lotes SET cantidad_actual=cantidad_actual-? WHERE id=?",
+            (descontar, lote['id'])
+        )
+        c.execute(
+            """INSERT INTO lote_movimientos (lote_id, tipo, cantidad, venta_id, notas)
+               VALUES (?,?,?,?,?)""",
+            (lote['id'], 'venta', -descontar, venta_id, '')
+        )
+        movimientos.append((lote['id'], descontar))
+        restante -= descontar
+
+    return movimientos
+
+
 # ── Evolution API (agente WhatsApp) ───────────────────────────────────────────
 
 def _wa_cfg():
@@ -1377,6 +1425,16 @@ def api_ventas_create():
                 sub_id = sub_cur.lastrowid
                 c.execute("UPDATE clientes SET es_suscriptor=1 WHERE id=?", (cid,))
 
+        # FIFO: descontar lotes por cada item vendido
+        for i in items:
+            lote_id = i.get('lote_id') or None
+            stock_lotes = c.execute(
+                "SELECT COALESCE(SUM(cantidad_actual),0) FROM producto_lotes WHERE producto_id=?",
+                (int(i['producto_id']),)
+            ).fetchone()[0]
+            if stock_lotes > 0:
+                _descontar_lotes_fifo(c, int(i['producto_id']), float(i['cantidad']), vid, lote_id)
+
         return jsonify({'id': vid, 'total': total, 'suscripcion_id': sub_id}), 201
 
 @app.route('/api/ventas/<int:vid>', methods=['PUT'])
@@ -1437,6 +1495,18 @@ def api_ventas_delete(vid):
             c.execute("UPDATE productos SET stock=stock+? WHERE id=?", (i['cantidad'], i['producto_id']))
         # pos_ventas no tiene ON DELETE CASCADE → borrar antes
         c.execute("DELETE FROM pos_ventas WHERE venta_id=?", (vid,))
+        # Restaurar lotes: revertir movimientos de venta
+        movs = c.execute(
+            """SELECT lm.lote_id, lm.cantidad FROM lote_movimientos lm
+               WHERE lm.venta_id=? AND lm.tipo='venta'""",
+            (vid,)
+        ).fetchall()
+        for m in movs:
+            c.execute(
+                "UPDATE producto_lotes SET cantidad_actual=cantidad_actual+? WHERE id=?",
+                (abs(m['cantidad']), m['lote_id'])
+            )
+        c.execute("DELETE FROM lote_movimientos WHERE venta_id=?", (vid,))
         c.execute("DELETE FROM ventas WHERE id=?", (vid,))
         return jsonify({'ok': True})
 
