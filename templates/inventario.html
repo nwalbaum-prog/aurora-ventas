@@ -510,20 +510,20 @@ async function cargarLotes() {
         <span style="color:var(--muted)">${l.cantidad_actual} / ${l.cantidad_inicial} iniciales</span>
         <span style="color:${l.merma > 0 ? '#ef4444' : 'var(--muted)'}">merma: ${l.merma}</span>
         <button class="btn btn-ghost btn-sm" style="font-size:.72rem;padding:.2rem .5rem"
-                onclick="abrirAjusteLote(${l.id},'ajuste','${p.nombre.replace(/'/g,"\\'")}')">Ajustar</button>
+                onclick="abrirAjusteLote(${l.id},'ajuste',this)">Ajustar</button>
         <button class="btn btn-ghost btn-sm" style="font-size:.72rem;padding:.2rem .5rem;color:#ef4444"
-                onclick="abrirAjusteLote(${l.id},'merma','${p.nombre.replace(/'/g,"\\'")}')">Merma</button>
+                onclick="abrirAjusteLote(${l.id},'merma',this)">Merma</button>
       </div>`).join('')
       : '<div style="padding:.4rem .75rem;font-size:.78rem;color:var(--muted);border-top:1px solid var(--border)">Sin lotes registrados</div>';
 
     return `
-      <div style="${headerStyle};border-radius:.5rem;margin-bottom:.75rem;overflow:hidden">
+      <div style="${headerStyle};border-radius:.5rem;margin-bottom:.75rem;overflow:hidden" data-nombre="${p.nombre.replace(/"/g,'&quot;')}">
         <div style="display:flex;justify-content:space-between;align-items:center;padding:.6rem .75rem">
           <span style="font-weight:600;font-size:.88rem">&#x1F35E; ${p.nombre}</span>
           <div style="display:flex;align-items:center;gap:.5rem">
             ${stockBadge}
             <button class="btn btn-sm btn-secondary" style="font-size:.75rem;padding:.25rem .6rem"
-                    onclick="abrirNuevoLote(${p.producto_id},'${p.nombre.replace(/'/g,"\\'")}')">+ Agregar lote</button>
+                    onclick="abrirNuevoLote(${p.producto_id}, this)">+ Agregar lote</button>
           </div>
         </div>
         ${lotesHtml}
@@ -531,7 +531,8 @@ async function cargarLotes() {
   }).join('');
 }
 
-function abrirNuevoLote(pid, nombre) {
+function abrirNuevoLote(pid, btn) {
+  const nombre = btn.closest('[data-nombre]')?.dataset.nombre || '';
   document.getElementById('nuevo-lote-pid').value              = pid;
   document.getElementById('nuevo-lote-nombre').textContent     = nombre;
   document.getElementById('nuevo-lote-fecha').value            = new Date().toISOString().split('T')[0];
@@ -546,13 +547,18 @@ async function guardarNuevoLote() {
   const cant  = parseFloat(document.getElementById('nuevo-lote-cant').value);
   const notas = document.getElementById('nuevo-lote-notas').value;
   if (!fecha || !cant || cant <= 0) { toast('Completa fecha y cantidad', 'error'); return; }
-  await api('POST', '/api/producto-lotes', { producto_id: pid, fecha_elaboracion: fecha, cantidad: cant, notas });
-  document.getElementById('modal-nuevo-lote').style.display = 'none';
-  toast('Lote registrado', 'success');
-  cargarLotes();
+  try {
+    await api('POST', '/api/producto-lotes', { producto_id: pid, fecha_elaboracion: fecha, cantidad: cant, notas });
+    document.getElementById('modal-nuevo-lote').style.display = 'none';
+    toast('Lote registrado', 'success');
+    cargarLotes();
+  } catch(e) {
+    toast(e.message || 'Error al guardar lote', 'error');
+  }
 }
 
-function abrirAjusteLote(lid, tipo, nombre) {
+function abrirAjusteLote(lid, tipo, btn) {
+  const nombre = btn.closest('[data-nombre]')?.dataset.nombre || '';
   document.getElementById('ajuste-lote-id').value    = lid;
   document.getElementById('ajuste-lote-tipo').value  = tipo;
   document.getElementById('ajuste-lote-titulo').textContent =
@@ -568,10 +574,14 @@ async function guardarAjusteLote() {
   const delta = parseFloat(document.getElementById('ajuste-lote-delta').value);
   const notas = document.getElementById('ajuste-lote-notas').value;
   if (isNaN(delta) || delta === 0) { toast('Ingresa una cantidad distinta de 0', 'error'); return; }
-  await api('PUT', `/api/producto-lotes/${lid}/ajustar`, { delta, tipo, notas });
-  document.getElementById('modal-ajuste-lote').style.display = 'none';
-  toast('Ajuste guardado', 'success');
-  cargarLotes();
+  try {
+    await api('PUT', `/api/producto-lotes/${lid}/ajustar`, { delta, tipo, notas });
+    document.getElementById('modal-ajuste-lote').style.display = 'none';
+    toast('Ajuste guardado', 'success');
+    cargarLotes();
+  } catch(e) {
+    toast(e.message || 'Error al guardar ajuste', 'error');
+  }
 }
 
 load();
