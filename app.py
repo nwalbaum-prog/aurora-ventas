@@ -1083,6 +1083,89 @@ def api_productos_delete(pid):
         c.execute("UPDATE productos SET activo=0 WHERE id=?", (pid,))
         return jsonify({'ok': True})
 
+# ── API: Producto-Lotes ───────────────────────────────────────────────────────
+
+@app.route('/api/producto-lotes', methods=['GET'])
+@login_required
+def api_producto_lotes_list():
+    """Todos los productos activos con sus lotes, ordenados FIFO."""
+    with db() as c:
+        prods = c.execute(
+            "SELECT id, nombre, stock, unidad FROM productos WHERE activo=1 ORDER BY nombre"
+        ).fetchall()
+        resultado = []
+        for p in prods:
+            lotes = c.execute(
+                """SELECT id, fecha_elaboracion, cantidad_inicial, cantidad_actual, merma, notas, creado_en
+                   FROM producto_lotes WHERE producto_id=? ORDER BY fecha_elaboracion ASC""",
+                (p['id'],)
+            ).fetchall()
+            stock_lotes = sum(l['cantidad_actual'] for l in lotes)
+            resultado.append({
+                'producto_id': p['id'],
+                'nombre':      p['nombre'],
+                'unidad':      p['unidad'] if p['unidad'] else 'u',
+                'stock_total': stock_lotes,
+                'lotes':       [dict(l) for l in lotes]
+            })
+    return jsonify(resultado)
+
+@app.route('/api/producto-lotes', methods=['POST'])
+@login_required
+def api_producto_lotes_create():
+    d = request.get_json(silent=True) or {}
+    prod_id  = int(d.get('producto_id', 0))
+    fecha    = d.get('fecha_elaboracion', str(date.today()))
+    cantidad = float(d.get('cantidad', 0))
+    notas    = d.get('notas', '')
+    if not prod_id or cantidad <= 0:
+        return jsonify({'error': 'producto_id y cantidad requeridos'}), 400
+    with db() as c:
+        if not c.execute("SELECT id FROM productos WHERE id=? AND activo=1", (prod_id,)).fetchone():
+            return jsonify({'error': 'Producto no encontrado'}), 404
+        c.execute(
+            """INSERT INTO producto_lotes (producto_id, fecha_elaboracion, cantidad_inicial, cantidad_actual, notas)
+               VALUES (?,?,?,?,?)""",
+            (prod_id, fecha, cantidad, cantidad, notas)
+        )
+        lote_id = c.execute("SELECT last_insert_rowid()").fetchone()[0]
+    return jsonify({'ok': True, 'id': lote_id}), 201
+
+@app.route('/api/producto-lotes/<int:lid>/ajustar', methods=['PUT'])
+@login_required
+def api_producto_lotes_ajustar(lid):
+    d     = request.get_json(silent=True) or {}
+    delta = float(d.get('delta', 0))
+    tipo  = d.get('tipo', 'ajuste')   # 'merma' | 'ajuste'
+    notas = d.get('notas', '')
+    if delta == 0:
+        return jsonify({'error': 'delta no puede ser 0'}), 400
+    with db() as c:
+        lote = c.execute("SELECT * FROM producto_lotes WHERE id=?", (lid,)).fetchone()
+        if not lote:
+            return jsonify({'error': 'Lote no encontrado'}), 404
+        nueva_cantidad = max(0.0, lote['cantidad_actual'] + delta)
+        c.execute(
+            "UPDATE producto_lotes SET cantidad_actual=? WHERE id=?",
+            (nueva_cantidad, lid)
+        )
+        if tipo == 'merma' and delta < 0:
+            c.execute(
+                "UPDATE producto_lotes SET merma=merma+? WHERE id=?",
+                (abs(delta), lid)
+            )
+        c.execute(
+            "INSERT INTO lote_movimientos (lote_id, tipo, cantidad, notas) VALUES (?,?,?,?)",
+            (lid, tipo, delta, notas)
+        )
+        # Sincronizar productos.stock
+        c.execute(
+            "UPDATE productos SET stock=MAX(0, stock+?) WHERE id=?",
+            (delta, lote['producto_id'])
+        )
+        lote_updated = c.execute("SELECT * FROM producto_lotes WHERE id=?", (lid,)).fetchone()
+    return jsonify(dict(lote_updated))
+
 # ── API: Clientes ─────────────────────────────────────────────────────────────
 
 def _enrich_cliente(c, row):
