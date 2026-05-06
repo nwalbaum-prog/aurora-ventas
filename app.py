@@ -1036,6 +1036,33 @@ def api_productos_create():
         )
         return jsonify(dict(c.execute("SELECT * FROM productos WHERE id=?", (cur.lastrowid,)).fetchone())), 201
 
+@app.route('/api/productos/costos', methods=['GET'])
+@login_required
+def api_productos_costos():
+    with db() as c:
+        prods = c.execute("SELECT id, peso_unitario_kg FROM productos WHERE activo=1").fetchall()
+        resultado = []
+        for p in prods:
+            rows = c.execute(
+                """SELECT r.porcentaje, i.precio_kg
+                   FROM recetas r
+                   LEFT JOIN inventario i ON i.id = r.inventario_id
+                   WHERE r.producto_id = ? AND r.inventario_id IS NOT NULL AND i.precio_kg > 0""",
+                (p['id'],)
+            ).fetchall()
+            sin_vincular = c.execute(
+                "SELECT COUNT(*) FROM recetas WHERE producto_id=? AND inventario_id IS NULL",
+                (p['id'],)
+            ).fetchone()[0]
+            peso = p['peso_unitario_kg'] or 0
+            costo_teorico = sum((peso * r['porcentaje'] / 100) * r['precio_kg'] for r in rows)
+            resultado.append({
+                'producto_id':               p['id'],
+                'costo_teorico':             round(costo_teorico, 2),
+                'ingredientes_sin_vincular': sin_vincular
+            })
+    return jsonify(resultado)
+
 @app.route('/api/productos/<int:pid>', methods=['PUT'])
 def api_productos_update(pid):
     d = request.json
@@ -2691,41 +2718,75 @@ def api_inventario_ajustar(iid):
 @login_required
 def api_receta_get(producto_id):
     with db() as c:
-        prod = c.execute("SELECT id, nombre, peso_unitario_kg FROM productos WHERE id=?", (producto_id,)).fetchone()
+        prod = c.execute(
+            "SELECT id, nombre, peso_unitario_kg FROM productos WHERE id=?",
+            (producto_id,)
+        ).fetchone()
         if not prod:
             return jsonify({'error': 'Producto no encontrado'}), 404
-        ingredientes = c.execute(
-            "SELECT ingrediente, porcentaje FROM recetas WHERE producto_id=? ORDER BY ingrediente",
+        rows = c.execute(
+            """SELECT r.ingrediente, r.porcentaje, r.inventario_id,
+                      i.precio_kg, i.unidad, i.ingrediente AS inv_nombre
+               FROM recetas r
+               LEFT JOIN inventario i ON i.id = r.inventario_id
+               WHERE r.producto_id = ?
+               ORDER BY r.ingrediente""",
             (producto_id,)
         ).fetchall()
+
+    peso = prod['peso_unitario_kg'] or 0
+    costo_teorico = 0.0
+    ingredientes_sin_vincular = 0
+    ingredientes_data = []
+
+    for r in rows:
+        gramos        = round(peso * r['porcentaje'] / 100 * 1000, 2)
+        vinculado     = r['inventario_id'] is not None
+        costo_unitario = None
+        if vinculado and r['precio_kg']:
+            costo_unitario = round((gramos / 1000) * r['precio_kg'], 2)
+            costo_teorico += costo_unitario
+        if not vinculado:
+            ingredientes_sin_vincular += 1
+        ingredientes_data.append({
+            'ingrediente':    r['ingrediente'],
+            'inventario_id':  r['inventario_id'],
+            'porcentaje':     r['porcentaje'],
+            'precio_kg':      r['precio_kg'],
+            'gramos_unidad':  gramos,
+            'costo_unitario': costo_unitario,
+            'vinculado':      vinculado
+        })
+
     return jsonify({
-        'producto_id':     prod['id'],
-        'nombre':          prod['nombre'],
-        'peso_unitario_kg': prod['peso_unitario_kg'],
-        'ingredientes':    [dict(r) for r in ingredientes]
+        'producto_id':               prod['id'],
+        'nombre':                    prod['nombre'],
+        'peso_unitario_kg':          peso,
+        'costo_teorico':             round(costo_teorico, 2),
+        'ingredientes_sin_vincular': ingredientes_sin_vincular,
+        'ingredientes':              ingredientes_data
     })
 
 
 @app.route('/api/recetas/<int:producto_id>', methods=['POST'])
 @login_required
 def api_receta_save(producto_id):
-    """Guarda/reemplaza la receta completa de un producto."""
     d = request.get_json(silent=True) or {}
-    peso = float(d.get('peso_unitario_kg', 0))
-    ingredientes = d.get('ingredientes', [])  # [{ingrediente, porcentaje}]
+    peso         = float(d.get('peso_unitario_kg', 0))
+    ingredientes = d.get('ingredientes', [])
     with db() as c:
-        prod = c.execute("SELECT id FROM productos WHERE id=?", (producto_id,)).fetchone()
-        if not prod:
+        if not c.execute("SELECT id FROM productos WHERE id=?", (producto_id,)).fetchone():
             return jsonify({'error': 'Producto no encontrado'}), 404
         c.execute("UPDATE productos SET peso_unitario_kg=? WHERE id=?", (peso, producto_id))
         c.execute("DELETE FROM recetas WHERE producto_id=?", (producto_id,))
         for ing in ingredientes:
             nombre = ing.get('ingrediente', '').strip()
             pct    = float(ing.get('porcentaje', 0))
+            inv_id = ing.get('inventario_id') or None
             if nombre and pct > 0:
                 c.execute(
-                    "INSERT INTO recetas (producto_id, ingrediente, porcentaje) VALUES (?,?,?)",
-                    (producto_id, nombre, pct)
+                    "INSERT INTO recetas (producto_id, ingrediente, porcentaje, inventario_id) VALUES (?,?,?,?)",
+                    (producto_id, nombre, pct, inv_id)
                 )
     return jsonify({'ok': True})
 
