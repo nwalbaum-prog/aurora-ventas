@@ -1114,7 +1114,10 @@ def api_producto_lotes_list():
 @login_required
 def api_producto_lotes_create():
     d = request.get_json(silent=True) or {}
-    prod_id  = int(d.get('producto_id', 0))
+    try:
+        prod_id = int(d.get('producto_id', 0))
+    except (ValueError, TypeError):
+        return jsonify({'error': 'producto_id inválido'}), 400
     fecha    = d.get('fecha_elaboracion', str(date.today()))
     cantidad = float(d.get('cantidad', 0))
     notas    = d.get('notas', '')
@@ -1145,6 +1148,7 @@ def api_producto_lotes_ajustar(lid):
         if not lote:
             return jsonify({'error': 'Lote no encontrado'}), 404
         nueva_cantidad = max(0.0, lote['cantidad_actual'] + delta)
+        deducido = lote['cantidad_actual'] - nueva_cantidad  # actual amount removed (always >= 0)
         c.execute(
             "UPDATE producto_lotes SET cantidad_actual=? WHERE id=?",
             (nueva_cantidad, lid)
@@ -1152,7 +1156,7 @@ def api_producto_lotes_ajustar(lid):
         if tipo == 'merma' and delta < 0:
             c.execute(
                 "UPDATE producto_lotes SET merma=merma+? WHERE id=?",
-                (abs(delta), lid)
+                (deducido, lid)
             )
         c.execute(
             "INSERT INTO lote_movimientos (lote_id, tipo, cantidad, notas) VALUES (?,?,?,?)",
