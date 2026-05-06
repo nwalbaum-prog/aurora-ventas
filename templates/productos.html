@@ -458,7 +458,7 @@ function actualizarCostoFooter() {
   const margenEl = document.getElementById('ficha-margen-teorico');
   if (margenEl && precio > 0 && costo > 0) {
     const pctM = ((precio - costo) / precio * 100).toFixed(1);
-    const color = pctM >= 50 ? 'var(--success)' : pctM >= 30 ? 'var(--warning)' : 'var(--danger)';
+    const color = parseFloat(pctM) >= 50 ? 'var(--success)' : parseFloat(pctM) >= 30 ? 'var(--warning)' : 'var(--danger)';
     margenEl.innerHTML = `Margen: <strong style="color:${color}">${pctM}%</strong>`;
   } else if (margenEl) {
     margenEl.innerHTML = '';
@@ -487,14 +487,18 @@ async function openFicha(pid, nombre, precio) {
 
   // Carga en paralelo: ingredientes disponibles + inventario bodega ingredientes
   await _cargarIngDisponibles();
+  let d;
   try {
-    const inv = await api('GET', '/api/inventario?bodega=ingredientes');
+    const [inv, receta] = await Promise.all([
+      api('GET', '/api/inventario?bodega=ingredientes'),
+      api('GET', `/api/recetas/${pid}`)
+    ]);
     fichaInventario = Array.isArray(inv) ? inv : (inv.items || []);
+    d = receta;
   } catch(e) {
     fichaInventario = [];
+    d = await api('GET', `/api/recetas/${pid}`);
   }
-
-  const d = await api('GET', `/api/recetas/${pid}`);
   document.getElementById('ficha-harina-kg').value = d.peso_unitario_kg || '';
 
   // Detectar si tiene harinas mixtas en los ingredientes
@@ -531,7 +535,7 @@ function fichaAgregarFila(ingrediente = '', porcentaje = '', inventarioId = null
 
   // Select de vínculo con inventario
   const invOpts = fichaInventario.map(i =>
-    `<option value="${i.id}" data-precio="${i.precio_kg || 0}" ${i.id == inventarioId ? 'selected' : ''}>${i.ingrediente} — $${(i.precio_kg || 0).toLocaleString('es-CL')}/kg</option>`
+    `<option value="${i.id}" ${i.id == inventarioId ? 'selected' : ''}>${i.ingrediente} — $${(i.precio_kg || 0).toLocaleString('es-CL')}/kg</option>`
   ).join('');
 
   const vinculado = inventarioId != null;
