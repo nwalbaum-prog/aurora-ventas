@@ -40,8 +40,8 @@
 <!-- Alertas -->
 <div id="alerta-strip" style="display:none"></div>
 
-<!-- Tabla -->
-<div class="card">
+<!-- Tabla (todas las bodegas excepto productos_terminados) -->
+<div class="card" id="inv-table-card">
   <div style="display:flex;gap:.5rem;margin-bottom:.75rem;flex-wrap:wrap" id="cat-filter-bar">
     <select id="f-cat-filter" class="form-control" style="width:160px" onchange="filtrarPorCategoria()">
       <option value="">Todas las categorías</option>
@@ -56,6 +56,15 @@
       <tbody id="tbody-inv"></tbody>
     </table>
   </div>
+</div>
+
+<!-- Vista productos terminados (FIFO lotes) -->
+<div id="productos-terminados-view" style="display:none">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+    <h3 style="margin:0;font-size:.9rem">Productos en Stock por Lote</h3>
+    <span style="font-size:.75rem;color:var(--muted)">Orden FIFO — el primer lote se vende primero</span>
+  </div>
+  <div id="lotes-list"></div>
 </div>
 
 <!-- Modal nuevo/editar -->
@@ -160,6 +169,61 @@
   </div>
 </div>
 
+<!-- Modal nuevo lote -->
+<div id="modal-nuevo-lote" class="modal-overlay" style="display:none">
+  <div class="modal" style="max-width:360px">
+    <div class="modal-header">
+      <span class="modal-title">Agregar lote — <span id="nuevo-lote-nombre"></span></span>
+      <button class="modal-close" onclick="document.getElementById('modal-nuevo-lote').style.display='none'"><i class="bi bi-x-lg"></i></button>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:.75rem">
+      <input type="hidden" id="nuevo-lote-pid">
+      <div class="form-group">
+        <label>Fecha de elaboración</label>
+        <input id="nuevo-lote-fecha" type="date" class="form-control" style="width:100%">
+      </div>
+      <div class="form-group">
+        <label>Cantidad</label>
+        <input id="nuevo-lote-cant" type="number" class="form-control" min="1" step="1" style="width:100%">
+      </div>
+      <div class="form-group">
+        <label>Notas (opcional)</label>
+        <input id="nuevo-lote-notas" type="text" class="form-control" style="width:100%" placeholder="Ej: Hornada de la mañana">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="document.getElementById('modal-nuevo-lote').style.display='none'">Cancelar</button>
+      <button class="btn btn-primary" onclick="guardarNuevoLote()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal ajuste/merma lote -->
+<div id="modal-ajuste-lote" class="modal-overlay" style="display:none">
+  <div class="modal" style="max-width:340px">
+    <div class="modal-header">
+      <span class="modal-title" id="ajuste-lote-titulo">Ajustar lote</span>
+      <button class="modal-close" onclick="document.getElementById('modal-ajuste-lote').style.display='none'"><i class="bi bi-x-lg"></i></button>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:.75rem">
+      <input type="hidden" id="ajuste-lote-id">
+      <input type="hidden" id="ajuste-lote-tipo">
+      <div class="form-group">
+        <label>Cantidad (negativo = quitar, positivo = sumar)</label>
+        <input id="ajuste-lote-delta" type="number" class="form-control" step="1" style="width:100%" placeholder="Ej: -5">
+      </div>
+      <div class="form-group">
+        <label>Motivo</label>
+        <input id="ajuste-lote-notas" type="text" class="form-control" style="width:100%" placeholder="Ej: Pan vencido">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="document.getElementById('modal-ajuste-lote').style.display='none'">Cancelar</button>
+      <button class="btn btn-primary" onclick="guardarAjusteLote()">Guardar</button>
+    </div>
+  </div>
+</div>
+
 {% endblock %}
 
 {% block scripts %}
@@ -226,6 +290,12 @@ function setTab(el) {
   document.querySelectorAll('.bodega-tab').forEach(t => t.classList.remove('active'));
   el.classList.add('active');
   tabActual = el.dataset.key;
+
+  const isLotes = tabActual === 'productos_terminados';
+  document.getElementById('inv-table-card').style.display        = isLotes ? 'none' : '';
+  document.getElementById('productos-terminados-view').style.display = isLotes ? '' : 'none';
+  document.getElementById('alerta-strip').style.display          = isLotes ? 'none' : '';
+
   // Reset and hide category filter bar when not on ingredientes tab
   const catBar = document.getElementById('cat-filter-bar');
   if (catBar) {
@@ -235,7 +305,12 @@ function setTab(el) {
       document.getElementById('f-subcat-filter').innerHTML = '<option value="">Todas las subcategorías</option>';
     }
   }
-  renderTab();
+
+  if (isLotes) {
+    cargarLotes();
+  } else {
+    renderTab();
+  }
 }
 
 function renderTab(cat, subcat) {
@@ -405,6 +480,98 @@ async function eliminar(id) {
     await load();
     toast('Eliminado');
   } catch(e) { toast(e.message, 'error'); }
+}
+
+// ── Productos Terminados — FIFO Lotes ──────────────────────────────────────
+
+async function cargarLotes() {
+  const data = await api('GET', '/api/producto-lotes');
+  const el = document.getElementById('lotes-list');
+  if (!data || !data.length) {
+    el.innerHTML = '<p style="color:var(--muted);text-align:center;padding:2rem">Sin productos</p>';
+    return;
+  }
+  el.innerHTML = data.map(p => {
+    const sinStock = p.stock_total === 0;
+    const headerStyle = sinStock
+      ? 'background:rgba(239,68,68,.06);border:1px solid rgba(239,68,68,.2)'
+      : 'background:var(--bg-2);border:1px solid var(--border)';
+    const stockBadge = sinStock
+      ? '<span style="background:rgba(239,68,68,.12);color:#ef4444;font-size:.72rem;padding:2px 8px;border-radius:10px;font-weight:600">&#x26D4; Sin stock</span>'
+      : `<span style="background:rgba(34,197,94,.12);color:#16a34a;font-size:.72rem;padding:2px 8px;border-radius:10px;font-weight:600">${p.stock_total} ${p.unidad}</span>`;
+
+    const lotesHtml = p.lotes && p.lotes.length ? p.lotes.map((l, i) => `
+      <div style="display:grid;grid-template-columns:60px 1fr 1fr 1fr auto auto;gap:.5rem;align-items:center;
+                  padding:.4rem .75rem;border-top:1px solid var(--border);font-size:.8rem">
+        ${i === 0
+          ? '<span style="background:rgba(99,102,241,.12);color:#6366f1;font-size:.65rem;padding:1px 5px;border-radius:6px;font-weight:600;white-space:nowrap">FIFO &#x25B6;</span>'
+          : '<span></span>'}
+        <span>&#x1F4E6; Lote <strong>${l.fecha_elaboracion}</strong></span>
+        <span style="color:var(--muted)">${l.cantidad_actual} / ${l.cantidad_inicial} iniciales</span>
+        <span style="color:${l.merma > 0 ? '#ef4444' : 'var(--muted)'}">merma: ${l.merma}</span>
+        <button class="btn btn-ghost btn-sm" style="font-size:.72rem;padding:.2rem .5rem"
+                onclick="abrirAjusteLote(${l.id},'ajuste','${p.nombre.replace(/'/g,"\\'")}')">Ajustar</button>
+        <button class="btn btn-ghost btn-sm" style="font-size:.72rem;padding:.2rem .5rem;color:#ef4444"
+                onclick="abrirAjusteLote(${l.id},'merma','${p.nombre.replace(/'/g,"\\'")}')">Merma</button>
+      </div>`).join('')
+      : '<div style="padding:.4rem .75rem;font-size:.78rem;color:var(--muted);border-top:1px solid var(--border)">Sin lotes registrados</div>';
+
+    return `
+      <div style="${headerStyle};border-radius:.5rem;margin-bottom:.75rem;overflow:hidden">
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:.6rem .75rem">
+          <span style="font-weight:600;font-size:.88rem">&#x1F35E; ${p.nombre}</span>
+          <div style="display:flex;align-items:center;gap:.5rem">
+            ${stockBadge}
+            <button class="btn btn-sm btn-secondary" style="font-size:.75rem;padding:.25rem .6rem"
+                    onclick="abrirNuevoLote(${p.producto_id},'${p.nombre.replace(/'/g,"\\'")}')">+ Agregar lote</button>
+          </div>
+        </div>
+        ${lotesHtml}
+      </div>`;
+  }).join('');
+}
+
+function abrirNuevoLote(pid, nombre) {
+  document.getElementById('nuevo-lote-pid').value              = pid;
+  document.getElementById('nuevo-lote-nombre').textContent     = nombre;
+  document.getElementById('nuevo-lote-fecha').value            = new Date().toISOString().split('T')[0];
+  document.getElementById('nuevo-lote-cant').value             = '';
+  document.getElementById('nuevo-lote-notas').value            = '';
+  document.getElementById('modal-nuevo-lote').style.display    = 'flex';
+}
+
+async function guardarNuevoLote() {
+  const pid   = parseInt(document.getElementById('nuevo-lote-pid').value);
+  const fecha = document.getElementById('nuevo-lote-fecha').value;
+  const cant  = parseFloat(document.getElementById('nuevo-lote-cant').value);
+  const notas = document.getElementById('nuevo-lote-notas').value;
+  if (!fecha || !cant || cant <= 0) { toast('Completa fecha y cantidad', 'error'); return; }
+  await api('POST', '/api/producto-lotes', { producto_id: pid, fecha_elaboracion: fecha, cantidad: cant, notas });
+  document.getElementById('modal-nuevo-lote').style.display = 'none';
+  toast('Lote registrado', 'success');
+  cargarLotes();
+}
+
+function abrirAjusteLote(lid, tipo, nombre) {
+  document.getElementById('ajuste-lote-id').value    = lid;
+  document.getElementById('ajuste-lote-tipo').value  = tipo;
+  document.getElementById('ajuste-lote-titulo').textContent =
+    tipo === 'merma' ? `Registrar merma — ${nombre}` : `Ajustar lote — ${nombre}`;
+  document.getElementById('ajuste-lote-delta').value = '';
+  document.getElementById('ajuste-lote-notas').value = '';
+  document.getElementById('modal-ajuste-lote').style.display = 'flex';
+}
+
+async function guardarAjusteLote() {
+  const lid   = parseInt(document.getElementById('ajuste-lote-id').value);
+  const tipo  = document.getElementById('ajuste-lote-tipo').value;
+  const delta = parseFloat(document.getElementById('ajuste-lote-delta').value);
+  const notas = document.getElementById('ajuste-lote-notas').value;
+  if (isNaN(delta) || delta === 0) { toast('Ingresa una cantidad distinta de 0', 'error'); return; }
+  await api('PUT', `/api/producto-lotes/${lid}/ajustar`, { delta, tipo, notas });
+  document.getElementById('modal-ajuste-lote').style.display = 'none';
+  toast('Ajuste guardado', 'success');
+  cargarLotes();
 }
 
 load();
