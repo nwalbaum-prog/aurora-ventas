@@ -1039,6 +1039,7 @@ def api_productos_create():
 @app.route('/api/productos/costos', methods=['GET'])
 @login_required
 def api_productos_costos():
+    """Retorna costo teórico calculado para cada producto activo con receta."""
     with db() as c:
         prods = c.execute("SELECT id, peso_unitario_kg FROM productos WHERE activo=1").fetchall()
         resultado = []
@@ -2726,7 +2727,7 @@ def api_receta_get(producto_id):
             return jsonify({'error': 'Producto no encontrado'}), 404
         rows = c.execute(
             """SELECT r.ingrediente, r.porcentaje, r.inventario_id,
-                      i.precio_kg, i.unidad, i.ingrediente AS inv_nombre
+                      i.precio_kg
                FROM recetas r
                LEFT JOIN inventario i ON i.id = r.inventario_id
                WHERE r.producto_id = ?
@@ -2771,6 +2772,7 @@ def api_receta_get(producto_id):
 @app.route('/api/recetas/<int:producto_id>', methods=['POST'])
 @login_required
 def api_receta_save(producto_id):
+    """Guarda/reemplaza la receta completa de un producto."""
     d = request.get_json(silent=True) or {}
     peso         = float(d.get('peso_unitario_kg', 0))
     ingredientes = d.get('ingredientes', [])
