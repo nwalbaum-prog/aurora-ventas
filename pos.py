@@ -182,20 +182,39 @@ def api_pos_productos():
     with db() as c:
         if q:
             productos = c.execute(
-                "SELECT id,nombre,precio,stock FROM productos WHERE activo=1 AND nombre LIKE ? ORDER BY nombre LIMIT 20",
+                """SELECT p.id, p.nombre, p.precio, p.stock, p.categoria, p.subcategoria,
+                          COALESCE(SUM(pl.cantidad_actual), 0) AS stock_lotes
+                   FROM productos p
+                   LEFT JOIN producto_lotes pl ON pl.producto_id = p.id
+                   WHERE p.activo=1 AND p.nombre LIKE ?
+                   GROUP BY p.id
+                   ORDER BY p.categoria, p.subcategoria, p.nombre
+                   LIMIT 20""",
                 (f'%{q}%',)
             ).fetchall()
         else:
             productos = c.execute(
-                "SELECT id,nombre,precio,stock FROM productos WHERE activo=1 ORDER BY nombre LIMIT 50"
+                """SELECT p.id, p.nombre, p.precio, p.stock, p.categoria, p.subcategoria,
+                          COALESCE(SUM(pl.cantidad_actual), 0) AS stock_lotes
+                   FROM productos p
+                   LEFT JOIN producto_lotes pl ON pl.producto_id = p.id
+                   WHERE p.activo=1
+                   GROUP BY p.id
+                   ORDER BY p.categoria, p.subcategoria, p.nombre
+                   LIMIT 100"""
             ).fetchall()
         frecuentes_rows = c.execute(
-            """SELECT pf.id as frec_id, pf.orden, p.id as producto_id, p.nombre, p.precio, p.stock
+            """SELECT pf.id AS frec_id, pf.orden, p.id AS producto_id, p.nombre, p.precio, p.stock
                FROM pos_frecuentes pf JOIN productos p ON p.id=pf.producto_id
                WHERE p.activo=1 ORDER BY pf.orden"""
         ).fetchall()
+    prods_data = []
+    for p in productos:
+        d = dict(p)
+        d['sin_stock'] = d['stock_lotes'] == 0
+        prods_data.append(d)
     return jsonify({
-        'productos':  [dict(p) for p in productos],
+        'productos':  prods_data,
         'frecuentes': [dict(f) for f in frecuentes_rows]
     })
 
@@ -260,13 +279,13 @@ def api_promociones_create():
     body = request.get_json(silent=True) or {}
     nombre = body.get('nombre', '').strip()
     tipo   = body.get('tipo', '')
-    if not nombre or tipo not in ('porcentaje', 'fijo', '2x1'):
-        return jsonify({'error': 'nombre y tipo (porcentaje/fijo/2x1) requeridos'}), 400
+    if not nombre or tipo not in ('porcentaje', 'fijo', '2x1', 'precio_unidad'):
+        return jsonify({'error': 'nombre y tipo (porcentaje/fijo/2x1/precio_unidad) requeridos'}), 400
     with db() as c:
         cur = c.execute(
-            "INSERT INTO pos_promociones (nombre,tipo,valor,producto_id,activa,fecha_inicio,fecha_fin) VALUES (?,?,?,?,?,?,?)",
+            "INSERT INTO pos_promociones (nombre,tipo,valor,producto_id,activa,fecha_inicio,fecha_fin,cantidad_minima) VALUES (?,?,?,?,?,?,?,?)",
             (nombre, tipo, float(body.get('valor', 0)), body.get('producto_id'),
-             1, body.get('fecha_inicio'), body.get('fecha_fin'))
+             1, body.get('fecha_inicio'), body.get('fecha_fin'), int(body.get('cantidad_minima', 0)))
         )
         row = c.execute("SELECT * FROM pos_promociones WHERE id=?", (cur.lastrowid,)).fetchone()
     return jsonify({'ok': True, 'promocion': dict(row)})
@@ -277,16 +296,17 @@ def api_promociones_create():
 def api_promociones_update(pid):
     body = request.get_json(silent=True) or {}
     tipo = body.get('tipo', '')
-    if tipo not in ('porcentaje', 'fijo', '2x1'):
-        return jsonify({'error': 'tipo debe ser porcentaje, fijo o 2x1'}), 400
+    if tipo not in ('porcentaje', 'fijo', '2x1', 'precio_unidad'):
+        return jsonify({'error': 'tipo debe ser porcentaje, fijo, 2x1 o precio_unidad'}), 400
     with db() as c:
         if not c.execute("SELECT id FROM pos_promociones WHERE id=?", (pid,)).fetchone():
             return jsonify({'error': 'Promoción no encontrada'}), 404
         c.execute(
-            "UPDATE pos_promociones SET nombre=?,tipo=?,valor=?,producto_id=?,activa=?,fecha_inicio=?,fecha_fin=? WHERE id=?",
+            "UPDATE pos_promociones SET nombre=?,tipo=?,valor=?,producto_id=?,activa=?,fecha_inicio=?,fecha_fin=?,cantidad_minima=? WHERE id=?",
             (body.get('nombre'), tipo, float(body.get('valor', 0)),
              body.get('producto_id'), int(body.get('activa', 1)),
-             body.get('fecha_inicio'), body.get('fecha_fin'), pid)
+             body.get('fecha_inicio'), body.get('fecha_fin'),
+             int(body.get('cantidad_minima', 0)), pid)
         )
     return jsonify({'ok': True})
 
@@ -321,10 +341,14 @@ def _aplicar_promociones(items: list) -> tuple:
     subtotal  = sum(float(i['cantidad']) * float(i['precio_unitario']) for i in items)
 
     for p in promos:
+        cant_min = p['cantidad_minima'] if 'cantidad_minima' in p.keys() else 0
+
         if p['tipo'] == 'porcentaje':
             if p['producto_id']:
                 for item in items:
                     if int(item['producto_id']) == p['producto_id']:
+                        if cant_min and float(item['cantidad']) < cant_min:
+                            continue
                         d = round(float(item['cantidad']) * float(item['precio_unitario']) * p['valor'] / 100)
                         descuento += d
                         detalle.append(f"{p['nombre']}: -${d:,.0f}")
@@ -337,6 +361,8 @@ def _aplicar_promociones(items: list) -> tuple:
             if p['producto_id']:
                 for item in items:
                     if int(item['producto_id']) == p['producto_id']:
+                        if cant_min and float(item['cantidad']) < cant_min:
+                            continue
                         descuento += p['valor']
                         detalle.append(f"{p['nombre']}: -${p['valor']:,.0f}")
             else:
@@ -347,10 +373,26 @@ def _aplicar_promociones(items: list) -> tuple:
             if p['producto_id']:
                 for item in items:
                     if int(item['producto_id']) == p['producto_id']:
+                        if cant_min and float(item['cantidad']) < cant_min:
+                            continue
                         unidades_gratis = int(float(item['cantidad']) // 2)
                         d = round(unidades_gratis * float(item['precio_unitario']))
                         descuento += d
                         detalle.append(f"{p['nombre']}: -${d:,.0f}")
+
+        elif p['tipo'] == 'precio_unidad':
+            # valor = precio nuevo por unidad; aplica si cantidad >= cantidad_minima
+            if p['producto_id']:
+                for item in items:
+                    if int(item['producto_id']) == p['producto_id']:
+                        if cant_min and float(item['cantidad']) < cant_min:
+                            continue
+                        precio_nuevo = float(p['valor'])
+                        precio_orig  = float(item['precio_unitario'])
+                        if precio_nuevo < precio_orig:
+                            d = round(float(item['cantidad']) * (precio_orig - precio_nuevo))
+                            descuento += d
+                            detalle.append(f"{p['nombre']}: -${d:,.0f}")
 
     return max(0, round(descuento)), detalle
 
@@ -417,6 +459,19 @@ def api_pos_venta():
             )
             c.execute("UPDATE productos SET stock=stock-? WHERE id=?",
                       (float(item['cantidad']), item['producto_id']))
+
+        # FIFO: descontar lotes por item
+        import app as _app_module
+        for item in items:
+            lote_id = item.get('lote_id') or None
+            stock_lotes = c.execute(
+                "SELECT COALESCE(SUM(cantidad_actual),0) FROM producto_lotes WHERE producto_id=?",
+                (item['producto_id'],)
+            ).fetchone()[0]
+            if stock_lotes > 0:
+                _app_module._descontar_lotes_fifo(
+                    c, item['producto_id'], float(item['cantidad']), venta_id, lote_id
+                )
 
         pv_cur = c.execute(
             """INSERT INTO pos_ventas (turno_id,venta_id,metodo_pago,monto_efectivo,monto_tarjeta,vuelto,boleta_estado)

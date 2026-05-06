@@ -23,9 +23,13 @@
       <div id="grid-frecuentes" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(90px,1fr));gap:.4rem"></div>
     </div>
 
-    <!-- Lista de productos -->
-    <div style="flex:1;overflow-y:auto">
-      <div style="font-size:.72rem;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:.4rem">Todos los productos</div>
+    <!-- Lista de productos con nav sticky -->
+    <div style="flex:1;overflow-y:auto" id="prod-scroll">
+      <!-- Nav categorías — sticky dentro del scroll -->
+      <div id="cat-nav" style="position:sticky;top:0;z-index:5;background:var(--bg);padding-bottom:.35rem;margin-bottom:.25rem;border-bottom:1px solid var(--border)">
+        <div id="cat-tabs-pos" style="display:flex;gap:.25rem;flex-wrap:wrap"></div>
+        <div id="subcat-chips" style="display:flex;gap:.25rem;flex-wrap:wrap;margin-top:.25rem"></div>
+      </div>
       <div id="lista-productos"></div>
     </div>
   </div>
@@ -58,6 +62,10 @@
         <input id="monto-recibido" class="form-control form-control-sm" type="number" min="0" placeholder="Monto recibido" oninput="calcVuelto()">
         <div id="vuelto-display" style="color:var(--green);font-size:.8rem;margin-top:.25rem"></div>
       </div>
+      <div id="lotes-carrito-wrap" style="display:none;margin-bottom:.4rem;font-size:.75rem">
+        <div style="font-size:.68rem;color:var(--text-3);font-weight:600;text-transform:uppercase;letter-spacing:.04em;margin-bottom:.25rem">Lotes a descontar</div>
+        <div id="lotes-carrito-list"></div>
+      </div>
       <button class="btn btn-primary w-100" id="btn-cobrar" onclick="cobrar()" disabled>Cobrar</button>
     </div>
   </div>
@@ -75,12 +83,14 @@
 </div>
 
 <script>
-const carrito     = [];
-let metodoPago    = null;
+const carrito      = [];
+let metodoPago     = null;
 let todosProductos = [];
-let frecuentes    = [];
-let promoActivas  = [];
-let searchTimer   = null;
+let frecuentes     = [];
+let promoActivas   = [];
+let searchTimer    = null;
+let filtroCat      = '';
+let filtroSubcat   = '';
 
 function fmt(n) { return '$' + Math.round(n).toLocaleString('es-CL'); }
 
@@ -107,8 +117,8 @@ async function init() {
   promoActivas   = dPromo.filter(p => p.activa);
 
   renderFrecuentes();
-  renderProductos(todosProductos);
-  // Auto-focus en el buscador al cargar
+  buildCatTabs();
+  renderListaProductos();
   document.getElementById('search-input').focus();
 }
 
@@ -134,16 +144,16 @@ function debounceBuscar() {
 
 async function buscar() {
   const q = document.getElementById('search-input').value.trim();
-  if (!q) { renderProductos(todosProductos); return; }
+  if (!q) { renderListaProductos(); return; }
   const r = await fetch(`/api/pos/productos?q=${encodeURIComponent(q)}`);
   const d = await r.json();
-  renderProductos(d.productos);
+  renderProductos(d.productos); // búsqueda: lista plana sin agrupar
 }
 
 function handleSearchKey(e) {
   if (e.key === 'Escape') {
     document.getElementById('search-input').value = '';
-    renderProductos(todosProductos);
+    renderListaProductos();
   }
   if (e.key === 'Enter') {
     const lista = document.querySelectorAll('#lista-productos .prod-row');
@@ -151,23 +161,94 @@ function handleSearchKey(e) {
   }
 }
 
+// ── Categorías ────────────────────────────────────────────────────────────────
+const CAT_EMOJI = { pan:'🍞', suscripcion:'📦' };
+
+function buildCatTabs() {
+  const cats = [...new Set(todosProductos.map(p => p.categoria || 'pan'))].sort();
+  const tabs = document.getElementById('cat-tabs-pos');
+  tabs.innerHTML =
+    `<button class="filter-tab ${!filtroCat ? 'active' : ''}" onclick="setCat('',this)">Todos</button>` +
+    cats.map(c =>
+      `<button class="filter-tab ${filtroCat===c ? 'active' : ''}" onclick='setCat(${JSON.stringify(c)},this)'>${CAT_EMOJI[c]||'📁'} ${c.charAt(0).toUpperCase()+c.slice(1)}</button>`
+    ).join('');
+  buildSubcatChips();
+}
+
+function buildSubcatChips() {
+  const chips = document.getElementById('subcat-chips');
+  const prods = filtroCat ? todosProductos.filter(p => (p.categoria||'pan') === filtroCat) : todosProductos;
+  const subs = [...new Set(prods.map(p => p.subcategoria||'').filter(Boolean))].sort();
+  if (!subs.length) { chips.innerHTML = ''; return; }
+  chips.innerHTML =
+    `<button class="filter-tab ${!filtroSubcat ? 'active' : ''}" style="font-size:.7rem" onclick="setSubcat('',this)">Todo</button>` +
+    subs.map(s =>
+      `<button class="filter-tab ${filtroSubcat===s ? 'active' : ''}" style="font-size:.7rem" onclick='setSubcat(${JSON.stringify(s)},this)'>${s}</button>`
+    ).join('');
+}
+
+function setCat(cat, btn) {
+  filtroCat = cat; filtroSubcat = '';
+  document.querySelectorAll('#cat-tabs-pos .filter-tab').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  buildSubcatChips();
+  renderListaProductos();
+}
+
+function setSubcat(sub, btn) {
+  filtroSubcat = sub;
+  document.querySelectorAll('#subcat-chips .filter-tab').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderListaProductos();
+}
+
+function renderListaProductos() {
+  const el = document.getElementById('lista-productos');
+  let prods = todosProductos;
+  if (filtroCat)    prods = prods.filter(p => (p.categoria||'pan') === filtroCat);
+  if (filtroSubcat) prods = prods.filter(p => (p.subcategoria||'') === filtroSubcat);
+  if (!prods.length) { el.innerHTML = '<p style="color:var(--text-3);font-size:.8rem;padding:.5rem">Sin resultados</p>'; return; }
+
+  // Agrupar por subcategoría
+  const groups = {};
+  prods.forEach(p => { const k = p.subcategoria||''; if (!groups[k]) groups[k]=[]; groups[k].push(p); });
+  const keys = Object.keys(groups).sort((a,b) => a ? (b ? a.localeCompare(b) : -1) : 1);
+
+  el.innerHTML = keys.map(key => {
+    const header = key
+      ? `<div style="font-size:.68rem;color:var(--text-3);text-transform:uppercase;letter-spacing:.06em;font-weight:600;padding:.5rem 0 .2rem">${key}</div>`
+      : '';
+    return header + groups[key].map(p => prodRowHtml(p)).join('');
+  }).join('');
+}
+
+// Lista plana — solo para resultados de búsqueda
 function renderProductos(prods) {
   const el = document.getElementById('lista-productos');
   if (!prods.length) { el.innerHTML = '<p style="color:var(--text-3);font-size:.8rem;padding:.5rem">Sin resultados</p>'; return; }
-  el.innerHTML = prods.map(p => {
-    const promo = promoActivas.find(x => x.producto_id == p.id);
-    return `<div class="prod-row" data-pid="${p.id}"
-               onclick='agregarProducto(${p.id},${JSON.stringify(p.nombre)},${p.precio},this)'
-               style="background:var(--bg-2);border:1px solid var(--border);border-radius:.4rem;padding:.45rem .75rem;
-                      margin-bottom:.3rem;display:flex;justify-content:space-between;align-items:center">
-      <div>
-        <span style="font-size:.85rem">${p.nombre}</span>
-        ${promo ? `<span style="font-size:.7rem;color:var(--blue);margin-left:.4rem">🏷️ ${promo.nombre}</span>` : ''}
-        <span style="font-size:.7rem;color:var(--text-3);margin-left:.5rem">Stock: ${p.stock}</span>
-      </div>
-      <span style="color:var(--accent);font-weight:600;font-size:.85rem">${fmt(p.precio)}</span>
-    </div>`;
-  }).join('');
+  el.innerHTML = prods.map(p => prodRowHtml(p)).join('');
+}
+
+function prodRowHtml(p) {
+  const promo    = promoActivas.find(x => x.producto_id == p.id);
+  const sinStock = p.sin_stock;
+  const clickAttr = sinStock ? '' : `onclick='agregarProducto(${p.id},${JSON.stringify(p.nombre)},${p.precio},this)'`;
+  const rowStyle  = sinStock
+    ? 'background:var(--bg-2);border:1px solid var(--border);border-radius:.4rem;padding:.45rem .75rem;margin-bottom:.3rem;display:flex;justify-content:space-between;align-items:center;opacity:.4;pointer-events:none'
+    : 'background:var(--bg-2);border:1px solid var(--border);border-radius:.4rem;padding:.45rem .75rem;margin-bottom:.3rem;display:flex;justify-content:space-between;align-items:center;cursor:pointer';
+  const stockLabel = sinStock
+    ? '<span style="font-size:.7rem;color:#ef4444;font-weight:600;margin-left:.5rem">Sin stock</span>'
+    : `<span style="font-size:.7rem;color:var(--text-3);margin-left:.5rem">Stock: ${p.stock}</span>`;
+  return `<div class="prod-row" data-pid="${p.id}"
+     ${clickAttr}
+     style="${rowStyle}">
+    <div>
+      <span style="font-size:.85rem">${p.nombre}</span>
+      ${promo ? `<span style="font-size:.7rem;color:var(--blue);margin-left:.4rem">🏷️ ${promo.nombre}</span>` : ''}
+      ${stockLabel}
+    </div>
+    <span style="color:var(--accent);font-weight:600;font-size:.85rem">${fmt(p.precio)}</span>
+  </div>`;
 }
 
 // ── Carrito ───────────────────────────────────────────────────────────────────
@@ -250,19 +331,37 @@ function calcDescuento() {
   for (const p of promoActivas) {
     if (p.fecha_inicio && p.fecha_inicio > today) continue;
     if (p.fecha_fin   && p.fecha_fin   < today) continue;
+    const cantMin = p.cantidad_minima || 0;
 
     if (p.tipo === 'porcentaje') {
       if (p.producto_id) {
         const item = carrito.find(i => i.producto_id == p.producto_id);
-        if (item) { const d = Math.round(item.cantidad * item.precio_unitario * p.valor / 100); descuento += d; detalle.push(`${p.nombre}: -${fmt(d)}`); }
-      } else { const d = Math.round(subtotal * p.valor / 100); descuento += d; detalle.push(`${p.nombre}: -${fmt(d)}`); }
+        if (item && (!cantMin || item.cantidad >= cantMin)) {
+          const d = Math.round(item.cantidad * item.precio_unitario * p.valor / 100);
+          descuento += d; detalle.push(`${p.nombre}: -${fmt(d)}`);
+        }
+      } else {
+        const d = Math.round(subtotal * p.valor / 100);
+        descuento += d; detalle.push(`${p.nombre}: -${fmt(d)}`);
+      }
+    } else if (p.tipo === 'precio_unidad' && p.producto_id) {
+      const item = carrito.find(i => i.producto_id == p.producto_id);
+      if (item && (!cantMin || item.cantidad >= cantMin) && p.valor < item.precio_unitario) {
+        const d = Math.round(item.cantidad * (item.precio_unitario - p.valor));
+        descuento += d; detalle.push(`${p.nombre}: -${fmt(d)}`);
+      }
     } else if (p.tipo === 'fijo') {
       if (p.producto_id) {
-        if (carrito.find(i => i.producto_id == p.producto_id)) { descuento += p.valor; detalle.push(`${p.nombre}: -${fmt(p.valor)}`); }
-      } else { descuento += p.valor; detalle.push(`${p.nombre}: -${fmt(p.valor)}`); }
+        const item = carrito.find(i => i.producto_id == p.producto_id);
+        if (item && (!cantMin || item.cantidad >= cantMin)) {
+          descuento += p.valor; detalle.push(`${p.nombre}: -${fmt(p.valor)}`);
+        }
+      } else {
+        descuento += p.valor; detalle.push(`${p.nombre}: -${fmt(p.valor)}`);
+      }
     } else if (p.tipo === '2x1' && p.producto_id) {
       const item = carrito.find(i => i.producto_id == p.producto_id);
-      if (item && item.cantidad >= 2) {
+      if (item && item.cantidad >= 2 && (!cantMin || item.cantidad >= cantMin)) {
         const gratis = Math.floor(item.cantidad / 2);
         const d = gratis * item.precio_unitario;
         descuento += d; detalle.push(`${p.nombre}: -${fmt(d)}`);
@@ -270,6 +369,50 @@ function calcDescuento() {
     }
   }
   return { descuento: Math.max(0, descuento), detalle };
+}
+
+// ── Lotes FIFO override ───────────────────────────────────────────────────────
+let lotesDisponibles = {};  // producto_id -> [{id, fecha_elaboracion, cantidad_actual}]
+
+async function cargarLotesCarrito() {
+  if (!carrito.length) {
+    document.getElementById('lotes-carrito-wrap').style.display = 'none';
+    return;
+  }
+  try {
+    const r = await fetch('/api/producto-lotes');
+    const data = await r.json();
+    lotesDisponibles = {};
+    for (const p of data) {
+      if (p.lotes && p.lotes.length > 0) lotesDisponibles[p.producto_id] = p.lotes;
+    }
+    const tieneMultiples = carrito.some(i => (lotesDisponibles[i.producto_id] || []).length > 1);
+    const wrap = document.getElementById('lotes-carrito-wrap');
+    if (!tieneMultiples) { wrap.style.display = 'none'; return; }
+
+    wrap.style.display = '';
+    document.getElementById('lotes-carrito-list').innerHTML = carrito.map(i => {
+      const lotes = lotesDisponibles[i.producto_id] || [];
+      if (lotes.length <= 1) return '';
+      const opciones = lotes.map(l =>
+        `<option value="${l.id}">${l.fecha_elaboracion} (${l.cantidad_actual} disp.)</option>`
+      ).join('');
+      return `<div style="display:flex;justify-content:space-between;align-items:center;padding:.2rem 0">
+        <span style="flex:1">${i.nombre}</span>
+        <select class="form-control" style="font-size:.72rem;padding:.15rem .3rem;width:160px"
+                data-pid="${i.producto_id}" onchange="setLoteOverride(${i.producto_id},this.value)">
+          ${opciones}
+        </select>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    document.getElementById('lotes-carrito-wrap').style.display = 'none';
+  }
+}
+
+function setLoteOverride(pid, lote_id) {
+  const item = carrito.find(i => i.producto_id == pid);
+  if (item) item.lote_id = parseInt(lote_id) || null;
 }
 
 // ── Pago ──────────────────────────────────────────────────────────────────────
@@ -280,6 +423,7 @@ function selectPago(tipo) {
   document.getElementById('monto-ef-wrap').style.display = tipo === 'efectivo' ? '' : 'none';
   document.getElementById('btn-cobrar').disabled = carrito.length === 0;
   calcVuelto();
+  cargarLotesCarrito();
 }
 
 function calcVuelto() {
@@ -309,7 +453,13 @@ async function cobrar() {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({
-      items:          carrito,
+      items: carrito.map(i => ({
+        producto_id:     i.producto_id,
+        nombre:          i.nombre,
+        precio_unitario: i.precio_unitario,
+        cantidad:        i.cantidad,
+        lote_id:         i.lote_id || null
+      })),
       metodo_pago:    metodoPago,
       monto_efectivo: monto_ef,
       total
