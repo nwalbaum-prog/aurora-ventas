@@ -233,7 +233,7 @@ function celdaCostoMargen(p, costoInfo) {
   const precioR = p.precio || 0;
   const costoR  = p.costo  || 0;
   const margenR = precioR > 0 ? ((precioR - costoR) / precioR * 100).toFixed(1) : '—';
-  const mColorR = parseFloat(margenR) >= 50 ? 'var(--success)' : parseFloat(margenR) >= 30 ? 'var(--warning)' : 'var(--danger)';
+  const mColorR = margenR === '—' ? 'var(--muted)' : (parseFloat(margenR) >= 50 ? 'var(--success)' : parseFloat(margenR) >= 30 ? 'var(--warning)' : 'var(--danger)');
 
   let teoricoHtml = '';
   if (costoInfo && costoInfo.costo_teorico > 0) {
@@ -246,7 +246,7 @@ function celdaCostoMargen(p, costoInfo) {
     teoricoHtml = `<div style="font-size:.72rem;color:${tColor}">
       Teórico: $${Math.round(costoT).toLocaleString('es-CL')} ${parcial}
     </div>
-    <div style="font-size:.72rem;color:var(--muted)">M.teo: ${margenT}%</div>`;
+    <div style="font-size:.72rem;color:var(--muted)">M.teo: ${margenT === '—' ? '—' : margenT + '%'}</div>`;
   }
 
   return `<td class="right">
