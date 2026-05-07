@@ -49,6 +49,22 @@ def _cfg(key: str, default: str = '') -> str:
     """Lee config: env var tiene prioridad, luego aurora_config.json."""
     return os.environ.get(key.upper(), '') or _load_config().get(key, default)
 
+def _get_or_create_inv_terminado(c, producto_id, nombre):
+    """Obtiene o crea entrada en inventario para un producto terminado."""
+    row = c.execute(
+        "SELECT id FROM inventario WHERE bodega='productos_terminados' AND producto_id=?",
+        (producto_id,)
+    ).fetchone()
+    if row:
+        return row['id']
+    cur = c.execute(
+        "INSERT INTO inventario (ingrediente, bodega, stock_kg, unidad, alerta_minimo_kg, producto_id)"
+        " VALUES (?,?,?,?,?,?)",
+        (nombre, 'productos_terminados', 0, 'unidades', 0, producto_id)
+    )
+    return cur.lastrowid
+
+
 def _auto_plan_produccion(items, c):
     """Agrega/incrementa items en plan_produccion para el día siguiente.
     items: lista de {'nombre_producto': str, 'cantidad': float}
@@ -59,6 +75,10 @@ def _auto_plan_produccion(items, c):
     for item in items:
         nombre   = item['nombre_producto']
         cantidad = max(1, round(float(item['cantidad'])))
+        pid = item.get('producto_id') or None
+        if not pid:
+            r = c.execute("SELECT id FROM productos WHERE nombre=?", (nombre,)).fetchone()
+            pid = r['id'] if r else None
         existente = c.execute(
             "SELECT id FROM plan_produccion WHERE fecha=? AND nombre_producto=?",
             (fecha, nombre)
@@ -69,9 +89,10 @@ def _auto_plan_produccion(items, c):
         else:
             c.execute(
                 """INSERT INTO plan_produccion
-                   (fecha, codigo_producto, nombre_producto, cantidad, estado, notas)
-                   VALUES (?,?,?,?,?,?)""",
-                (fecha, nombre, nombre, cantidad, 'pendiente', 'Auto-venta')
+                   (fecha, codigo_producto, nombre_producto, cantidad, estado, notas, producto_id)
+                   VALUES (?,?,?,?,?,?,?)""",
+                (fecha, 'P' + str(pid) if pid else nombre[:4].upper(),
+                 nombre, cantidad, 'pendiente', 'Auto-venta', pid)
             )
 
 
@@ -337,10 +358,40 @@ def init_db():
             ("inventario", "categoria",    "ALTER TABLE inventario ADD COLUMN categoria TEXT NOT NULL DEFAULT ''"),
             ("inventario", "subcategoria", "ALTER TABLE inventario ADD COLUMN subcategoria TEXT NOT NULL DEFAULT ''"),
             ("recetas",    "inventario_id","ALTER TABLE recetas ADD COLUMN inventario_id INTEGER REFERENCES inventario(id) ON DELETE SET NULL"),
+            ("inventario",      "producto_id",  "ALTER TABLE inventario ADD COLUMN producto_id INTEGER REFERENCES productos(id) ON DELETE SET NULL"),
+            ("plan_produccion", "producto_id",  "ALTER TABLE plan_produccion ADD COLUMN producto_id INTEGER REFERENCES productos(id) ON DELETE SET NULL"),
         ]
         for table, col, sql in migrations:
             if not _col_exists(c, table, col):
                 c.execute(sql)
+
+        # Backfill producto_id for productos_terminados rows that predate the FK column.
+        # Only runs while unlinked rows exist; idempotent afterwards.
+        unlinked = c.execute(
+            "SELECT COUNT(*) FROM inventario WHERE bodega='productos_terminados' AND producto_id IS NULL"
+        ).fetchone()[0]
+        if unlinked:
+            c.execute("""
+                UPDATE inventario
+                SET producto_id = (
+                    SELECT p.id FROM productos p
+                    WHERE p.nombre = inventario.ingrediente LIMIT 1
+                )
+                WHERE bodega = 'productos_terminados' AND producto_id IS NULL
+            """)
+            # Reconcile productos.stock for newly linked rows so both counters agree
+            c.execute("""
+                UPDATE productos
+                SET stock = (
+                    SELECT inv.stock_kg FROM inventario inv
+                    WHERE inv.bodega = 'productos_terminados' AND inv.producto_id = productos.id
+                )
+                WHERE id IN (
+                    SELECT producto_id FROM inventario
+                    WHERE bodega = 'productos_terminados'
+                      AND producto_id IS NOT NULL AND stock_kg >= 0
+                )
+            """)
 
         # Tabla de usuarios
         c.execute("""
@@ -1214,9 +1265,14 @@ def api_producto_lotes_ajustar(lid):
             "INSERT INTO lote_movimientos (lote_id, tipo, cantidad, notas) VALUES (?,?,?,?)",
             (lid, tipo, delta, notas)
         )
-        # Sincronizar productos.stock
+        # Sincronizar productos.stock e inventario.stock_kg
         c.execute(
             "UPDATE productos SET stock=MAX(0, stock+?) WHERE id=?",
+            (delta, lote['producto_id'])
+        )
+        c.execute(
+            """UPDATE inventario SET stock_kg=MAX(0, stock_kg+?), ultima_actualizacion=date('now')
+               WHERE bodega='productos_terminados' AND producto_id=?""",
             (delta, lote['producto_id'])
         )
         lote_updated = c.execute("SELECT * FROM producto_lotes WHERE id=?", (lid,)).fetchone()
@@ -1386,11 +1442,20 @@ def api_ventas_create():
                 "INSERT INTO venta_items (venta_id,producto_id,cantidad,precio_unitario) VALUES (?,?,?,?)",
                 (vid, i['producto_id'], float(i['cantidad']), float(i['precio_unitario']))
             )
-            c.execute("UPDATE productos SET stock=stock-? WHERE id=?",
-                      (float(i['cantidad']), i['producto_id']))
+            # Descontar stock de inventario y productos (ambos counters en sync)
+            c.execute(
+                """UPDATE inventario SET stock_kg=MAX(0,stock_kg-?), ultima_actualizacion=date('now')
+                   WHERE bodega='productos_terminados' AND producto_id=?""",
+                (float(i['cantidad']), int(i['producto_id']))
+            )
+            c.execute(
+                "UPDATE productos SET stock=MAX(0, stock-?) WHERE id=?",
+                (float(i['cantidad']), int(i['producto_id']))
+            )
             p = c.execute("SELECT nombre FROM productos WHERE id=?", (i['producto_id'],)).fetchone()
             if p:
-                items_plan.append({'nombre_producto': p['nombre'], 'cantidad': float(i['cantidad'])})
+                items_plan.append({'nombre_producto': p['nombre'], 'cantidad': float(i['cantidad']),
+                                   'producto_id': int(i['producto_id'])})
 
         _auto_plan_produccion(items_plan, c)
 
@@ -1429,16 +1494,6 @@ def api_ventas_create():
                 sub_id = sub_cur.lastrowid
                 c.execute("UPDATE clientes SET es_suscriptor=1 WHERE id=?", (cid,))
 
-        # FIFO: descontar lotes por cada item vendido
-        for i in items:
-            lote_id = i.get('lote_id') or None
-            stock_lotes = c.execute(
-                "SELECT COALESCE(SUM(cantidad_actual),0) FROM producto_lotes WHERE producto_id=?",
-                (int(i['producto_id']),)
-            ).fetchone()[0]
-            if stock_lotes > 0:
-                _descontar_lotes_fifo(c, int(i['producto_id']), float(i['cantidad']), vid, lote_id)
-
         return jsonify({'id': vid, 'total': total, 'suscripcion_id': sub_id}), 201
 
 @app.route('/api/ventas/<int:vid>', methods=['PUT'])
@@ -1464,7 +1519,15 @@ def api_ventas_update(vid):
             items_nuevos = d['items']
             # Restaurar stock de items anteriores
             for i in c.execute("SELECT producto_id, cantidad FROM venta_items WHERE venta_id=?", (vid,)).fetchall():
-                c.execute("UPDATE productos SET stock=stock+? WHERE id=?", (i['cantidad'], i['producto_id']))
+                c.execute(
+                    """UPDATE inventario SET stock_kg=stock_kg+?, ultima_actualizacion=date('now')
+                       WHERE bodega='productos_terminados' AND producto_id=?""",
+                    (i['cantidad'], i['producto_id'])
+                )
+                c.execute(
+                    "UPDATE productos SET stock=stock+? WHERE id=?",
+                    (i['cantidad'], i['producto_id'])
+                )
             c.execute("DELETE FROM venta_items WHERE venta_id=?", (vid,))
             # Insertar nuevos items y descontar stock
             total = 0.0
@@ -1475,7 +1538,15 @@ def api_ventas_update(vid):
                     "INSERT INTO venta_items (venta_id,producto_id,cantidad,precio_unitario) VALUES (?,?,?,?)",
                     (vid, int(i['producto_id']), cant, precio)
                 )
-                c.execute("UPDATE productos SET stock=stock-? WHERE id=?", (cant, int(i['producto_id'])))
+                c.execute(
+                    """UPDATE inventario SET stock_kg=MAX(0,stock_kg-?), ultima_actualizacion=date('now')
+                       WHERE bodega='productos_terminados' AND producto_id=?""",
+                    (cant, int(i['producto_id']))
+                )
+                c.execute(
+                    "UPDATE productos SET stock=MAX(0, stock-?) WHERE id=?",
+                    (cant, int(i['producto_id']))
+                )
                 total += cant * precio
             campos['total'] = total
 
@@ -1496,21 +1567,17 @@ def api_ventas_update(vid):
 def api_ventas_delete(vid):
     with db() as c:
         for i in c.execute("SELECT producto_id, cantidad FROM venta_items WHERE venta_id=?", (vid,)).fetchall():
-            c.execute("UPDATE productos SET stock=stock+? WHERE id=?", (i['cantidad'], i['producto_id']))
+            c.execute(
+                """UPDATE inventario SET stock_kg=stock_kg+?, ultima_actualizacion=date('now')
+                   WHERE bodega='productos_terminados' AND producto_id=?""",
+                (i['cantidad'], i['producto_id'])
+            )
+            c.execute(
+                "UPDATE productos SET stock=stock+? WHERE id=?",
+                (i['cantidad'], i['producto_id'])
+            )
         # pos_ventas no tiene ON DELETE CASCADE → borrar antes
         c.execute("DELETE FROM pos_ventas WHERE venta_id=?", (vid,))
-        # Restaurar lotes: revertir movimientos de venta
-        movs = c.execute(
-            """SELECT lm.lote_id, lm.cantidad FROM lote_movimientos lm
-               WHERE lm.venta_id=? AND lm.tipo='venta'""",
-            (vid,)
-        ).fetchall()
-        for m in movs:
-            c.execute(
-                "UPDATE producto_lotes SET cantidad_actual=cantidad_actual+? WHERE id=?",
-                (abs(m['cantidad']), m['lote_id'])
-            )
-        c.execute("DELETE FROM lote_movimientos WHERE venta_id=?", (vid,))
         c.execute("DELETE FROM ventas WHERE id=?", (vid,))
         return jsonify({'ok': True})
 
@@ -1651,7 +1718,7 @@ def api_renovar_suscripcion(sid):
 # ── API: Reportes ─────────────────────────────────────────────────────────────
 
 def _days_for(periodo):
-    return {'semana':7,'mes':30,'3meses':90,'año':365}.get(periodo,30)
+    return {'hoy':1,'semana':7,'mes':30,'3meses':90,'año':365}.get(periodo,30)
 
 @app.route('/api/reportes/ventas')
 def api_rep_ventas():
@@ -2994,10 +3061,10 @@ def api_plan_create():
     d = request.get_json(silent=True) or {}
     with db() as c:
         cur = c.execute(
-            "INSERT INTO plan_produccion (fecha, codigo_producto, nombre_producto, cantidad, estado, notas) VALUES (?,?,?,?,?,?)",
+            "INSERT INTO plan_produccion (fecha, codigo_producto, nombre_producto, cantidad, estado, notas, producto_id) VALUES (?,?,?,?,?,?,?)",
             (d.get('fecha', date.today().isoformat()), d.get('codigo_producto',''),
              d.get('nombre_producto',''), int(d.get('cantidad',0)),
-             d.get('estado','pendiente'), d.get('notas',''))
+             d.get('estado','pendiente'), d.get('notas',''), d.get('producto_id') or None)
         )
         rid = cur.lastrowid
     return jsonify({'ok': True, 'id': rid})
@@ -3050,15 +3117,29 @@ def api_plan_confirmar(fecha):
         for item in plan:
             nombre   = item['nombre_producto']
             cantidad = item['cantidad']
+            pid_plan = item['producto_id']
 
-            # Buscar producto por nombre para obtener receta y peso
-            prod = c.execute(
-                "SELECT id, peso_unitario_kg FROM productos WHERE nombre=?", (nombre,)
-            ).fetchone()
+            # Buscar producto por ID (si lo tiene) o por nombre
+            if pid_plan:
+                prod = c.execute(
+                    "SELECT id, peso_unitario_kg FROM productos WHERE id=?", (pid_plan,)
+                ).fetchone()
+            else:
+                prod = c.execute(
+                    "SELECT id, peso_unitario_kg FROM productos WHERE nombre=?", (nombre,)
+                ).fetchone()
 
             if prod:
-                # Siempre sumar stock al confirmar producción
-                c.execute("UPDATE productos SET stock=stock+? WHERE id=?", (cantidad, prod['id']))
+                # Sumar stock en inventario y en productos (ambos counters en sync)
+                inv_id = _get_or_create_inv_terminado(c, prod['id'], nombre)
+                c.execute(
+                    "UPDATE inventario SET stock_kg=stock_kg+?, ultima_actualizacion=date('now') WHERE id=?",
+                    (cantidad, inv_id)
+                )
+                c.execute(
+                    "UPDATE productos SET stock=stock+? WHERE id=?",
+                    (cantidad, prod['id'])
+                )
                 stock_sumado.append({'nombre': nombre, 'cantidad': cantidad})
 
                 # Descontar ingredientes solo si tiene peso y receta configurados
@@ -3119,8 +3200,8 @@ def api_plan_copiar():
         rows = c.execute("SELECT * FROM plan_produccion WHERE fecha=?", (desde,)).fetchall()
         for r in rows:
             c.execute(
-                "INSERT INTO plan_produccion (fecha, codigo_producto, nombre_producto, cantidad, estado, notas) VALUES (?,?,?,?,?,?)",
-                (hasta, r['codigo_producto'], r['nombre_producto'], r['cantidad'], 'pendiente', r['notas'])
+                "INSERT INTO plan_produccion (fecha, codigo_producto, nombre_producto, cantidad, estado, notas, producto_id) VALUES (?,?,?,?,?,?,?)",
+                (hasta, r['codigo_producto'], r['nombre_producto'], r['cantidad'], 'pendiente', r['notas'], r['producto_id'])
             )
     return jsonify({'ok': True, 'copiados': len(rows)})
 
@@ -3210,26 +3291,25 @@ def api_plan_generar_desde_ventas(fecha):
         if modo == 'reemplazar':
             c.execute("DELETE FROM plan_produccion WHERE fecha=?", (fecha,))
             for r in rows:
-                codigo = 'V' + str(r['producto_id'])
+                codigo = 'P' + str(r['producto_id'])
                 notas  = r['detalle_clientes'] or ''
                 c.execute(
-                    "INSERT INTO plan_produccion (fecha,codigo_producto,nombre_producto,cantidad,estado,notas) VALUES (?,?,?,?,?,?)",
-                    (fecha, codigo, r['nombre_producto'], int(r['cantidad_total']), 'pendiente', notas)
+                    "INSERT INTO plan_produccion (fecha,codigo_producto,nombre_producto,cantidad,estado,notas,producto_id) VALUES (?,?,?,?,?,?,?)",
+                    (fecha, codigo, r['nombre_producto'], int(r['cantidad_total']), 'pendiente', notas, r['producto_id'])
                 )
             return jsonify({'ok': True, 'modo': 'reemplazar', 'items': len(rows)})
 
         else:  # agregar
-            # Obtener nombres ya presentes en el plan
             existing = {row['nombre_producto'].lower()
                         for row in c.execute("SELECT nombre_producto FROM plan_produccion WHERE fecha=?", (fecha,)).fetchall()}
             agregados = 0
             for r in rows:
                 if r['nombre_producto'].lower() not in existing:
-                    codigo = 'V' + str(r['producto_id'])
+                    codigo = 'P' + str(r['producto_id'])
                     notas  = r['detalle_clientes'] or ''
                     c.execute(
-                        "INSERT INTO plan_produccion (fecha,codigo_producto,nombre_producto,cantidad,estado,notas) VALUES (?,?,?,?,?,?)",
-                        (fecha, codigo, r['nombre_producto'], int(r['cantidad_total']), 'pendiente', notas)
+                        "INSERT INTO plan_produccion (fecha,codigo_producto,nombre_producto,cantidad,estado,notas,producto_id) VALUES (?,?,?,?,?,?,?)",
+                        (fecha, codigo, r['nombre_producto'], int(r['cantidad_total']), 'pendiente', notas, r['producto_id'])
                     )
                     agregados += 1
             return jsonify({'ok': True, 'modo': 'agregar', 'items': len(rows), 'agregados': agregados})

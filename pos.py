@@ -182,45 +182,42 @@ def api_pos_productos():
     with db() as c:
         if q:
             productos = c.execute(
-                """SELECT p.id, p.nombre, p.precio, p.stock, p.categoria, p.subcategoria,
-                          COALESCE(SUM(pl.cantidad_actual), 0) AS stock_lotes
+                """SELECT p.id, p.nombre, p.precio, p.categoria, p.subcategoria,
+                          COALESCE(inv.stock_kg, 0) AS stock
                    FROM productos p
-                   LEFT JOIN producto_lotes pl ON pl.producto_id = p.id
+                   LEFT JOIN inventario inv ON inv.producto_id=p.id AND inv.bodega='productos_terminados'
                    WHERE p.activo=1 AND p.nombre LIKE ?
-                   GROUP BY p.id
                    ORDER BY p.categoria, p.subcategoria, p.nombre
                    LIMIT 20""",
                 (f'%{q}%',)
             ).fetchall()
         else:
             productos = c.execute(
-                """SELECT p.id, p.nombre, p.precio, p.stock, p.categoria, p.subcategoria,
-                          COALESCE(SUM(pl.cantidad_actual), 0) AS stock_lotes
+                """SELECT p.id, p.nombre, p.precio, p.categoria, p.subcategoria,
+                          COALESCE(inv.stock_kg, 0) AS stock
                    FROM productos p
-                   LEFT JOIN producto_lotes pl ON pl.producto_id = p.id
+                   LEFT JOIN inventario inv ON inv.producto_id=p.id AND inv.bodega='productos_terminados'
                    WHERE p.activo=1
-                   GROUP BY p.id
                    ORDER BY p.categoria, p.subcategoria, p.nombre
                    LIMIT 100"""
             ).fetchall()
         frecuentes_rows = c.execute(
-            """SELECT pf.id AS frec_id, pf.orden, p.id AS producto_id, p.nombre, p.precio, p.stock,
-                      COALESCE(SUM(pl.cantidad_actual), 0) AS stock_lotes
+            """SELECT pf.id AS frec_id, pf.orden, p.id AS producto_id, p.nombre, p.precio,
+                      COALESCE(inv.stock_kg, 0) AS stock
                FROM pos_frecuentes pf
                JOIN productos p ON p.id=pf.producto_id
-               LEFT JOIN producto_lotes pl ON pl.producto_id = p.id
+               LEFT JOIN inventario inv ON inv.producto_id=p.id AND inv.bodega='productos_terminados'
                WHERE p.activo=1
-               GROUP BY pf.id
                ORDER BY pf.orden"""
         ).fetchall()
     prods_data = []
     for p in productos:
         d = dict(p)
-        d['sin_stock'] = d['stock_lotes'] == 0
+        d['sin_stock'] = d['stock'] == 0
         prods_data.append(d)
     return jsonify({
         'productos':  prods_data,
-        'frecuentes': [dict(f) | {'sin_stock': f['stock_lotes'] == 0} for f in frecuentes_rows]
+        'frecuentes': [dict(f) | {'sin_stock': f['stock'] == 0} for f in frecuentes_rows]
     })
 
 
@@ -462,21 +459,16 @@ def api_pos_venta():
                 "INSERT INTO venta_items (venta_id,producto_id,cantidad,precio_unitario) VALUES (?,?,?,?)",
                 (venta_id, item['producto_id'], float(item['cantidad']), float(item['precio_unitario']))
             )
-            c.execute("UPDATE productos SET stock=stock-? WHERE id=?",
-                      (float(item['cantidad']), item['producto_id']))
-
-        # FIFO: descontar lotes por item
-        import app as _app_module
-        for item in items:
-            lote_id = item.get('lote_id') or None
-            stock_lotes = c.execute(
-                "SELECT COALESCE(SUM(cantidad_actual),0) FROM producto_lotes WHERE producto_id=?",
-                (item['producto_id'],)
-            ).fetchone()[0]
-            if stock_lotes > 0:
-                _app_module._descontar_lotes_fifo(
-                    c, item['producto_id'], float(item['cantidad']), venta_id, lote_id
-                )
+            # Descontar stock de inventario y productos (ambos counters en sync)
+            c.execute(
+                """UPDATE inventario SET stock_kg=MAX(0,stock_kg-?), ultima_actualizacion=date('now')
+                   WHERE bodega='productos_terminados' AND producto_id=?""",
+                (float(item['cantidad']), item['producto_id'])
+            )
+            c.execute(
+                "UPDATE productos SET stock=MAX(0, stock-?) WHERE id=?",
+                (float(item['cantidad']), item['producto_id'])
+            )
 
         pv_cur = c.execute(
             """INSERT INTO pos_ventas (turno_id,venta_id,metodo_pago,monto_efectivo,monto_tarjeta,vuelto,boleta_estado)
