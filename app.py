@@ -144,6 +144,108 @@ def _descontar_lotes_fifo(c, producto_id, cantidad, venta_id, lote_id_override=N
     return movimientos
 
 
+def _calcular_orden_produccion(c, fecha_horneado: str) -> dict:
+    """
+    Reverse scheduling: dado fecha_horneado calcula qué amasar hoy.
+    Lee ventas con fecha_despacho=fecha_horneado, agrupa por masa_base,
+    aplica matemática de baking_loss + merma + baker's percentage.
+    No escribe a la DB. c puede ser cursor de sqlite3 directo o de db().
+    """
+    rows = c.execute("""
+        SELECT p.id AS producto_id, p.nombre, p.peso_unitario_kg,
+               p.masa_base, p.baking_loss_pct, p.merma_tecnica_pct,
+               SUM(vi.cantidad) AS cantidad_total
+        FROM venta_items vi
+        JOIN ventas v  ON v.id  = vi.venta_id
+        JOIN productos p ON p.id = vi.producto_id
+        WHERE v.fecha_despacho = ?
+          AND v.estado_despacho != 'CANCELADO'
+          AND p.activo = 1
+        GROUP BY p.id
+    """, (fecha_horneado,)).fetchall()
+
+    sin_masa_base = []
+    grupos: dict[str, list] = {}
+    for r in rows:
+        r = dict(r)
+        if not r['masa_base']:
+            sin_masa_base.append({'nombre': r['nombre'], 'cantidad': r['cantidad_total'],
+                                   'advertencia': 'sin masa_base configurada'})
+            continue
+        grupos.setdefault(r['masa_base'], []).append(r)
+
+    ordenes = []
+    for masa_base, productos in grupos.items():
+        ref = productos[0]
+        baking_loss = ref['baking_loss_pct'] / 100.0
+        merma      = ref['merma_tecnica_pct'] / 100.0
+
+        prods_out = []
+        masa_final_kg = 0.0
+        for p in productos:
+            mf = p['cantidad_total'] * p['peso_unitario_kg']
+            masa_final_kg += mf
+            prods_out.append({
+                'producto_id':    p['producto_id'],
+                'nombre':         p['nombre'],
+                'cantidad':       p['cantidad_total'],
+                'peso_unitario_kg': p['peso_unitario_kg'],
+                'masa_final_kg':  round(mf, 3),
+            })
+
+        masa_cruda_kg  = masa_final_kg / (1 - baking_loss) if baking_loss < 1 else masa_final_kg
+        masa_amasar_kg = masa_cruda_kg * (1 + merma)
+
+        receta_prod_id, max_ings = None, -1
+        for p in productos:
+            cnt = c.execute("SELECT COUNT(*) FROM recetas WHERE producto_id=?",
+                            (p['producto_id'],)).fetchone()[0]
+            if cnt > max_ings:
+                max_ings, receta_prod_id = cnt, p['producto_id']
+
+        ingredientes_out = []
+        alerta_stock = False
+        if receta_prod_id and max_ings > 0:
+            receta_rows = c.execute("""
+                SELECT r.ingrediente, r.porcentaje, r.inventario_id,
+                       COALESCE(i.stock_kg, 0) AS stock_actual
+                FROM recetas r
+                LEFT JOIN inventario i ON i.id = r.inventario_id
+                WHERE r.producto_id = ?
+            """, (receta_prod_id,)).fetchall()
+
+            sum_pct = sum(r['porcentaje'] for r in receta_rows)
+            scale   = masa_amasar_kg / sum_pct if sum_pct > 0 else 0.0
+
+            for r in receta_rows:
+                kg = round(r['porcentaje'] * scale, 3)
+                suficiente = float(r['stock_actual']) >= kg
+                if not suficiente:
+                    alerta_stock = True
+                ingredientes_out.append({
+                    'nombre':       r['ingrediente'],
+                    'porcentaje':   r['porcentaje'],
+                    'kg':           kg,
+                    'inventario_id': r['inventario_id'],
+                    'stock_actual': round(float(r['stock_actual']), 3),
+                    'suficiente':   suficiente,
+                })
+
+        ordenes.append({
+            'masa_base':         masa_base,
+            'productos':         prods_out,
+            'masa_final_kg':     round(masa_final_kg, 3),
+            'masa_cruda_kg':     round(masa_cruda_kg, 3),
+            'masa_amasar_kg':    round(masa_amasar_kg, 3),
+            'baking_loss_pct':   ref['baking_loss_pct'],
+            'merma_tecnica_pct': ref['merma_tecnica_pct'],
+            'ingredientes':      ingredientes_out,
+            'alerta_stock':      alerta_stock,
+        })
+
+    return {'ordenes': ordenes, 'sin_masa_base': sin_masa_base}
+
+
 # ── Evolution API (agente WhatsApp) ───────────────────────────────────────────
 
 def _wa_cfg():
