@@ -381,8 +381,8 @@ function openEdit(id) {
   document.getElementById('p-categoria').value            = p.categoria||'pan';
   document.getElementById('p-subcategoria').value         = p.subcategoria||'';
   document.getElementById('p-masa-base').value            = p.masa_base    || '';
-  document.getElementById('p-baking-loss').value          = p.baking_loss_pct  || '';
-  document.getElementById('p-merma-tecnica').value        = p.merma_tecnica_pct || '';
+  document.getElementById('p-baking-loss').value          = p.baking_loss_pct  != null ? p.baking_loss_pct  : '';
+  document.getElementById('p-merma-tecnica').value        = p.merma_tecnica_pct != null ? p.merma_tecnica_pct : '';
   calcMargen();
   openModal('prod-modal');
 }
