@@ -5,7 +5,7 @@ Corre con: python app.py  →  http://127.0.0.1:5000
 from flask import Flask, render_template, request, jsonify, redirect, session, url_for, flash
 from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
-import sqlite3, os, json, smtplib, urllib.request, urllib.parse, secrets
+import sqlite3, os, json, smtplib, urllib.request, urllib.parse, secrets, uuid
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import date, datetime, timedelta
@@ -176,6 +176,7 @@ def _calcular_orden_produccion(c, fecha_horneado: str) -> dict:
 
     ordenes = []
     for masa_base, productos in grupos.items():
+        # First product is the reference — all products sharing a masa_base are expected to have identical baking/merma percentages.
         ref = productos[0]
         baking_loss = ref['baking_loss_pct'] / 100.0
         merma      = ref['merma_tecnica_pct'] / 100.0
@@ -3526,9 +3527,10 @@ def api_produccion_calcular_orden():
         'fecha_horneado',
         (date.today() + timedelta(days=1)).isoformat()
     )
-    fecha_amasado = (
-        date.fromisoformat(fecha_horneado) - timedelta(days=1)
-    ).isoformat()
+    try:
+        fecha_amasado = (date.fromisoformat(fecha_horneado) - timedelta(days=1)).isoformat()
+    except ValueError:
+        return jsonify({'error': 'fecha_horneado debe ser YYYY-MM-DD'}), 400
 
     with db() as c:
         resultado = _calcular_orden_produccion(c, fecha_horneado)
@@ -3548,15 +3550,15 @@ def api_produccion_generar_plan():
     Body JSON: { "fecha_horneado": "YYYY-MM-DD" }
     Reemplaza solo batches en estado 'pendiente'. Nunca toca amasado/horneado.
     """
-    import uuid as _uuid
     d = request.get_json(silent=True) or {}
     fecha_horneado = d.get(
         'fecha_horneado',
         (date.today() + timedelta(days=1)).isoformat()
     )
-    fecha_amasado = (
-        date.fromisoformat(fecha_horneado) - timedelta(days=1)
-    ).isoformat()
+    try:
+        fecha_amasado = (date.fromisoformat(fecha_horneado) - timedelta(days=1)).isoformat()
+    except ValueError:
+        return jsonify({'error': 'fecha_horneado debe ser YYYY-MM-DD'}), 400
 
     with db() as c:
         resultado = _calcular_orden_produccion(c, fecha_horneado)
@@ -3576,7 +3578,7 @@ def api_produccion_generar_plan():
                   )
             """, (fecha_amasado, masa_base))
 
-            batch_id = str(_uuid.uuid4())
+            batch_id = str(uuid.uuid4())
             ings_json = json.dumps(orden['ingredientes'], ensure_ascii=False)
 
             for prod in orden['productos']:
