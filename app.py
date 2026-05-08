@@ -3214,8 +3214,9 @@ def api_plan_list():
                             "SELECT baking_loss_pct, merma_tecnica_pct FROM productos WHERE id=?",
                             (r['producto_id'],)
                         ).fetchone()
-                        if ref_prod and ref_prod['baking_loss_pct'] > 0:
-                            masa_cruda = masa_final / (1 - ref_prod['baking_loss_pct'] / 100)
+                        if ref_prod:
+                            bl = ref_prod['baking_loss_pct'] / 100
+                            masa_cruda = masa_final / (1 - bl) if bl < 1 else masa_final
                             masa_amasar = masa_cruda * (1 + ref_prod['merma_tecnica_pct'] / 100)
                         else:
                             masa_amasar = masa_final
