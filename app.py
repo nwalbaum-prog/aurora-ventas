@@ -3159,7 +3159,95 @@ def page_produccion():
 @login_required
 def api_plan_list():
     fecha = request.args.get('fecha', date.today().isoformat())
+    vista = request.args.get('vista', '')
+
     with db() as c:
+        if vista == 'timeline':
+            hornear_rows = c.execute("""
+                SELECT batch_id, nombre_producto, cantidad, estado,
+                       producto_id, fecha_amasado, fecha_horneado, ingredientes_json
+                FROM plan_produccion
+                WHERE fecha_horneado = ?
+                  AND estado IN ('amasado')
+                  AND batch_id != ''
+                ORDER BY batch_id, nombre_producto
+            """, (fecha,)).fetchall()
+
+            amasar_rows = c.execute("""
+                SELECT batch_id, nombre_producto, cantidad, estado,
+                       producto_id, fecha_amasado, fecha_horneado, ingredientes_json
+                FROM plan_produccion
+                WHERE fecha_amasado = ?
+                  AND estado = 'pendiente'
+                  AND batch_id != ''
+                ORDER BY batch_id, nombre_producto
+            """, (fecha,)).fetchall()
+
+            horneados_rows = c.execute("""
+                SELECT batch_id, nombre_producto, cantidad, estado,
+                       producto_id, fecha_amasado, fecha_horneado, ingredientes_json
+                FROM plan_produccion
+                WHERE fecha_amasado = ?
+                  AND estado IN ('horneado', 'listo')
+                  AND batch_id != ''
+                ORDER BY batch_id, nombre_producto
+            """, (fecha,)).fetchall()
+
+            def agrupar_por_batch(rows):
+                batches = {}
+                for r in rows:
+                    r = dict(r)
+                    bid = r['batch_id']
+                    if bid not in batches:
+                        prod = c.execute(
+                            "SELECT masa_base FROM productos WHERE id=?", (r['producto_id'],)
+                        ).fetchone()
+                        masa_base = prod['masa_base'] if prod else ''
+                        batch_prods = c.execute("""
+                            SELECT pp.cantidad, p.peso_unitario_kg
+                            FROM plan_produccion pp
+                            JOIN productos p ON p.id = pp.producto_id
+                            WHERE pp.batch_id = ?
+                        """, (bid,)).fetchall()
+                        masa_final = sum(bp['cantidad'] * bp['peso_unitario_kg'] for bp in batch_prods)
+                        ref_prod = c.execute(
+                            "SELECT baking_loss_pct, merma_tecnica_pct FROM productos WHERE id=?",
+                            (r['producto_id'],)
+                        ).fetchone()
+                        if ref_prod and ref_prod['baking_loss_pct'] > 0:
+                            masa_cruda = masa_final / (1 - ref_prod['baking_loss_pct'] / 100)
+                            masa_amasar = masa_cruda * (1 + ref_prod['merma_tecnica_pct'] / 100)
+                        else:
+                            masa_amasar = masa_final
+                        try:
+                            ings = json.loads(r['ingredientes_json'] or '[]')
+                        except Exception:
+                            ings = []
+                        batches[bid] = {
+                            'batch_id':       bid,
+                            'masa_base':      masa_base,
+                            'estado':         r['estado'],
+                            'fecha_amasado':  r['fecha_amasado'],
+                            'fecha_horneado': r['fecha_horneado'],
+                            'masa_amasar_kg': round(masa_amasar, 3),
+                            'ingredientes':   ings,
+                            'productos':      [],
+                        }
+                    batches[bid]['productos'].append({
+                        'nombre':     r['nombre_producto'],
+                        'cantidad':   r['cantidad'],
+                        'producto_id': r['producto_id'],
+                    })
+                return list(batches.values())
+
+            return jsonify({
+                'fecha':       fecha,
+                'hornear_hoy': agrupar_por_batch(hornear_rows),
+                'amasar_hoy':  agrupar_por_batch(amasar_rows),
+                'horneados':   agrupar_por_batch(horneados_rows),
+            })
+
+        # Backward compat: sin vista=timeline devuelve lista plana
         rows = c.execute(
             "SELECT * FROM plan_produccion WHERE fecha=? ORDER BY nombre_producto", (fecha,)
         ).fetchall()
@@ -3423,6 +3511,107 @@ def api_plan_generar_desde_ventas(fecha):
                     )
                     agregados += 1
             return jsonify({'ok': True, 'modo': 'agregar', 'items': len(rows), 'agregados': agregados})
+
+
+@app.route('/api/produccion/calcular-orden')
+@login_required
+def api_produccion_calcular_orden():
+    """
+    Calcula la orden de trabajo de amasado para una fecha_horneado dada.
+    Solo lectura — no escribe a DB.
+    Query param: fecha_horneado (YYYY-MM-DD, default: mañana)
+    """
+    fecha_horneado = request.args.get(
+        'fecha_horneado',
+        (date.today() + timedelta(days=1)).isoformat()
+    )
+    fecha_amasado = (
+        date.fromisoformat(fecha_horneado) - timedelta(days=1)
+    ).isoformat()
+
+    with db() as c:
+        resultado = _calcular_orden_produccion(c, fecha_horneado)
+
+    return jsonify({
+        'fecha_amasado':  fecha_amasado,
+        'fecha_horneado': fecha_horneado,
+        **resultado,
+    })
+
+
+@app.route('/api/produccion/generar-plan', methods=['POST'])
+@login_required
+def api_produccion_generar_plan():
+    """
+    Genera el plan de producción en plan_produccion.
+    Body JSON: { "fecha_horneado": "YYYY-MM-DD" }
+    Reemplaza solo batches en estado 'pendiente'. Nunca toca amasado/horneado.
+    """
+    import uuid as _uuid
+    d = request.get_json(silent=True) or {}
+    fecha_horneado = d.get(
+        'fecha_horneado',
+        (date.today() + timedelta(days=1)).isoformat()
+    )
+    fecha_amasado = (
+        date.fromisoformat(fecha_horneado) - timedelta(days=1)
+    ).isoformat()
+
+    with db() as c:
+        resultado = _calcular_orden_produccion(c, fecha_horneado)
+
+        if not resultado['ordenes']:
+            return jsonify({'ok': True, 'batches': [], 'advertencia': 'Sin ventas para esa fecha'}), 200
+
+        batches_creados = []
+        for orden in resultado['ordenes']:
+            masa_base = orden['masa_base']
+
+            c.execute("""
+                DELETE FROM plan_produccion
+                WHERE fecha_amasado = ? AND estado = 'pendiente'
+                  AND producto_id IN (
+                      SELECT id FROM productos WHERE masa_base = ?
+                  )
+            """, (fecha_amasado, masa_base))
+
+            batch_id = str(_uuid.uuid4())
+            ings_json = json.dumps(orden['ingredientes'], ensure_ascii=False)
+
+            for prod in orden['productos']:
+                c.execute("""
+                    INSERT INTO plan_produccion
+                        (fecha, nombre_producto, cantidad, estado, producto_id,
+                         fecha_amasado, fecha_horneado, batch_id, ingredientes_json, notas)
+                    VALUES (?,?,?,?,?,?,?,?,?,?)
+                """, (
+                    fecha_amasado,
+                    prod['nombre'],
+                    prod['cantidad'],
+                    'pendiente',
+                    prod['producto_id'],
+                    fecha_amasado,
+                    fecha_horneado,
+                    batch_id,
+                    ings_json,
+                    '',
+                ))
+
+            batches_creados.append({
+                'batch_id':       batch_id,
+                'masa_base':      masa_base,
+                'masa_amasar_kg': orden['masa_amasar_kg'],
+                'productos':      [p['nombre'] for p in orden['productos']],
+                'alerta_stock':   orden['alerta_stock'],
+            })
+
+    return jsonify({
+        'ok':             True,
+        'fecha_amasado':  fecha_amasado,
+        'fecha_horneado': fecha_horneado,
+        'batches':        batches_creados,
+        'sin_masa_base':  resultado['sin_masa_base'],
+    }), 201
 
 
 # ════════════════════════════════════════════════════════════════════════════
