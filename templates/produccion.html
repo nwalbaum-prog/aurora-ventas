@@ -165,8 +165,12 @@ async function cargarTimeline(fecha) {
   document.getElementById('fecha-selector').value = fecha;
   document.getElementById('titulo-fecha').textContent = fmtFecha(fecha);
 
-  const r = await fetch(`/api/plan-produccion?fecha=${fecha}&vista=timeline`);
-  const data = await r.json();
+  let r, data;
+  try {
+    r = await fetch(`/api/plan-produccion?fecha=${fecha}&vista=timeline`);
+    if (!r.ok) { alert(`Error ${r.status} al cargar el plan`); return; }
+    data = await r.json();
+  } catch { alert('Error de conexión al cargar el plan'); return; }
 
   const elH = document.getElementById('lista-hornear');
   if (data.hornear_hoy.length) {
@@ -202,23 +206,27 @@ function cambiarFecha(delta) {
 
 async function marcarAmasado(batchId) {
   if (!confirm('¿Confirmar que este lote fue amasado?')) return;
-  const r = await fetch(`/api/produccion/batch/${batchId}/amasar`, {method:'POST'});
-  const data = await r.json();
-  if (!data.ok) { alert(data.error || 'Error'); return; }
-  if (data.advertencias?.length) {
-    const msgs = data.advertencias.map(a =>
-      `${a.ingrediente}: faltaron ${a.faltante_kg} kg`).join('\n');
-    alert(`Amasado registrado con stock insuficiente:\n${msgs}`);
-  }
-  cargarTimeline(fechaActual);
+  try {
+    const r = await fetch(`/api/produccion/batch/${batchId}/amasar`, {method:'POST'});
+    const data = await r.json();
+    if (!data.ok) { alert(data.error || 'Error'); return; }
+    if (data.advertencias?.length) {
+      const msgs = data.advertencias.map(a =>
+        `${a.ingrediente}: faltaron ${a.faltante_kg} kg`).join('\n');
+      alert(`Amasado registrado con stock insuficiente:\n${msgs}`);
+    }
+    cargarTimeline(fechaActual);
+  } catch { alert('Error de conexión'); }
 }
 
 async function marcarHorneado(batchId) {
   if (!confirm('¿Confirmar que este lote fue horneado y está listo?')) return;
-  const r = await fetch(`/api/produccion/batch/${batchId}/hornear`, {method:'POST'});
-  const data = await r.json();
-  if (!data.ok) { alert(data.error || 'Error'); return; }
-  cargarTimeline(fechaActual);
+  try {
+    const r = await fetch(`/api/produccion/batch/${batchId}/hornear`, {method:'POST'});
+    const data = await r.json();
+    if (!data.ok) { alert(data.error || 'Error'); return; }
+    cargarTimeline(fechaActual);
+  } catch { alert('Error de conexión'); }
 }
 
 async function abrirModalGenerar() {
@@ -233,8 +241,12 @@ async function abrirModalGenerar() {
   document.getElementById('modal-generar-footer').style.display = 'none';
   document.getElementById('modal-generar').style.display = 'flex';
 
-  const r = await fetch(`/api/produccion/calcular-orden?fecha_horneado=${fechaHorneado}`);
-  const data = await r.json();
+  let r, data;
+  try {
+    r = await fetch(`/api/produccion/calcular-orden?fecha_horneado=${fechaHorneado}`);
+    if (!r.ok) { document.getElementById('modal-generar-content').innerHTML = `<p style="color:#dc2626">Error ${r.status} al calcular el plan.</p>`; return; }
+    data = await r.json();
+  } catch { document.getElementById('modal-generar-content').innerHTML = '<p style="color:#dc2626">Error de conexión.</p>'; return; }
   planPreview = { data, fechaHorneado };
 
   if (!data.ordenes.length && !data.sin_masa_base.length) {
@@ -285,6 +297,9 @@ async function abrirModalGenerar() {
 
 function cerrarModalGenerar() {
   document.getElementById('modal-generar').style.display = 'none';
+  const btn = document.getElementById('btn-confirmar-plan');
+  btn.disabled = false;
+  btn.textContent = 'Confirmar y guardar plan';
   planPreview = null;
 }
 
@@ -293,18 +308,20 @@ async function confirmarPlan() {
   document.getElementById('btn-confirmar-plan').disabled = true;
   document.getElementById('btn-confirmar-plan').textContent = 'Guardando...';
 
-  const r = await fetch('/api/produccion/generar-plan', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({fecha_horneado: planPreview.fechaHorneado}),
-  });
-  const data = await r.json();
-  cerrarModalGenerar();
-  if (data.ok) {
-    cargarTimeline(fechaActual);
-  } else {
-    alert(data.error || 'Error al guardar el plan');
-  }
+  try {
+    const r = await fetch('/api/produccion/generar-plan', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({fecha_horneado: planPreview.fechaHorneado}),
+    });
+    const data = await r.json();
+    cerrarModalGenerar();
+    if (data.ok) {
+      cargarTimeline(fechaActual);
+    } else {
+      alert(data.error || 'Error al guardar el plan');
+    }
+  } catch { cerrarModalGenerar(); alert('Error de conexión al guardar el plan'); }
 }
 
 document.addEventListener('DOMContentLoaded', () => cargarTimeline(hoy));
