@@ -360,6 +360,14 @@ def init_db():
             ("recetas",    "inventario_id","ALTER TABLE recetas ADD COLUMN inventario_id INTEGER REFERENCES inventario(id) ON DELETE SET NULL"),
             ("inventario",      "producto_id",  "ALTER TABLE inventario ADD COLUMN producto_id INTEGER REFERENCES productos(id) ON DELETE SET NULL"),
             ("plan_produccion", "producto_id",  "ALTER TABLE plan_produccion ADD COLUMN producto_id INTEGER REFERENCES productos(id) ON DELETE SET NULL"),
+            # Producción masa madre — reverse scheduling
+            ("productos",        "masa_base",          "ALTER TABLE productos ADD COLUMN masa_base TEXT NOT NULL DEFAULT ''"),
+            ("productos",        "baking_loss_pct",    "ALTER TABLE productos ADD COLUMN baking_loss_pct REAL NOT NULL DEFAULT 0"),
+            ("productos",        "merma_tecnica_pct",  "ALTER TABLE productos ADD COLUMN merma_tecnica_pct REAL NOT NULL DEFAULT 0"),
+            ("plan_produccion",  "fecha_amasado",      "ALTER TABLE plan_produccion ADD COLUMN fecha_amasado TEXT NOT NULL DEFAULT ''"),
+            ("plan_produccion",  "fecha_horneado",     "ALTER TABLE plan_produccion ADD COLUMN fecha_horneado TEXT NOT NULL DEFAULT ''"),
+            ("plan_produccion",  "batch_id",           "ALTER TABLE plan_produccion ADD COLUMN batch_id TEXT NOT NULL DEFAULT ''"),
+            ("plan_produccion",  "ingredientes_json",  "ALTER TABLE plan_produccion ADD COLUMN ingredientes_json TEXT NOT NULL DEFAULT '[]'"),
         ]
         for table, col, sql in migrations:
             if not _col_exists(c, table, col):
