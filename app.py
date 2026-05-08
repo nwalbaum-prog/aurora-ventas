@@ -3617,6 +3617,119 @@ def api_produccion_generar_plan():
     }), 201
 
 
+@app.route('/api/produccion/batch/<batch_id>/amasar', methods=['POST'])
+@login_required
+def api_produccion_batch_amasar(batch_id):
+    """
+    Transición pendiente → amasado.
+    Descuenta ingredientes de inventario (bodega=ingredientes).
+    Si stock insuficiente: descuenta lo disponible, responde con advertencias (no bloquea).
+    """
+    with db() as c:
+        filas = c.execute(
+            "SELECT * FROM plan_produccion WHERE batch_id=?", (batch_id,)
+        ).fetchall()
+        if not filas:
+            return jsonify({'error': 'Batch no encontrado'}), 404
+
+        estado_actual = filas[0]['estado']
+        if estado_actual != 'pendiente':
+            msgs = {'amasado': 'Este lote ya fue amasado', 'horneado': 'Este lote ya fue horneado'}
+            return jsonify({'error': msgs.get(estado_actual, f'Estado inválido: {estado_actual}')}), 400
+
+        # Usar ingredientes_json de la primera fila con datos
+        ings_json = None
+        for f in filas:
+            if f['ingredientes_json'] and f['ingredientes_json'] != '[]':
+                ings_json = f['ingredientes_json']
+                break
+
+        advertencias = []
+        if ings_json:
+            try:
+                ingredientes = json.loads(ings_json)
+            except Exception:
+                ingredientes = []
+
+            for ing in ingredientes:
+                inv_id = ing.get('inventario_id')
+                kg_necesario = float(ing.get('kg', 0))
+                if not inv_id or kg_necesario <= 0:
+                    continue
+                row = c.execute(
+                    "SELECT stock_kg, ingrediente FROM inventario WHERE id=?", (inv_id,)
+                ).fetchone()
+                if not row:
+                    continue
+                stock_actual = float(row['stock_kg'])
+                descontar = min(kg_necesario, stock_actual)
+                c.execute(
+                    "UPDATE inventario SET stock_kg=MAX(0, stock_kg-?), ultima_actualizacion=date('now') WHERE id=?",
+                    (descontar, inv_id)
+                )
+                if stock_actual < kg_necesario:
+                    advertencias.append({
+                        'ingrediente': row['ingrediente'],
+                        'necesario_kg': kg_necesario,
+                        'disponible_kg': stock_actual,
+                        'faltante_kg': round(kg_necesario - stock_actual, 3),
+                    })
+
+        c.execute(
+            "UPDATE plan_produccion SET estado='amasado' WHERE batch_id=?", (batch_id,)
+        )
+
+    return jsonify({'ok': True, 'batch_id': batch_id, 'advertencias': advertencias})
+
+
+@app.route('/api/produccion/batch/<batch_id>/hornear', methods=['POST'])
+@login_required
+def api_produccion_batch_hornear(batch_id):
+    """
+    Transición amasado → horneado.
+    Suma stock de productos_terminados e inventario para cada producto del batch.
+    Valida que el estado sea 'amasado' — rechaza 'pendiente' con mensaje claro.
+    """
+    with db() as c:
+        filas = c.execute(
+            "SELECT * FROM plan_produccion WHERE batch_id=?", (batch_id,)
+        ).fetchall()
+        if not filas:
+            return jsonify({'error': 'Batch no encontrado'}), 404
+
+        estado_actual = filas[0]['estado']
+        if estado_actual == 'pendiente':
+            return jsonify({'error': 'Registra el amasado primero antes de hornear'}), 400
+        if estado_actual in ('horneado', 'listo'):
+            return jsonify({'error': 'Este lote ya fue horneado'}), 400
+        if estado_actual != 'amasado':
+            return jsonify({'error': f'Estado inválido para hornear: {estado_actual}'}), 400
+
+        stock_sumado = []
+        for fila in filas:
+            prod_id = fila['producto_id']
+            nombre  = fila['nombre_producto']
+            cantidad = fila['cantidad']
+            if not prod_id:
+                continue
+            inv_id = _get_or_create_inv_terminado(c, prod_id, nombre)
+            c.execute(
+                "UPDATE inventario SET stock_kg=stock_kg+?, ultima_actualizacion=date('now') WHERE id=?",
+                (cantidad, inv_id)
+            )
+            c.execute(
+                "UPDATE productos SET stock=stock+? WHERE id=?",
+                (cantidad, prod_id)
+            )
+            stock_sumado.append({'nombre': nombre, 'cantidad': cantidad})
+
+        c.execute(
+            "UPDATE plan_produccion SET estado='horneado' WHERE batch_id=?", (batch_id,)
+        )
+
+    return jsonify({'ok': True, 'batch_id': batch_id, 'stock_sumado': stock_sumado})
+
+
 # ════════════════════════════════════════════════════════════════════════════
 # GASTOS
 # ════════════════════════════════════════════════════════════════════════════
