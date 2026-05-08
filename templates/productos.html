@@ -110,6 +110,28 @@
         </select>
       </div>
     </div>
+    <div style="border-top:1px solid var(--border);margin:1rem 0;padding-top:1rem">
+      <p style="font-size:.78rem;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:.75rem">
+        Producción Masa Madre
+      </p>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:.75rem">
+        <div>
+          <label class="form-label">Masa Base</label>
+          <input type="text" id="p-masa-base" class="form-control" placeholder="ej. Masa Madre Trigo"
+                 title="Productos con la misma Masa Base se agrupan en un lote al planificar producción">
+        </div>
+        <div>
+          <label class="form-label">Baking Loss %</label>
+          <input type="number" id="p-baking-loss" class="form-control" min="0" max="50" step="0.5"
+                 placeholder="ej. 15" title="% de peso que pierde la masa al hornearse">
+        </div>
+        <div>
+          <label class="form-label">Merma Técnica %</label>
+          <input type="number" id="p-merma-tecnica" class="form-control" min="0" max="20" step="0.5"
+                 placeholder="ej. 2" title="% de masa perdida en bowl y amasado">
+        </div>
+      </div>
+    </div>
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeModal('prod-modal')">Cancelar</button>
       <button class="btn btn-primary" onclick="saveProducto()"><i class="bi bi-check-lg"></i> Guardar</button>
@@ -151,6 +173,12 @@
             Agrega harina blanca e integral como ingredientes con sus % abajo
           </div>
         </div>
+      </div>
+      <div id="ficha-harina-inv-row" class="form-group" style="margin-top:.5rem;margin-bottom:0">
+        <label>Vincular harina a inventario</label>
+        <select id="ficha-harina-inv" class="form-control" style="width:100%" onchange="actualizarCostoFooter()">
+          <option value="">— Sin vincular —</option>
+        </select>
       </div>
     </div>
 
@@ -332,6 +360,9 @@ function openAdd() {
   document.getElementById('p-categoria').value = 'pan';
   document.getElementById('p-margen').value = '—';
   document.getElementById('p-margen-mayorista').value = '—';
+  document.getElementById('p-masa-base').value     = '';
+  document.getElementById('p-baking-loss').value   = '';
+  document.getElementById('p-merma-tecnica').value = '';
   openModal('prod-modal');
 }
 
@@ -349,6 +380,9 @@ function openEdit(id) {
   document.getElementById('p-unidad').value               = p.unidad;
   document.getElementById('p-categoria').value            = p.categoria||'pan';
   document.getElementById('p-subcategoria').value         = p.subcategoria||'';
+  document.getElementById('p-masa-base').value            = p.masa_base    || '';
+  document.getElementById('p-baking-loss').value          = p.baking_loss_pct  || '';
+  document.getElementById('p-merma-tecnica').value        = p.merma_tecnica_pct || '';
   calcMargen();
   openModal('prod-modal');
 }
@@ -367,6 +401,9 @@ async function saveProducto() {
     unidad:           document.getElementById('p-unidad').value,
     categoria:        document.getElementById('p-categoria').value,
     subcategoria:     document.getElementById('p-subcategoria').value.trim(),
+    masa_base:         document.getElementById('p-masa-base').value.trim(),
+    baking_loss_pct:   parseFloat(document.getElementById('p-baking-loss').value)  || 0,
+    merma_tecnica_pct: parseFloat(document.getElementById('p-merma-tecnica').value) || 0,
   };
   const id = document.getElementById('p-id').value;
   try {
@@ -390,12 +427,21 @@ async function deleteProducto(id) {
 
 loadProductos();
 
+// Enter en modales como confirmación
+document.getElementById('prod-modal').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter' && e.target.tagName === 'INPUT' && !e.target.readOnly) {
+    e.preventDefault(); saveProducto();
+  }
+});
+
 // ── Ficha técnica — % panadero ────────────────────────────────────────────────
 let _fichaIngDisponibles = [];
 let fichaInventario = [];  // items de inventario bodega:ingredientes
 
 document.getElementById('ficha-tipo-harina').addEventListener('change', function() {
   document.getElementById('ficha-mixta-hint').style.display = this.value === 'mixta' ? '' : 'none';
+  document.getElementById('ficha-harina-inv-row').style.display = this.value === 'mixta' ? 'none' : '';
+  actualizarCostoFooter();
 });
 
 async function _cargarIngDisponibles() {
@@ -466,6 +512,18 @@ function actualizarCostoFooter() {
   let costo = 0;
   let sinVincular = 0;
   let totalFilas = 0;
+
+  const tipoH = document.getElementById('ficha-tipo-harina').value;
+  if (tipoH !== 'mixta') {
+    totalFilas++;
+    const harInvId = parseInt(document.getElementById('ficha-harina-inv').value) || null;
+    const harInv = harInvId ? fichaInventario.find(i => i.id === harInvId) : null;
+    if (harInv && harInv.precio_kg && harinaKg > 0) {
+      costo += harinaKg * harInv.precio_kg;
+    } else {
+      sinVincular++;
+    }
+  }
 
   document.querySelectorAll('#ficha-tbody tr').forEach(tr => {
     totalFilas++;
@@ -546,6 +604,20 @@ async function openFicha(pid, nombre, precio) {
 
   const HARINAS = ['harina blanca', 'harina integral'];
   const tipoActual = document.getElementById('ficha-tipo-harina').value;
+
+  // Populate and pre-select harina inventory
+  const harInvSel = document.getElementById('ficha-harina-inv');
+  harInvSel.innerHTML = '<option value="">— Sin vincular —</option>' +
+    fichaInventario.map(i =>
+      `<option value="${i.id}">${i.ingrediente} — $${(i.precio_kg||0).toLocaleString('es-CL')}/kg</option>`
+    ).join('');
+  harInvSel.value = '';
+  if (tipoActual !== 'mixta') {
+    const harEnt = ings.find(i => i.ingrediente === tipoActual);
+    if (harEnt && harEnt.inventario_id) harInvSel.value = harEnt.inventario_id;
+  }
+  document.getElementById('ficha-harina-inv-row').style.display = tipoActual === 'mixta' ? 'none' : '';
+
   ings.forEach(i => {
     // Si no es mixta, las filas de harina están implícitas → no mostrar en tabla
     if (tipoActual !== 'mixta' && HARINAS.includes(i.ingrediente)) return;
@@ -609,6 +681,12 @@ function fichaAgregarFila(ingrediente = '', porcentaje = '', inventarioId = null
   tbody.appendChild(tr);
 }
 
+document.getElementById('ficha-modal').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter' && e.target.id === 'ficha-harina-kg') {
+    e.preventDefault(); fichaGuardar();
+  }
+});
+
 async function fichaGuardar() {
   const pid      = parseInt(document.getElementById('ficha-pid').value);
   const harinaKg = parseFloat(document.getElementById('ficha-harina-kg').value) || 0;
@@ -621,7 +699,8 @@ async function fichaGuardar() {
 
   // Para blanca/integral: la harina va fija al 100%, sin aparecer en las filas
   if (tipo !== 'mixta') {
-    ingredientes.push({ ingrediente: tipo, porcentaje: 100, inventario_id: null });
+    const harInvId = parseInt(document.getElementById('ficha-harina-inv').value) || null;
+    ingredientes.push({ ingrediente: tipo, porcentaje: 100, inventario_id: harInvId });
   }
 
   // Leer todas las filas; en no-mixta se saltan las filas de harina (ya están arriba)

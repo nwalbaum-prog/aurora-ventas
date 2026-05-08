@@ -1236,13 +1236,17 @@ def api_productos():
 @app.route('/api/productos', methods=['POST'])
 def api_productos_create():
     d = request.json
+    masa_base         = d.get('masa_base', '').strip()
+    baking_loss_pct   = float(d.get('baking_loss_pct', 0) or 0)
+    merma_tecnica_pct = float(d.get('merma_tecnica_pct', 0) or 0)
     with db() as c:
         cur = c.execute(
-            "INSERT INTO productos (nombre,descripcion,precio,precio_mayorista,costo,stock,unidad,categoria,subcategoria) VALUES (?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO productos (nombre,descripcion,precio,precio_mayorista,costo,stock,unidad,categoria,subcategoria,masa_base,baking_loss_pct,merma_tecnica_pct) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
             (d['nombre'], d.get('descripcion',''), float(d['precio']),
              float(d.get('precio_mayorista',0)),
              float(d.get('costo',0)), float(d.get('stock',0)), d.get('unidad','unidad'),
-             d.get('categoria','pan'), d.get('subcategoria',''))
+             d.get('categoria','pan'), d.get('subcategoria',''),
+             masa_base, baking_loss_pct, merma_tecnica_pct)
         )
         return jsonify(dict(c.execute("SELECT * FROM productos WHERE id=?", (cur.lastrowid,)).fetchone())), 201
 
@@ -1277,13 +1281,17 @@ def api_productos_costos():
 @app.route('/api/productos/<int:pid>', methods=['PUT'])
 def api_productos_update(pid):
     d = request.json
+    masa_base         = d.get('masa_base', '').strip()
+    baking_loss_pct   = float(d.get('baking_loss_pct', 0) or 0)
+    merma_tecnica_pct = float(d.get('merma_tecnica_pct', 0) or 0)
     with db() as c:
         c.execute(
-            "UPDATE productos SET nombre=?,descripcion=?,precio=?,precio_mayorista=?,costo=?,stock=?,unidad=?,categoria=?,subcategoria=?,activo=? WHERE id=?",
+            "UPDATE productos SET nombre=?,descripcion=?,precio=?,precio_mayorista=?,costo=?,stock=?,unidad=?,categoria=?,subcategoria=?,activo=?,masa_base=?,baking_loss_pct=?,merma_tecnica_pct=? WHERE id=?",
             (d['nombre'], d.get('descripcion',''), float(d['precio']),
              float(d.get('precio_mayorista',0)),
              float(d.get('costo',0)), float(d.get('stock',0)), d.get('unidad','unidad'),
-             d.get('categoria','pan'), d.get('subcategoria',''), int(d.get('activo',1)), pid)
+             d.get('categoria','pan'), d.get('subcategoria',''), int(d.get('activo',1)),
+             masa_base, baking_loss_pct, merma_tecnica_pct, pid)
         )
         return jsonify(dict(c.execute("SELECT * FROM productos WHERE id=?", (pid,)).fetchone()))
 
