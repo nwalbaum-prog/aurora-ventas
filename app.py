@@ -471,6 +471,10 @@ def init_db():
             ("plan_produccion",  "fecha_horneado",     "ALTER TABLE plan_produccion ADD COLUMN fecha_horneado TEXT NOT NULL DEFAULT ''"),
             ("plan_produccion",  "batch_id",           "ALTER TABLE plan_produccion ADD COLUMN batch_id TEXT NOT NULL DEFAULT ''"),
             ("plan_produccion",  "ingredientes_json",  "ALTER TABLE plan_produccion ADD COLUMN ingredientes_json TEXT NOT NULL DEFAULT '[]'"),
+            ("agenda", "tipo_agente",       "ALTER TABLE agenda ADD COLUMN tipo_agente TEXT DEFAULT NULL"),
+            ("agenda", "telefono_destino",  "ALTER TABLE agenda ADD COLUMN telefono_destino TEXT DEFAULT NULL"),
+            ("agenda", "payload_json",      "ALTER TABLE agenda ADD COLUMN payload_json TEXT DEFAULT NULL"),
+            ("agenda", "ejecutado_en",      "ALTER TABLE agenda ADD COLUMN ejecutado_en TEXT DEFAULT NULL"),
         ]
         for table, col, sql in migrations:
             if not _col_exists(c, table, col):
@@ -478,9 +482,13 @@ def init_db():
 
         # Backfill producto_id for productos_terminados rows that predate the FK column.
         # Only runs while unlinked rows exist; idempotent afterwards.
+        # Guard: inventario may not exist yet on first-run (created later in this function).
+        _inventario_exists = c.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='inventario'"
+        ).fetchone()
         unlinked = c.execute(
             "SELECT COUNT(*) FROM inventario WHERE bodega='productos_terminados' AND producto_id IS NULL"
-        ).fetchone()[0]
+        ).fetchone()[0] if _inventario_exists else 0
         if unlinked:
             c.execute("""
                 UPDATE inventario
@@ -679,6 +687,26 @@ Aurora Bakers | panypasta.cl""",
             )
         """)
 
+        # ── Tablas WhatsApp persistence ──────────────────────────────────────
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS whatsapp_lid_cache (
+                lid        TEXT PRIMARY KEY,
+                telefono   TEXT NOT NULL,
+                push_name  TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS whatsapp_conversaciones (
+                telefono          TEXT PRIMARY KEY,
+                tipo              TEXT NOT NULL DEFAULT 'minorista',
+                mensajes_json     TEXT NOT NULL DEFAULT '[]',
+                cliente_data_json TEXT NOT NULL DEFAULT '{}',
+                pedido_guardado   INTEGER NOT NULL DEFAULT 0,
+                updated_at        TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+
         # ── Tablas ERP: Inventario, Producción, Gastos, Agenda, Config ──────────
         c.executescript("""
             CREATE TABLE IF NOT EXISTS inventario (
@@ -719,17 +747,21 @@ Aurora Bakers | panypasta.cl""",
                 recurrente  INTEGER NOT NULL DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS agenda (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                tipo        TEXT    NOT NULL DEFAULT 'tarea',
-                titulo      TEXT    NOT NULL,
-                descripcion TEXT    NOT NULL DEFAULT '',
-                fecha       TEXT    NOT NULL DEFAULT (date('now')),
-                hora        TEXT    NOT NULL DEFAULT '',
-                completado  INTEGER NOT NULL DEFAULT 0,
-                prioridad   TEXT    NOT NULL DEFAULT 'media',
-                creado_en   TEXT    NOT NULL DEFAULT (datetime('now')),
-                responsable TEXT    NOT NULL DEFAULT '',
-                fecha_fin   TEXT    NOT NULL DEFAULT ''
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                tipo             TEXT    NOT NULL DEFAULT 'tarea',
+                titulo           TEXT    NOT NULL,
+                descripcion      TEXT    NOT NULL DEFAULT '',
+                fecha            TEXT    NOT NULL DEFAULT (date('now')),
+                hora             TEXT    NOT NULL DEFAULT '',
+                completado       INTEGER NOT NULL DEFAULT 0,
+                prioridad        TEXT    NOT NULL DEFAULT 'media',
+                creado_en        TEXT    NOT NULL DEFAULT (datetime('now')),
+                responsable      TEXT    NOT NULL DEFAULT '',
+                fecha_fin        TEXT    NOT NULL DEFAULT '',
+                tipo_agente      TEXT    DEFAULT NULL,
+                telefono_destino TEXT    DEFAULT NULL,
+                payload_json     TEXT    DEFAULT NULL,
+                ejecutado_en     TEXT    DEFAULT NULL
             );
             CREATE TABLE IF NOT EXISTS agenda_subtareas (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -4205,13 +4237,52 @@ def api_agentes_agenda_crear():
     d = request.get_json(silent=True) or {}
     with db() as c:
         cur = c.execute(
-            "INSERT INTO agenda (tipo, titulo, descripcion, fecha, hora, prioridad) VALUES (?,?,?,?,?,?)",
-            (d.get('tipo','tarea'), d.get('titulo',''), d.get('descripcion',''),
-             d.get('fecha', date.today().isoformat()), d.get('hora',''),
-             d.get('prioridad','media'))
+            "INSERT INTO agenda "
+            "(tipo, titulo, descripcion, fecha, hora, prioridad, "
+            "tipo_agente, telefono_destino, payload_json) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            (
+                d.get('tipo', 'tarea'),
+                d.get('titulo', ''),
+                d.get('descripcion', ''),
+                d.get('fecha', date.today().isoformat()),
+                d.get('hora', ''),
+                d.get('prioridad', 'media'),
+                d.get('tipo_agente'),
+                d.get('telefono_destino'),
+                d.get('payload_json'),
+            )
         )
         rid = cur.lastrowid
     return jsonify({'ok': True, 'id': rid})
+
+
+@app.route('/api/agentes/agenda/sophie-pendientes')
+def api_agenda_sophie_pendientes():
+    """Tareas sophie_tarea pendientes cuya fecha+hora ya llegó."""
+    from datetime import datetime as _dt
+    ahora = _dt.now().strftime('%Y-%m-%d %H:%M')
+    with db() as c:
+        rows = c.execute(
+            "SELECT * FROM agenda "
+            "WHERE tipo_agente='sophie_tarea' AND completado=0 "
+            "AND (fecha || ' ' || COALESCE(hora,'00:00')) <= ? "
+            "ORDER BY fecha, hora",
+            (ahora,)
+        ).fetchall()
+    return jsonify({'tareas': [dict(r) for r in rows]})
+
+
+@app.route('/api/agentes/agenda/<int:tid>/completar', methods=['POST'])
+def api_agentes_agenda_completar(tid):
+    """Marca una tarea como completada y registra ejecutado_en."""
+    from datetime import datetime as _dt
+    with db() as c:
+        c.execute(
+            "UPDATE agenda SET completado=1, ejecutado_en=? WHERE id=?",
+            (_dt.now().isoformat(), tid)
+        )
+    return jsonify({'ok': True})
 
 @app.route('/api/agentes/gastos', methods=['POST'])
 def api_agentes_gastos_crear():
@@ -4454,6 +4525,124 @@ def api_agentes_memoria_leer(agente):
             (agente, limit)
         ).fetchall()
     return jsonify([dict(r) for r in rows])
+
+
+@app.route('/api/agentes/lid-cache', methods=['GET'])
+def api_lid_cache_get():
+    with db() as c:
+        rows = c.execute("SELECT lid, telefono FROM whatsapp_lid_cache").fetchall()
+    return jsonify({r['lid']: r['telefono'] for r in rows})
+
+
+@app.route('/api/agentes/lid-cache', methods=['POST'])
+def api_lid_cache_post():
+    data = request.get_json(silent=True) or {}
+    with db() as c:
+        for lid, telefono in data.items():
+            c.execute(
+                "INSERT INTO whatsapp_lid_cache (lid, telefono, updated_at) VALUES (?,?,datetime('now')) "
+                "ON CONFLICT(lid) DO UPDATE SET telefono=excluded.telefono, updated_at=excluded.updated_at",
+                (str(lid), str(telefono))
+            )
+    return jsonify({'ok': True, 'total': len(data)})
+
+
+@app.route('/api/agentes/conversaciones/<telefono>', methods=['GET'])
+def api_conversacion_get(telefono):
+    with db() as c:
+        row = c.execute(
+            "SELECT * FROM whatsapp_conversaciones WHERE telefono=?", (telefono,)
+        ).fetchone()
+    if not row:
+        return jsonify({}), 404
+    return jsonify(dict(row))
+
+
+@app.route('/api/agentes/conversaciones/<telefono>', methods=['POST'])
+def api_conversacion_post(telefono):
+    data = request.get_json(silent=True) or {}
+    with db() as c:
+        c.execute(
+            "INSERT INTO whatsapp_conversaciones "
+            "(telefono, tipo, mensajes_json, cliente_data_json, pedido_guardado, updated_at) "
+            "VALUES (?,?,?,?,?,datetime('now')) "
+            "ON CONFLICT(telefono) DO UPDATE SET "
+            "tipo=excluded.tipo, mensajes_json=excluded.mensajes_json, "
+            "cliente_data_json=excluded.cliente_data_json, "
+            "pedido_guardado=excluded.pedido_guardado, updated_at=excluded.updated_at",
+            (
+                telefono,
+                data.get('tipo', 'minorista'),
+                data.get('mensajes_json', '[]'),
+                data.get('cliente_data_json', '{}'),
+                int(data.get('pedido_guardado', 0)),
+            )
+        )
+    return jsonify({'ok': True})
+
+
+@app.route('/api/agentes/conversaciones/<telefono>', methods=['DELETE'])
+def api_conversacion_delete(telefono):
+    with db() as c:
+        c.execute("DELETE FROM whatsapp_conversaciones WHERE telefono=?", (telefono,))
+    return jsonify({'ok': True})
+
+
+@app.route('/api/agentes/pedidos-cliente')
+def api_pedidos_cliente():
+    telefono = request.args.get('telefono', '').strip()
+    if not telefono:
+        return jsonify({'error': 'telefono requerido'}), 400
+
+    tel_norm = telefono.replace(' ', '').replace('-', '').replace('+', '')
+    with db() as c:
+        cliente = c.execute(
+            "SELECT * FROM clientes "
+            "WHERE replace(replace(replace(telefono,' ',''),'-',''),'+','')=? LIMIT 1",
+            (tel_norm,)
+        ).fetchone()
+
+        if not cliente:
+            return jsonify({'pedidos': [], 'cliente': None})
+
+        cliente_dict = dict(cliente)
+        cid = cliente_dict['id']
+
+        pedidos = c.execute(
+            "SELECT v.id, v.estado_pago, v.estado_despacho, v.fecha_despacho, v.total, v.canal, "
+            "GROUP_CONCAT(p.nombre || ' x' || CAST(CAST(vi.cantidad AS INTEGER) AS TEXT), ', ') AS items "
+            "FROM ventas v "
+            "LEFT JOIN venta_items vi ON vi.venta_id = v.id "
+            "LEFT JOIN productos p ON p.id = vi.producto_id "
+            "WHERE v.cliente_id=? "
+            "GROUP BY v.id ORDER BY v.fecha DESC LIMIT 5",
+            (cid,)
+        ).fetchall()
+
+        total_pedidos = c.execute(
+            "SELECT COUNT(*) FROM ventas WHERE cliente_id=?", (cid,)
+        ).fetchone()[0]
+
+    pedidos_list = [
+        {
+            'id': dict(p)['id'],
+            'estado': f"{dict(p)['estado_pago']} / {dict(p)['estado_despacho']}",
+            'fecha_entrega': dict(p)['fecha_despacho'] or '',
+            'total': dict(p)['total'],
+            'items': dict(p)['items'] or 'Pedido WhatsApp',
+        }
+        for p in pedidos
+    ]
+
+    return jsonify({
+        'pedidos': pedidos_list,
+        'cliente': {
+            'id': cid,
+            'nombre': cliente_dict.get('nombre', ''),
+            'tipo': cliente_dict.get('tipo', 'CLIENTE'),
+            'total_pedidos': total_pedidos,
+        }
+    })
 
 
 @app.route('/api/agentes/estado')
