@@ -4527,6 +4527,32 @@ def api_agentes_memoria_leer(agente):
     return jsonify([dict(r) for r in rows])
 
 
+@app.route('/api/agentes/ventas', methods=['POST'])
+def api_agentes_ventas():
+    """Crea una venta WhatsApp desde agentes. Sin items con producto_id — solo notas."""
+    d = request.get_json(silent=True) or {}
+    with db() as c:
+        cur = c.execute(
+            """INSERT INTO ventas
+               (fecha, cliente_id, canal, total, notas,
+                fecha_despacho, con_despacho, tipo_cliente, estado_pago, estado_despacho)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (
+                d.get('fecha', str(date.today())),
+                d.get('cliente_id') or None,
+                d.get('canal', 'whatsapp'),
+                float(d.get('total', 0)),
+                d.get('notas', ''),
+                d.get('fecha_despacho', ''),
+                int(d.get('con_despacho', 1)),
+                d.get('tipo_cliente', 'CLIENTE'),
+                d.get('estado_pago', 'PENDIENTE'),
+                d.get('estado_despacho', 'PENDIENTE'),
+            )
+        )
+    return jsonify({'id': cur.lastrowid, 'ok': True})
+
+
 @app.route('/api/agentes/lid-cache', methods=['GET'])
 def api_lid_cache_get():
     with db() as c:
