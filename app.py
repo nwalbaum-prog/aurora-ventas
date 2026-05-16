@@ -1290,6 +1290,10 @@ def page_productos():     return render_template('productos.html',      active='
 @module_required('suscripciones')
 def page_suscripciones(): return render_template('suscripciones.html', active='suscripciones')
 
+@app.route('/mayoristas')
+@module_required('mayoristas')
+def page_mayoristas(): return render_template('mayoristas.html', active='mayoristas')
+
 @app.route('/reportes')
 @module_required('reportes')
 def page_reportes():      return render_template('reportes.html',       active='reportes')

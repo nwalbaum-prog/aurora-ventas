@@ -39,6 +39,9 @@
     {% if user_es_admin or 'suscripciones' in user_permisos %}
     <a href="/suscripciones"  class="nav-item {% if active=='suscripciones'  %}active{% endif %}"><i class="bi bi-calendar-check"></i> Suscripciones</a>
     {% endif %}
+    {% if user_es_admin or 'mayoristas' in user_permisos %}
+    <a href="/mayoristas" class="nav-item {% if active=='mayoristas' %}active{% endif %}"><i class="bi bi-shop"></i> Mayoristas</a>
+    {% endif %}
     {% if user_es_admin or 'crm' in user_permisos %}
     <a href="/crm"            class="nav-item {% if active=='crm'            %}active{% endif %}"><i class="bi bi-diagram-3"></i> CRM</a>
     {% endif %}
