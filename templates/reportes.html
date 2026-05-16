@@ -1,14 +1,15 @@
 {% extends "base.html" %}
-{% block title %}Reportes{% endblock %}
-{% block page_title %}Reportes{% endblock %}
+{% block title %}Reporte Financiero{% endblock %}
+{% block page_title %}Reporte Financiero{% endblock %}
 
 {% block content %}
 
 <!-- Selector de período -->
 <div class="toolbar mb-24">
   <div class="filter-tabs" id="periodo-tabs">
-    <button class="filter-tab" data-v="semana"  onclick="setPeriodo(this,'semana')">Semana</button>
-    <button class="filter-tab active" data-v="mes" onclick="setPeriodo(this,'mes')">Mes</button>
+    <button class="filter-tab" data-v="hoy"    onclick="setPeriodo(this,'hoy')">Hoy</button>
+    <button class="filter-tab active" data-v="semana"  onclick="setPeriodo(this,'semana')">Semana</button>
+    <button class="filter-tab" data-v="mes" onclick="setPeriodo(this,'mes')">Mes</button>
     <button class="filter-tab" data-v="3meses" onclick="setPeriodo(this,'3meses')">3 meses</button>
     <button class="filter-tab" data-v="año"    onclick="setPeriodo(this,'año')">Año</button>
   </div>
@@ -65,7 +66,7 @@
 
 {% block scripts %}
 <script>
-let periodo = 'mes';
+let periodo = 'semana';
 let chartLinea, chartProd, chartCanal;
 
 const COLORS = {

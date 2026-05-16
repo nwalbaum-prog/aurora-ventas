@@ -134,10 +134,11 @@ let editId = null;
 
 (function() {
   const hoy = new Date();
-  const y = hoy.getFullYear(), m = String(hoy.getMonth()+1).padStart(2,'0');
-  document.getElementById('f-desde').value = `${y}-${m}-01`;
-  document.getElementById('f-hasta').value = hoy.toISOString().split('T')[0];
-  document.getElementById('gf-fecha').value = hoy.toISOString().split('T')[0];
+  const lun = new Date(hoy); lun.setDate(hoy.getDate() - (hoy.getDay() || 7) + 1);
+  const fmt = d => d.toISOString().split('T')[0];
+  document.getElementById('f-desde').value = fmt(lun);
+  document.getElementById('f-hasta').value = fmt(hoy);
+  document.getElementById('gf-fecha').value = fmt(hoy);
 })();
 
 async function load() {
