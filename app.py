@@ -437,6 +437,32 @@ def init_db():
                 cantidad        REAL    NOT NULL,
                 precio_unitario REAL    NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS compras_insumos (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                fecha         TEXT    NOT NULL DEFAULT (date('now')),
+                inventario_id INTEGER REFERENCES inventario(id) ON DELETE SET NULL,
+                ingrediente   TEXT    NOT NULL DEFAULT '',
+                cantidad_kg   REAL    NOT NULL DEFAULT 0,
+                precio_total  REAL    NOT NULL DEFAULT 0,
+                proveedor     TEXT    NOT NULL DEFAULT '',
+                factura       TEXT    NOT NULL DEFAULT '',
+                notas         TEXT    NOT NULL DEFAULT '',
+                creado_en     TEXT    NOT NULL DEFAULT (datetime('now'))
+            );
+            CREATE TABLE IF NOT EXISTS mayorista_pedidos (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                cliente_id   INTEGER NOT NULL REFERENCES clientes(id),
+                dia_despacho TEXT    NOT NULL CHECK(dia_despacho IN ('martes','jueves')),
+                activo       INTEGER NOT NULL DEFAULT 1,
+                notas        TEXT    NOT NULL DEFAULT '',
+                created_at   TEXT    NOT NULL DEFAULT (datetime('now'))
+            );
+            CREATE TABLE IF NOT EXISTS mayorista_pedido_lineas (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                pedido_id   INTEGER NOT NULL REFERENCES mayorista_pedidos(id) ON DELETE CASCADE,
+                producto_id INTEGER NOT NULL REFERENCES productos(id),
+                cantidad    REAL    NOT NULL DEFAULT 1
+            );
         """)
 
         # Migraciones: agregar columnas que no existan en tablas previas
@@ -475,6 +501,7 @@ def init_db():
             ("agenda", "telefono_destino",  "ALTER TABLE agenda ADD COLUMN telefono_destino TEXT DEFAULT NULL"),
             ("agenda", "payload_json",      "ALTER TABLE agenda ADD COLUMN payload_json TEXT DEFAULT NULL"),
             ("agenda", "ejecutado_en",      "ALTER TABLE agenda ADD COLUMN ejecutado_en TEXT DEFAULT NULL"),
+            ("plan_produccion", "rendimiento_real", "ALTER TABLE plan_produccion ADD COLUMN rendimiento_real REAL DEFAULT NULL"),
         ]
         for table, col, sql in migrations:
             if not _col_exists(c, table, col):
@@ -511,6 +538,28 @@ def init_db():
                       AND producto_id IS NOT NULL AND stock_kg >= 0
                 )
             """)
+
+        # Auto-crear filas inventario para productos sin fila en productos_terminados.
+        # Garantiza que productos.stock y inventario.stock_kg siempre estén vinculados.
+        # Guard: inventario may not exist yet on first-run (created later in this function).
+        if _inventario_exists:
+            c.execute("""
+                INSERT OR IGNORE INTO inventario
+                    (ingrediente, bodega, stock_kg, alerta_minimo_kg, unidad,
+                     categoria, subcategoria, producto_id, ultima_actualizacion)
+                SELECT p.nombre, 'productos_terminados',
+                       MAX(0, COALESCE(p.stock,0)), 0, 'unidades',
+                       COALESCE(p.categoria,''), COALESCE(p.subcategoria,''),
+                       p.id, date('now')
+                FROM productos p
+                WHERE p.activo=1
+                  AND NOT EXISTS (
+                      SELECT 1 FROM inventario i
+                      WHERE i.bodega='productos_terminados' AND i.producto_id=p.id
+                  )
+            """)
+        # Clamp negativos en productos.stock
+        c.execute("UPDATE productos SET stock=0 WHERE stock < 0")
 
         # Tabla de usuarios
         c.execute("""
@@ -1836,6 +1885,23 @@ def api_registrar_entrega(sid):
             (nuevas_entregas, proxima_entrega, sid)
         )
 
+        try:
+            for item in json.loads(sub['productos_json'] or '[]'):
+                pid = item.get('producto_id') or item.get('id')
+                qty = float(item.get('cantidad', 1))
+                if pid:
+                    c.execute(
+                        """UPDATE inventario SET stock_kg=MAX(0, stock_kg-?), ultima_actualizacion=date('now')
+                           WHERE bodega='productos_terminados' AND producto_id=?""",
+                        (qty, int(pid))
+                    )
+                    c.execute(
+                        "UPDATE productos SET stock=MAX(0, stock-?) WHERE id=?",
+                        (qty, int(pid))
+                    )
+        except Exception:
+            pass
+
         ciclo_completo = nuevas_entregas >= 4
         email_sent = False
         if ciclo_completo:
@@ -3035,38 +3101,174 @@ def api_inventario_categorias():
         'subcategorias': cats
     })
 
+@app.route('/api/inventario/lista-compras')
+@login_required
+def api_inventario_lista_compras():
+    """Ingredientes bajo punto de reorden + necesidades del plan próximos 7 días."""
+    con_plan = request.args.get('con_plan', '1') == '1'
+    with db() as c:
+        bajo_reorden = c.execute("""
+            SELECT i.id, i.ingrediente, i.stock_kg, i.alerta_minimo_kg, i.unidad,
+                   i.proveedor, i.precio_kg,
+                   (i.alerta_minimo_kg - i.stock_kg) as faltante
+            FROM inventario i
+            WHERE i.bodega IN ('ingredientes', 'produccion')
+              AND i.stock_kg <= i.alerta_minimo_kg
+              AND i.alerta_minimo_kg > 0
+            ORDER BY faltante DESC
+        """).fetchall()
+        necesidades = []
+        if con_plan:
+            desde = date.today().isoformat()
+            hasta = (date.today() + timedelta(days=7)).isoformat()
+            plan_filas = c.execute("""
+                SELECT ingredientes_json FROM plan_produccion
+                WHERE fecha_amasado BETWEEN ? AND ? AND estado='pendiente'
+                  AND ingredientes_json IS NOT NULL AND ingredientes_json != '[]'
+            """, (desde, hasta)).fetchall()
+            agg = {}
+            for fila in plan_filas:
+                try:
+                    for ing in json.loads(fila['ingredientes_json'] or '[]'):
+                        iid = ing.get('inventario_id')
+                        if not iid:
+                            continue
+                        if iid not in agg:
+                            inv = c.execute(
+                                "SELECT ingrediente, stock_kg, unidad FROM inventario WHERE id=?", (iid,)
+                            ).fetchone()
+                            if inv:
+                                agg[iid] = {'inventario_id': iid, 'nombre': inv['ingrediente'],
+                                            'stock_actual': float(inv['stock_kg']), 'kg_necesario': 0.0,
+                                            'unidad': inv['unidad']}
+                        if iid in agg:
+                            agg[iid]['kg_necesario'] += float(ing.get('kg', 0))
+                except Exception:
+                    pass
+            necesidades = [
+                {**v, 'faltante': round(max(0, v['kg_necesario'] - v['stock_actual']), 3)}
+                for v in agg.values() if v['kg_necesario'] > v['stock_actual']
+            ]
+    return jsonify({'bajo_reorden': [dict(r) for r in bajo_reorden], 'necesidades_plan': necesidades})
+
+
+@app.route('/api/compras-insumos', methods=['GET'])
+@login_required
+def api_compras_insumos_list():
+    desde = request.args.get('desde', (date.today().replace(day=1)).isoformat())
+    hasta = request.args.get('hasta', date.today().isoformat())
+    with db() as c:
+        rows = c.execute("""
+            SELECT ci.*, CASE WHEN ci.cantidad_kg > 0 THEN ROUND(ci.precio_total/ci.cantidad_kg,2) ELSE 0 END as precio_kg
+            FROM compras_insumos ci
+            WHERE ci.fecha BETWEEN ? AND ?
+            ORDER BY ci.fecha DESC, ci.creado_en DESC
+        """, (desde, hasta)).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route('/api/compras-insumos', methods=['POST'])
+@login_required
+def api_compras_insumos_create():
+    d = request.get_json(silent=True) or {}
+    cantidad_kg  = float(d.get('cantidad_kg', 0))
+    precio_total = float(d.get('precio_total', 0))
+    inventario_id = d.get('inventario_id') or None
+    with db() as c:
+        if inventario_id:
+            # Obtener nombre del ingrediente
+            inv = c.execute("SELECT ingrediente FROM inventario WHERE id=?", (inventario_id,)).fetchone()
+            ingrediente = inv['ingrediente'] if inv else d.get('ingrediente', '')
+        else:
+            ingrediente = d.get('ingrediente', '')
+        cur = c.execute("""
+            INSERT INTO compras_insumos (fecha, inventario_id, ingrediente, cantidad_kg, precio_total, proveedor, factura, notas)
+            VALUES (?,?,?,?,?,?,?,?)
+        """, (d.get('fecha', date.today().isoformat()), inventario_id, ingrediente,
+              cantidad_kg, precio_total, d.get('proveedor',''), d.get('factura',''), d.get('notas','')))
+        rid = cur.lastrowid
+        # Sumar al stock del ingrediente
+        if inventario_id and cantidad_kg > 0:
+            c.execute(
+                "UPDATE inventario SET stock_kg=stock_kg+?, ultima_actualizacion=date('now') WHERE id=?",
+                (cantidad_kg, inventario_id)
+            )
+        # Actualizar precio_kg promedio en inventario
+        if inventario_id and cantidad_kg > 0 and precio_total > 0:
+            c.execute(
+                "UPDATE inventario SET precio_kg=? WHERE id=?",
+                (round(precio_total / cantidad_kg, 2), inventario_id)
+            )
+    return jsonify({'ok': True, 'id': rid})
+
+
+@app.route('/api/compras-insumos/<int:cid>', methods=['DELETE'])
+@login_required
+def api_compras_insumos_delete(cid):
+    with db() as c:
+        row = c.execute("SELECT inventario_id, cantidad_kg FROM compras_insumos WHERE id=?", (cid,)).fetchone()
+        if row and row['inventario_id'] and row['cantidad_kg']:
+            c.execute(
+                "UPDATE inventario SET stock_kg=MAX(0, stock_kg-?), ultima_actualizacion=date('now') WHERE id=?",
+                (row['cantidad_kg'], row['inventario_id'])
+            )
+        c.execute("DELETE FROM compras_insumos WHERE id=?", (cid,))
+    return jsonify({'ok': True})
+
+
 @app.route('/api/inventario', methods=['POST'])
 @login_required
 def api_inventario_create():
     d = request.get_json(silent=True) or {}
+    bodega      = d.get('bodega', 'ingredientes')
+    producto_id = d.get('producto_id')
+    stock       = float(d.get('stock_kg', 0))
     with db() as c:
-        c.execute(
-            """INSERT OR REPLACE INTO inventario
-               (ingrediente, stock_kg, alerta_minimo_kg, proveedor, precio_kg,
-                ultima_actualizacion, bodega, unidad, categoria, subcategoria)
-               VALUES (?,?,?,?,?,?,?,?,?,?)""",
-            (d.get('ingrediente',''), float(d.get('stock_kg',0)), float(d.get('alerta_minimo_kg',1)),
-             d.get('proveedor',''), float(d.get('precio_kg',0)), date.today().isoformat(),
-             d.get('bodega','ingredientes'), d.get('unidad','kg'),
-             d.get('categoria',''), d.get('subcategoria',''))
-        )
+        if bodega == 'productos_terminados' and producto_id:
+            prod = c.execute("SELECT nombre, categoria, subcategoria FROM productos WHERE id=?", (int(producto_id),)).fetchone()
+            nombre   = prod['nombre']      if prod else d.get('ingrediente', '')
+            categoria   = prod['categoria']   if prod else d.get('categoria', '')
+            subcategoria = prod['subcategoria'] if prod else d.get('subcategoria', '')
+            inv_id = _get_or_create_inv_terminado(c, int(producto_id), nombre)
+            c.execute(
+                """UPDATE inventario SET stock_kg=?, alerta_minimo_kg=?, unidad=?,
+                   categoria=?, subcategoria=?, ultima_actualizacion=date('now') WHERE id=?""",
+                (stock, float(d.get('alerta_minimo_kg', 0)), d.get('unidad', 'unidades'),
+                 categoria, subcategoria, inv_id)
+            )
+            c.execute("UPDATE productos SET stock=? WHERE id=?", (stock, int(producto_id)))
+        else:
+            c.execute(
+                """INSERT OR REPLACE INTO inventario
+                   (ingrediente, stock_kg, alerta_minimo_kg, proveedor, precio_kg,
+                    ultima_actualizacion, bodega, unidad, categoria, subcategoria)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                (d.get('ingrediente', ''), stock, float(d.get('alerta_minimo_kg', 1)),
+                 d.get('proveedor', ''), float(d.get('precio_kg', 0)), date.today().isoformat(),
+                 bodega, d.get('unidad', 'kg'),
+                 d.get('categoria', ''), d.get('subcategoria', ''))
+            )
     return jsonify({'ok': True})
 
 @app.route('/api/inventario/<int:iid>', methods=['PUT'])
 @login_required
 def api_inventario_update(iid):
     d = request.get_json(silent=True) or {}
+    stock = float(d.get('stock_kg', 0))
     with db() as c:
         c.execute(
             """UPDATE inventario SET
-               stock_kg=?, alerta_minimo_kg=?, proveedor=?, precio_kg=?,
+               ingrediente=?, stock_kg=?, alerta_minimo_kg=?, proveedor=?, precio_kg=?,
                ultima_actualizacion=?, bodega=?, unidad=?, categoria=?, subcategoria=?
                WHERE id=?""",
-            (float(d.get('stock_kg',0)), float(d.get('alerta_minimo_kg',1)),
-             d.get('proveedor',''), float(d.get('precio_kg',0)), date.today().isoformat(),
-             d.get('bodega','ingredientes'), d.get('unidad','kg'),
-             d.get('categoria',''), d.get('subcategoria',''), iid)
+            (d.get('ingrediente', ''), stock, float(d.get('alerta_minimo_kg', 1)),
+             d.get('proveedor', ''), float(d.get('precio_kg', 0)), date.today().isoformat(),
+             d.get('bodega', 'ingredientes'), d.get('unidad', 'kg'),
+             d.get('categoria', ''), d.get('subcategoria', ''), iid)
         )
+        row = c.execute("SELECT bodega, producto_id FROM inventario WHERE id=?", (iid,)).fetchone()
+        if row and row['bodega'] == 'productos_terminados' and row['producto_id']:
+            c.execute("UPDATE productos SET stock=? WHERE id=?", (stock, row['producto_id']))
     return jsonify({'ok': True})
 
 @app.route('/api/inventario/<int:iid>', methods=['DELETE'])
@@ -3087,6 +3289,11 @@ def api_inventario_ajustar(iid):
             (delta, date.today().isoformat(), iid)
         )
         row = c.execute("SELECT * FROM inventario WHERE id=?", (iid,)).fetchone()
+        if row and row['bodega'] == 'productos_terminados' and row['producto_id']:
+            c.execute(
+                "UPDATE productos SET stock=MAX(0, stock+?) WHERE id=?",
+                (delta, row['producto_id'])
+            )
     return jsonify(dict(row) if row else {'ok': False})
 
 
@@ -3555,6 +3762,38 @@ def api_plan_generar_desde_ventas(fecha):
             return jsonify({'ok': True, 'modo': 'agregar', 'items': len(rows), 'agregados': agregados})
 
 
+@app.route('/api/plan-produccion/semana')
+@login_required
+def api_plan_semana():
+    """Resumen de producción para 7 días desde la fecha dada."""
+    desde_str = request.args.get('desde', date.today().isoformat())
+    try:
+        desde_d = date.fromisoformat(desde_str)
+    except ValueError:
+        desde_d = date.today()
+    dias = []
+    with db() as c:
+        for i in range(7):
+            d = desde_d + timedelta(days=i)
+            filas = c.execute(
+                "SELECT nombre_producto, cantidad, estado, batch_id FROM plan_produccion WHERE fecha=? ORDER BY nombre_producto",
+                (d.isoformat(),)
+            ).fetchall()
+            total = sum(f['cantidad'] for f in filas)
+            pendiente = sum(f['cantidad'] for f in filas if f['estado'] == 'pendiente')
+            horneado  = sum(f['cantidad'] for f in filas if f['estado'] in ('horneado','listo'))
+            dias.append({
+                'fecha':           d.isoformat(),
+                'dia_semana':      d.strftime('%a'),
+                'items':           [dict(f) for f in filas],
+                'total_unidades':  total,
+                'pendiente':       pendiente,
+                'horneado':        horneado,
+                'tiene_plan':      len(filas) > 0,
+            })
+    return jsonify(dias)
+
+
 @app.route('/api/produccion/calcular-orden')
 @login_required
 def api_produccion_calcular_orden():
@@ -3745,13 +3984,23 @@ def api_produccion_batch_hornear(batch_id):
         if estado_actual != 'amasado':
             return jsonify({'error': f'Estado inválido para hornear: {estado_actual}'}), 400
 
+        d_body = request.get_json(silent=True) or {}
+        rendimiento_real = d_body.get('rendimiento_real')
+
+        # Si hay rendimiento_real, distribuirlo proporcionalmente entre filas del batch
+        total_planificado = sum(f['cantidad'] for f in filas if f['producto_id'])
         stock_sumado = []
         for fila in filas:
             prod_id = fila['producto_id']
             nombre  = fila['nombre_producto']
-            cantidad = fila['cantidad']
+            cantidad_plan = fila['cantidad']
             if not prod_id:
                 continue
+            # Rendimiento real distribuido proporcionalmente
+            if rendimiento_real is not None and total_planificado > 0:
+                cantidad = round(float(rendimiento_real) * (cantidad_plan / total_planificado), 2)
+            else:
+                cantidad = cantidad_plan
             inv_id = _get_or_create_inv_terminado(c, prod_id, nombre)
             c.execute(
                 "UPDATE inventario SET stock_kg=stock_kg+?, ultima_actualizacion=date('now') WHERE id=?",
@@ -3761,13 +4010,65 @@ def api_produccion_batch_hornear(batch_id):
                 "UPDATE productos SET stock=stock+? WHERE id=?",
                 (cantidad, prod_id)
             )
-            stock_sumado.append({'nombre': nombre, 'cantidad': cantidad})
+            stock_sumado.append({'nombre': nombre, 'planificado': cantidad_plan, 'real': cantidad})
 
+        rend_guardar = float(rendimiento_real) if rendimiento_real is not None else total_planificado
         c.execute(
-            "UPDATE plan_produccion SET estado='horneado' WHERE batch_id=?", (batch_id,)
+            "UPDATE plan_produccion SET estado='horneado', rendimiento_real=? WHERE batch_id=?",
+            (rend_guardar, batch_id)
         )
 
-    return jsonify({'ok': True, 'batch_id': batch_id, 'stock_sumado': stock_sumado})
+    diferencia = round(rend_guardar - total_planificado, 2) if rendimiento_real is not None else 0
+    return jsonify({
+        'ok': True, 'batch_id': batch_id, 'stock_sumado': stock_sumado,
+        'planificado': total_planificado, 'real': rend_guardar, 'diferencia': diferencia
+    })
+
+
+@app.route('/api/produccion/manual', methods=['POST'])
+@login_required
+def api_produccion_manual():
+    """
+    Carga manual de producción (venta a calle, producción extra, etc.).
+    Suma stock a inventario y productos, y registra en plan_produccion como horneado.
+    Body: { "producto_id": int, "cantidad": float, "fecha": "YYYY-MM-DD", "notas": str }
+    """
+    d = request.get_json(silent=True) or {}
+    producto_id = d.get('producto_id')
+    cantidad    = float(d.get('cantidad', 0))
+    fecha       = d.get('fecha') or date.today().isoformat()
+    notas       = d.get('notas', 'Carga manual')
+
+    if not producto_id or cantidad <= 0:
+        return jsonify({'error': 'producto_id y cantidad > 0 son obligatorios'}), 400
+
+    with db() as c:
+        prod = c.execute("SELECT nombre, codigo FROM productos WHERE id=?", (producto_id,)).fetchone()
+        if not prod:
+            return jsonify({'error': 'Producto no encontrado'}), 404
+        nombre  = prod['nombre']
+        codigo  = prod['codigo'] or ''
+
+        inv_id = _get_or_create_inv_terminado(c, producto_id, nombre)
+        c.execute(
+            "UPDATE inventario SET stock_kg=stock_kg+?, ultima_actualizacion=date('now') WHERE id=?",
+            (cantidad, inv_id)
+        )
+        c.execute(
+            "UPDATE productos SET stock=stock+? WHERE id=?",
+            (cantidad, producto_id)
+        )
+
+        batch_id = f"manual-{uuid.uuid4().hex[:8]}"
+        c.execute(
+            """INSERT INTO plan_produccion
+               (fecha, codigo_producto, nombre_producto, cantidad, estado, notas, producto_id,
+                fecha_amasado, fecha_horneado, batch_id)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (fecha, codigo, nombre, cantidad, 'horneado', notas, producto_id, fecha, fecha, batch_id)
+        )
+
+    return jsonify({'ok': True, 'nombre': nombre, 'cantidad': cantidad, 'fecha': fecha})
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -4774,20 +5075,20 @@ def api_agentes_crm_proximo_contacto(lid):
 def api_finanzas_pl():
     """P&L mensual: ingresos vs gastos de los últimos N meses."""
     meses = int(request.args.get('meses', 6))
+    hoy = date.today()
     with db() as c:
-        # Ingresos (ventas pagadas)
-        ingresos_rows = c.execute("""
+        # Ingresos cobrados (PAGADO)
+        cobrado_rows = c.execute("""
             SELECT strftime('%Y-%m', fecha) as mes, COALESCE(SUM(total),0) as total
             FROM ventas
-            WHERE fecha >= date('now', ? || ' months')
+            WHERE fecha >= date('now', ? || ' months') AND estado_pago='PAGADO'
             GROUP BY mes ORDER BY mes
         """, (f'-{meses}',)).fetchall()
-        # Todos los ingresos (pagados + pendientes) para ver facturación
-        facturacion_rows = c.execute("""
+        # Facturado total (incluyendo pendientes)
+        facturado_rows = c.execute("""
             SELECT strftime('%Y-%m', fecha) as mes, COALESCE(SUM(total),0) as total
             FROM ventas
             WHERE fecha >= date('now', ? || ' months')
-              AND estado_pago = 'PAGADO'
             GROUP BY mes ORDER BY mes
         """, (f'-{meses}',)).fetchall()
         # Gastos
@@ -4797,16 +5098,27 @@ def api_finanzas_pl():
             WHERE fecha >= date('now', ? || ' months')
             GROUP BY mes ORDER BY mes
         """, (f'-{meses}',)).fetchall()
-        # Cobros pendientes
-        pendientes = c.execute("""
+        # Cobros pendientes con aging
+        pendientes_rows = c.execute("""
             SELECT v.id, v.fecha, v.total, v.notas, v.fecha_despacho,
-                   c.nombre as cliente_nombre, c.telefono as cliente_telefono
+                   c.nombre as cliente_nombre, c.telefono as cliente_telefono,
+                   CAST(julianday('now') - julianday(v.fecha) AS INTEGER) as dias_pendiente
             FROM ventas v LEFT JOIN clientes c ON c.id=v.cliente_id
             WHERE v.estado_pago='PENDIENTE'
-            ORDER BY v.fecha DESC
+            ORDER BY v.fecha ASC
         """).fetchall()
-        # Márgenes por producto (ventas del mes actual)
-        mes_ini = date.today().replace(day=1).isoformat()
+        # Ventas por canal (período seleccionado)
+        canal_rows = c.execute("""
+            SELECT v.canal,
+                   COUNT(*) as num_ventas,
+                   COALESCE(SUM(v.total),0) as facturado,
+                   COALESCE(SUM(CASE WHEN v.estado_pago='PAGADO' THEN v.total ELSE 0 END),0) as cobrado
+            FROM ventas v
+            WHERE v.fecha >= date('now', ? || ' months')
+            GROUP BY v.canal ORDER BY cobrado DESC
+        """, (f'-{meses}',)).fetchall()
+        # Márgenes por producto (mes actual)
+        mes_ini = hoy.replace(day=1).isoformat()
         margenes = c.execute("""
             SELECT p.nombre, p.precio, p.costo,
                    CASE WHEN p.precio>0 THEN ROUND((p.precio-p.costo)*100.0/p.precio,1) ELSE 0 END as margen_pct,
@@ -4821,26 +5133,78 @@ def api_finanzas_pl():
         """, (mes_ini,)).fetchall()
 
     # Merge por mes
-    meses_set = sorted(set([r['mes'] for r in ingresos_rows] + [r['mes'] for r in gastos_rows]))
-    ing_map  = {r['mes']: r['total'] for r in ingresos_rows}
-    fact_map = {r['mes']: r['total'] for r in facturacion_rows}
-    gst_map  = {r['mes']: r['total'] for r in gastos_rows}
+    meses_set  = sorted(set([r['mes'] for r in cobrado_rows] + [r['mes'] for r in gastos_rows] + [r['mes'] for r in facturado_rows]))
+    cobr_map   = {r['mes']: r['total'] for r in cobrado_rows}
+    fact_map   = {r['mes']: r['total'] for r in facturado_rows}
+    gst_map    = {r['mes']: r['total'] for r in gastos_rows}
     pl = []
     for mes in meses_set:
-        ing  = ing_map.get(mes, 0)
+        cobr = cobr_map.get(mes, 0)
         fact = fact_map.get(mes, 0)
         gst  = gst_map.get(mes, 0)
-        pl.append({'mes': mes, 'ingresos': ing, 'gastos': gst, 'utilidad': ing - gst})
+        pl.append({'mes': mes, 'cobrado': cobr, 'facturado': fact, 'gastos': gst, 'utilidad': cobr - gst})
+
+    # Aging buckets
+    pendientes = []
+    for r in pendientes_rows:
+        d = dict(r)
+        dias = d['dias_pendiente'] or 0
+        d['aging'] = '0-30 días' if dias <= 30 else ('31-60 días' if dias <= 60 else '+60 días')
+        pendientes.append(d)
 
     return jsonify({
         'pl': pl,
-        'pendientes': [dict(r) for r in pendientes],
+        'pendientes': pendientes,
+        'canales': [dict(r) for r in canal_rows],
         'margenes': [dict(r) for r in margenes],
         'resumen': {
-            'total_pendiente': sum(r['total'] for r in pendientes),
-            'total_pendiente_count': len(pendientes),
+            'total_pendiente':       sum(r['total'] for r in pendientes_rows),
+            'total_pendiente_count': len(pendientes_rows),
+            'aging_30':  sum(r['total'] for r in pendientes_rows if (r['dias_pendiente'] or 0) <= 30),
+            'aging_60':  sum(r['total'] for r in pendientes_rows if 30 < (r['dias_pendiente'] or 0) <= 60),
+            'aging_mas': sum(r['total'] for r in pendientes_rows if (r['dias_pendiente'] or 0) > 60),
         }
     })
+
+
+@app.route('/api/finanzas/flujo-caja')
+@login_required
+def api_finanzas_flujo_caja():
+    """Proyección de flujo de caja para las próximas 4 semanas."""
+    hoy = date.today()
+    semanas = []
+    with db() as c:
+        gastos_fijos_total = c.execute(
+            "SELECT COALESCE(SUM(monto),0) FROM gastos WHERE recurrente=1"
+        ).fetchone()[0]
+        for i in range(4):
+            inicio = hoy + timedelta(weeks=i)
+            fin    = hoy + timedelta(weeks=i+1) - timedelta(days=1)
+            ventas_por_cobrar = c.execute("""
+                SELECT COALESCE(SUM(total),0) as total, COUNT(*) as cnt
+                FROM ventas
+                WHERE estado_pago='PENDIENTE'
+                  AND (fecha_despacho BETWEEN ? AND ? OR (fecha_despacho='' AND fecha BETWEEN ? AND ?))
+            """, (inicio.isoformat(), fin.isoformat(), inicio.isoformat(), fin.isoformat())).fetchone()
+            subs_renovacion = c.execute("""
+                SELECT COALESCE(SUM(precio),0) as total, COUNT(*) as cnt
+                FROM suscripciones
+                WHERE estado='activo' AND fecha_renovacion BETWEEN ? AND ?
+            """, (inicio.isoformat(), fin.isoformat())).fetchone()
+            ingresos = (ventas_por_cobrar['total'] or 0) + (subs_renovacion['total'] or 0)
+            semanas.append({
+                'semana':       i + 1,
+                'desde':        inicio.isoformat(),
+                'hasta':        fin.isoformat(),
+                'ventas_cobro': ventas_por_cobrar['total'] or 0,
+                'ventas_cnt':   ventas_por_cobrar['cnt']   or 0,
+                'subs_cobro':   subs_renovacion['total']   or 0,
+                'subs_cnt':     subs_renovacion['cnt']     or 0,
+                'ingresos':     round(ingresos, 0),
+                'gastos_fijos': round(gastos_fijos_total / 4, 0),
+                'flujo_neto':   round(ingresos - gastos_fijos_total / 4, 0),
+            })
+    return jsonify(semanas)
 
 
 @app.route('/api/finanzas/pendientes/<int:vid>/cobrar', methods=['POST'])
