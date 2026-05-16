@@ -463,6 +463,8 @@ def init_db():
                 producto_id INTEGER NOT NULL REFERENCES productos(id),
                 cantidad    REAL    NOT NULL DEFAULT 1
             );
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_mayorista_pedido
+                ON mayorista_pedidos(cliente_id, dia_despacho);
         """)
 
         # Migraciones: agregar columnas que no existan en tablas previas
@@ -1534,6 +1536,7 @@ def api_clientes_update(cid):
 @app.route('/api/clientes/<int:cid>', methods=['DELETE'])
 def api_clientes_delete(cid):
     with db() as c:
+        c.execute("DELETE FROM mayorista_pedidos WHERE cliente_id=?", (cid,))
         c.execute("DELETE FROM clientes WHERE id=?", (cid,))
         return jsonify({'ok': True})
 
@@ -1940,11 +1943,14 @@ def api_renovar_suscripcion(sid):
 # ── API: Mayoristas ───────────────────────────────────────────────────────────
 
 def _fecha_despacho_semana(dia: str) -> str:
-    """Devuelve la fecha (str YYYY-MM-DD) del martes o jueves de la semana ISO actual."""
+    """Devuelve la fecha (str YYYY-MM-DD) del martes o jueves próximo (nunca pasado)."""
     hoy = date.today()
     lunes = hoy - timedelta(days=hoy.weekday())
     offset = 1 if dia == 'martes' else 3
-    return str(lunes + timedelta(days=offset))
+    target = lunes + timedelta(days=offset)
+    if target < hoy:
+        target += timedelta(weeks=1)
+    return str(target)
 
 @app.route('/api/mayoristas', methods=['GET'])
 @login_required
@@ -2099,6 +2105,8 @@ def api_mayoristas_generar_semana():
                 continue
 
             total = sum(float(l['cantidad']) * float(l['precio_mayorista']) for l in lineas)
+            if total <= 0:
+                continue
             vid = c.execute(
                 """INSERT INTO ventas
                    (fecha, cliente_id, canal, total, notas,
