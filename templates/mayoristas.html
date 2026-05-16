@@ -164,7 +164,8 @@ const $ = id => document.getElementById(id);
 async function init() {
   // Etiqueta semana
   const hoy = new Date();
-  const lunes = new Date(hoy); lunes.setDate(hoy.getDate() - hoy.getDay() + 1);
+  const dow = hoy.getDay() || 7;
+  const lunes = new Date(hoy); lunes.setDate(hoy.getDate() - dow + 1);
   const viernes = new Date(lunes); viernes.setDate(lunes.getDate() + 4);
   const fmt = d => d.toLocaleDateString('es-CL', {day:'2-digit', month:'short'});
   $('lbl-semana').textContent = `(${fmt(lunes)} – ${fmt(viernes)})`;
@@ -253,15 +254,7 @@ function agregarFilaDOM(dia, idx, linea) {
   const cantidad = parseFloat(linea.cantidad) || 0;
 
   tr.innerHTML = `
-    <td>
-      <select class="form-control form-control-sm sel-prod" onchange="onProdChange(this,'${dia}',${idx})">
-        <option value="">— seleccionar —</option>
-        ${productos.map(p =>
-          `<option value="${p.id}" data-precio="${p.precio_mayorista}"
-            ${p.id == linea.producto_id ? 'selected' : ''}>${p.nombre}</option>`
-        ).join('')}
-      </select>
-    </td>
+    <td><select class="form-control form-control-sm sel-prod" data-dia="${dia}" data-idx="${idx}"></select></td>
     <td>
       <input type="number" class="form-control form-control-sm inp-cant" min="0.1" step="0.5"
         value="${cantidad}" oninput="onCantChange(this,'${dia}',${idx})">
@@ -274,6 +267,21 @@ function agregarFilaDOM(dia, idx, linea) {
         <i class="bi bi-trash"></i>
       </button>
     </td>`;
+
+  // Populate select safely
+  const sel = tr.querySelector('select');
+  sel.onchange = function() { onProdChange(this, dia, idx); };
+  const blank = document.createElement('option');
+  blank.value = ''; blank.textContent = '— seleccionar —';
+  sel.appendChild(blank);
+  productos.forEach(p => {
+    const o = document.createElement('option');
+    o.value = p.id;
+    o.dataset.precio = p.precio_mayorista;
+    o.textContent = p.nombre;
+    if (p.id == linea.producto_id) o.selected = true;
+    sel.appendChild(o);
+  });
   tbody.appendChild(tr);
 }
 
@@ -362,6 +370,7 @@ async function generarSemana() {
     headers: {'Content-Type': 'application/json'},
     body: '{}'
   });
+  if (!r.ok) { mostrarBanner('Error al generar semana', 'danger'); return; }
   const data = await r.json();
   mostrarBanner(
     `Semana generada: ${data.generadas} ventas nuevas, ${data.omitidas} ya existían.`,
