@@ -1079,6 +1079,7 @@ MODULOS = [
     ('clientes',       'Clientes',       'bi-people'),
     ('productos',      'Productos',      'bi-basket'),
     ('suscripciones',  'Suscripciones',  'bi-calendar-check'),
+    ('mayoristas',     'Mayoristas',     'bi-shop'),
     ('crm',            'CRM',            'bi-diagram-3'),
     ('reportes',       'Reportes',       'bi-bar-chart-line'),
     ('reporte_ventas', 'Reporte Ventas', 'bi-table'),
