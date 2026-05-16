@@ -1932,6 +1932,186 @@ def api_renovar_suscripcion(sid):
         return jsonify(dict(c.execute("SELECT * FROM suscripciones WHERE id=?", (sid,)).fetchone()))
 
 
+# ── API: Mayoristas ───────────────────────────────────────────────────────────
+
+def _fecha_despacho_semana(dia: str) -> str:
+    """Devuelve la fecha (str YYYY-MM-DD) del martes o jueves de la semana ISO actual."""
+    hoy = date.today()
+    lunes = hoy - timedelta(days=hoy.weekday())
+    offset = 1 if dia == 'martes' else 3
+    return str(lunes + timedelta(days=offset))
+
+@app.route('/api/mayoristas', methods=['GET'])
+@login_required
+def api_mayoristas_list():
+    with db() as c:
+        clientes = c.execute(
+            "SELECT id, nombre FROM clientes WHERE tipo='MAYORISTA' AND id IN "
+            "(SELECT DISTINCT cliente_id FROM mayorista_pedidos) ORDER BY nombre"
+        ).fetchall()
+        result = []
+        for cl in clientes:
+            pedidos = c.execute(
+                "SELECT id, dia_despacho, activo FROM mayorista_pedidos WHERE cliente_id=?",
+                (cl['id'],)
+            ).fetchall()
+            dias = {}
+            for p in pedidos:
+                dias[p['dia_despacho']] = {'activo': bool(p['activo'])}
+            result.append({'id': cl['id'], 'nombre': cl['nombre'], 'dias': dias})
+    return jsonify(result)
+
+@app.route('/api/mayoristas/clientes', methods=['GET'])
+@login_required
+def api_mayoristas_clientes():
+    """Lista todos los clientes tipo MAYORISTA para el dropdown."""
+    with db() as c:
+        rows = c.execute(
+            "SELECT id, nombre FROM clientes WHERE tipo='MAYORISTA' ORDER BY nombre"
+        ).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+@app.route('/api/mayoristas', methods=['POST'])
+@login_required
+def api_mayoristas_create():
+    """Marca un cliente existente como MAYORISTA o crea uno nuevo."""
+    d = request.json or {}
+    with db() as c:
+        if d.get('cliente_id'):
+            c.execute("UPDATE clientes SET tipo='MAYORISTA' WHERE id=?", (d['cliente_id'],))
+            cid = d['cliente_id']
+        else:
+            nombre = (d.get('nombre') or '').strip()
+            if not nombre:
+                return jsonify({'error': 'Nombre requerido'}), 400
+            cur = c.execute(
+                "INSERT INTO clientes (nombre,email,telefono,direccion,notas,tipo) VALUES (?,?,?,?,?,?)",
+                (nombre, d.get('email',''), d.get('telefono',''),
+                 d.get('direccion',''), d.get('notas',''), 'MAYORISTA')
+            )
+            cid = cur.lastrowid
+    return jsonify({'id': cid}), 201
+
+@app.route('/api/mayoristas/<int:cid>/pedidos', methods=['GET'])
+@login_required
+def api_mayoristas_pedidos_get(cid):
+    with db() as c:
+        cl = c.execute("SELECT id, nombre FROM clientes WHERE id=?", (cid,)).fetchone()
+        if not cl:
+            return jsonify({'error': 'Cliente no encontrado'}), 404
+        pedidos_rows = c.execute(
+            "SELECT * FROM mayorista_pedidos WHERE cliente_id=?", (cid,)
+        ).fetchall()
+        pedidos = []
+        for p in pedidos_rows:
+            lineas = c.execute(
+                """SELECT ml.id, ml.producto_id, ml.cantidad,
+                          pr.nombre as producto_nombre, pr.precio_mayorista
+                   FROM mayorista_pedido_lineas ml
+                   JOIN productos pr ON pr.id = ml.producto_id
+                   WHERE ml.pedido_id=?""",
+                (p['id'],)
+            ).fetchall()
+            pedidos.append({
+                'id': p['id'],
+                'dia_despacho': p['dia_despacho'],
+                'activo': bool(p['activo']),
+                'notas': p['notas'],
+                'lineas': [dict(l) for l in lineas],
+            })
+    return jsonify({'cliente': dict(cl), 'pedidos': pedidos})
+
+@app.route('/api/mayoristas/<int:cid>/pedidos', methods=['PUT'])
+@login_required
+def api_mayoristas_pedidos_put(cid):
+    """Reemplaza la plantilla completa de pedidos de un mayorista."""
+    d = request.json or {}
+    pedidos_in = d.get('pedidos', [])
+    with db() as c:
+        if not c.execute("SELECT id FROM clientes WHERE id=?", (cid,)).fetchone():
+            return jsonify({'error': 'Cliente no encontrado'}), 404
+        for p in pedidos_in:
+            dia = p.get('dia_despacho')
+            if dia not in ('martes', 'jueves'):
+                continue
+            existing = c.execute(
+                "SELECT id FROM mayorista_pedidos WHERE cliente_id=? AND dia_despacho=?",
+                (cid, dia)
+            ).fetchone()
+            if existing:
+                ped_id = existing['id']
+                c.execute(
+                    "UPDATE mayorista_pedidos SET activo=?, notas=? WHERE id=?",
+                    (1 if p.get('activo', True) else 0, p.get('notas',''), ped_id)
+                )
+                c.execute("DELETE FROM mayorista_pedido_lineas WHERE pedido_id=?", (ped_id,))
+            else:
+                ped_id = c.execute(
+                    "INSERT INTO mayorista_pedidos (cliente_id, dia_despacho, activo, notas) VALUES (?,?,?,?)",
+                    (cid, dia, 1 if p.get('activo', True) else 0, p.get('notas',''))
+                ).lastrowid
+            for linea in p.get('lineas', []):
+                if not linea.get('producto_id') or float(linea.get('cantidad', 0)) <= 0:
+                    continue
+                c.execute(
+                    "INSERT INTO mayorista_pedido_lineas (pedido_id, producto_id, cantidad) VALUES (?,?,?)",
+                    (ped_id, int(linea['producto_id']), float(linea['cantidad']))
+                )
+    return jsonify({'ok': True})
+
+@app.route('/api/mayoristas/generar-semana', methods=['POST'])
+@login_required
+def api_mayoristas_generar_semana():
+    """Genera ventas para todos los pedidos mayoristas activos de la semana actual."""
+    generadas = 0
+    omitidas = 0
+    with db() as c:
+        pedidos = c.execute(
+            "SELECT mp.*, cl.nombre as cliente_nombre "
+            "FROM mayorista_pedidos mp "
+            "JOIN clientes cl ON cl.id = mp.cliente_id "
+            "WHERE mp.activo=1"
+        ).fetchall()
+
+        for ped in pedidos:
+            fecha_desp = _fecha_despacho_semana(ped['dia_despacho'])
+            ya_existe = c.execute(
+                "SELECT id FROM ventas WHERE cliente_id=? AND canal='MAYORISTA' AND DATE(fecha)=?",
+                (ped['cliente_id'], fecha_desp)
+            ).fetchone()
+            if ya_existe:
+                omitidas += 1
+                continue
+
+            lineas = c.execute(
+                """SELECT ml.cantidad, ml.producto_id, pr.precio_mayorista, pr.nombre
+                   FROM mayorista_pedido_lineas ml
+                   JOIN productos pr ON pr.id = ml.producto_id
+                   WHERE ml.pedido_id=?""",
+                (ped['id'],)
+            ).fetchall()
+            if not lineas:
+                continue
+
+            total = sum(float(l['cantidad']) * float(l['precio_mayorista']) for l in lineas)
+            vid = c.execute(
+                """INSERT INTO ventas
+                   (fecha, cliente_id, canal, total, notas,
+                    fecha_despacho, con_despacho, tipo_cliente, estado_pago, estado_despacho)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                (fecha_desp, ped['cliente_id'], 'MAYORISTA', total,
+                 f"Pedido fijo {ped['dia_despacho']}",
+                 fecha_desp, 1, 'MAYORISTA', 'PENDIENTE', 'PENDIENTE')
+            ).lastrowid
+            for l in lineas:
+                c.execute(
+                    "INSERT INTO venta_items (venta_id,producto_id,cantidad,precio_unitario) VALUES (?,?,?,?)",
+                    (vid, l['producto_id'], float(l['cantidad']), float(l['precio_mayorista']))
+                )
+            generadas += 1
+
+    return jsonify({'generadas': generadas, 'omitidas': omitidas})
+
 # ── API: Reportes ─────────────────────────────────────────────────────────────
 
 def _days_for(periodo):
