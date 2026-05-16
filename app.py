@@ -1968,7 +1968,19 @@ def api_mayoristas_list():
             ).fetchall()
             dias = {}
             for p in pedidos:
-                dias[p['dia_despacho']] = {'activo': bool(p['activo'])}
+                row = c.execute(
+                    """SELECT COUNT(*) as n,
+                              COALESCE(SUM(ml.cantidad * pr.precio_mayorista), 0) as total
+                       FROM mayorista_pedido_lineas ml
+                       JOIN productos pr ON pr.id = ml.producto_id
+                       WHERE ml.pedido_id=?""",
+                    (p['id'],)
+                ).fetchone()
+                dias[p['dia_despacho']] = {
+                    'activo': bool(p['activo']),
+                    'n_productos': row['n'],
+                    'total': float(row['total'])
+                }
             result.append({'id': cl['id'], 'nombre': cl['nombre'], 'dias': dias})
     return jsonify(result)
 
