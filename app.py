@@ -2439,6 +2439,236 @@ def api_rep_kpis():
             'cliente_total':  cliente[0], 'cliente_count':  cliente[1],
         })
 
+# ── API: Reportes ────────────────────────────────────────────────────────────
+
+@app.route('/api/reportes/resumen')
+@login_required
+def api_reportes_resumen():
+    """KPIs agregados para la página Resumen de Reportes."""
+    periodo = request.args.get('periodo', 'mes')
+    hoy = date.today()
+
+    def rango(p):
+        if p == 'hoy':
+            return hoy.isoformat(), hoy.isoformat()
+        if p == 'semana':
+            lun = hoy - timedelta(days=hoy.weekday())
+            return lun.isoformat(), hoy.isoformat()
+        return hoy.replace(day=1).isoformat(), hoy.isoformat()
+
+    desde, hasta = rango(periodo)
+    ayer = (hoy - timedelta(days=1)).isoformat()
+
+    d0 = date.fromisoformat(desde)
+    delta = (hoy - d0).days or 1
+    prev_hasta = (d0 - timedelta(days=1)).isoformat()
+    prev_desde = (d0 - timedelta(days=delta)).isoformat()
+
+    with db() as c:
+        ventas_hoy = c.execute(
+            "SELECT COALESCE(SUM(total),0) FROM ventas WHERE fecha=?", (hoy.isoformat(),)
+        ).fetchone()[0]
+        ventas_ayer = c.execute(
+            "SELECT COALESCE(SUM(total),0) FROM ventas WHERE fecha=?", (ayer,)
+        ).fetchone()[0]
+        ventas_periodo = c.execute(
+            "SELECT COALESCE(SUM(total),0) FROM ventas WHERE fecha BETWEEN ? AND ?",
+            (desde, hasta)
+        ).fetchone()[0]
+        ventas_prev = c.execute(
+            "SELECT COALESCE(SUM(total),0) FROM ventas WHERE fecha BETWEEN ? AND ?",
+            (prev_desde, prev_hasta)
+        ).fetchone()[0]
+        count_periodo = c.execute(
+            "SELECT COUNT(*) FROM ventas WHERE fecha BETWEEN ? AND ?",
+            (desde, hasta)
+        ).fetchone()[0]
+        ticket = ventas_periodo / count_periodo if count_periodo else 0
+        subs = c.execute(
+            "SELECT COUNT(*) FROM suscripciones WHERE estado='activo'"
+        ).fetchone()[0]
+        canal_rows = c.execute("""
+            SELECT
+              CASE
+                WHEN tipo_cliente='MAYORISTA' THEN 'mayorista'
+                WHEN canal='suscripcion'      THEN 'suscripcion'
+                WHEN canal='local'            THEN 'pos'
+                ELSE 'online'
+              END as segmento,
+              COUNT(*) as count,
+              COALESCE(SUM(total),0) as total
+            FROM ventas
+            WHERE fecha BETWEEN ? AND ?
+            GROUP BY segmento
+        """, (desde, hasta)).fetchall()
+        ingresos = c.execute(
+            "SELECT COALESCE(SUM(total),0) FROM ventas WHERE fecha BETWEEN ? AND ? AND estado_pago='PAGADO'",
+            (desde, hasta)
+        ).fetchone()[0]
+        gastos = c.execute(
+            "SELECT COALESCE(SUM(monto),0) FROM gastos WHERE fecha BETWEEN ? AND ?",
+            (desde, hasta)
+        ).fetchone()[0]
+        por_cobrar = c.execute(
+            "SELECT COALESCE(SUM(total),0) FROM ventas WHERE estado_pago='PENDIENTE'"
+        ).fetchone()[0]
+        prod_hoy = c.execute(
+            "SELECT COALESCE(SUM(cantidad),0) FROM plan_produccion WHERE fecha=?",
+            (hoy.isoformat(),)
+        ).fetchone()[0]
+        despachos_pendientes = c.execute(
+            """SELECT COUNT(*) FROM ventas
+               WHERE fecha_despacho=? AND con_despacho=1
+                 AND estado_despacho NOT IN ('DESPACHADO','RETIRO EN TIENDA')""",
+            (hoy.isoformat(),)
+        ).fetchone()[0]
+        stock_bajo = c.execute(
+            "SELECT nombre, stock FROM productos WHERE activo=1 AND stock <= 5 ORDER BY stock ASC LIMIT 10"
+        ).fetchall()
+
+    return jsonify({
+        'periodo': periodo, 'desde': desde, 'hasta': hasta,
+        'ventas_hoy': ventas_hoy, 'ventas_ayer': ventas_ayer,
+        'ventas_periodo': ventas_periodo, 'ventas_prev': ventas_prev,
+        'count_periodo': count_periodo, 'ticket': ticket,
+        'suscripciones_activas': subs,
+        'por_canal': [dict(r) for r in canal_rows],
+        'ingresos_cobrados': ingresos, 'gastos': gastos,
+        'resultado': ingresos - gastos,
+        'por_cobrar': por_cobrar,
+        'prod_planificadas_hoy': prod_hoy,
+        'despachos_pendientes_hoy': despachos_pendientes,
+        'stock_bajo': [{'nombre': r['nombre'], 'stock': r['stock']} for r in stock_bajo],
+    })
+
+
+@app.route('/api/reportes/produccion')
+@login_required
+def api_reportes_produccion():
+    """Reporte de producción por período."""
+    periodo = request.args.get('periodo', 'mes')
+    hoy = date.today()
+
+    if periodo == 'semana':
+        lun = hoy - timedelta(days=hoy.weekday())
+        desde, hasta = lun.isoformat(), hoy.isoformat()
+    elif periodo == '3meses':
+        desde = (hoy.replace(day=1) - timedelta(days=60)).isoformat()
+        hasta = hoy.isoformat()
+    else:
+        desde, hasta = hoy.replace(day=1).isoformat(), hoy.isoformat()
+
+    with db() as c:
+        rows = c.execute(
+            """SELECT estado, SUM(cantidad) as total
+               FROM plan_produccion WHERE fecha BETWEEN ? AND ?
+               GROUP BY estado""",
+            (desde, hasta)
+        ).fetchall()
+        est = {r['estado']: r['total'] for r in rows}
+        total_planificado = sum(est.values())
+        total_producido   = est.get('horneado', 0) + est.get('listo', 0)
+        cumplimiento = round(total_producido / total_planificado * 100, 1) if total_planificado else 0
+
+        dias = c.execute(
+            """SELECT fecha,
+                      SUM(cantidad) as planificado,
+                      SUM(CASE WHEN estado IN ('horneado','listo') THEN cantidad ELSE 0 END) as producido
+               FROM plan_produccion WHERE fecha BETWEEN ? AND ?
+               GROUP BY fecha ORDER BY fecha""",
+            (desde, hasta)
+        ).fetchall()
+
+        prods = c.execute(
+            """SELECT nombre_producto,
+                      SUM(cantidad) as planificado,
+                      SUM(CASE WHEN estado IN ('horneado','listo') THEN cantidad ELSE 0 END) as producido
+               FROM plan_produccion WHERE fecha BETWEEN ? AND ?
+               GROUP BY nombre_producto ORDER BY planificado DESC""",
+            (desde, hasta)
+        ).fetchall()
+
+    return jsonify({
+        'periodo': periodo, 'desde': desde, 'hasta': hasta,
+        'kpis': {
+            'total_planificado': total_planificado,
+            'total_producido':   total_producido,
+            'cumplimiento_pct':  cumplimiento,
+            'producto_top':      prods[0]['nombre_producto'] if prods else None,
+        },
+        'por_dia':      [dict(r) for r in dias],
+        'por_producto': [dict(r) for r in prods],
+    })
+
+
+@app.route('/api/reportes/despacho')
+@login_required
+def api_reportes_despacho():
+    """Reporte de despacho por período."""
+    periodo = request.args.get('periodo', 'mes')
+    hoy = date.today()
+
+    if periodo == 'semana':
+        lun = hoy - timedelta(days=hoy.weekday())
+        desde, hasta = lun.isoformat(), hoy.isoformat()
+    elif periodo == '3meses':
+        desde = (hoy.replace(day=1) - timedelta(days=60)).isoformat()
+        hasta = hoy.isoformat()
+    else:
+        desde, hasta = hoy.replace(day=1).isoformat(), hoy.isoformat()
+
+    with db() as c:
+        rows = c.execute(
+            """SELECT estado_despacho, COUNT(*) as count
+               FROM ventas WHERE con_despacho=1 AND fecha_despacho BETWEEN ? AND ?
+               GROUP BY estado_despacho""",
+            (desde, hasta)
+        ).fetchall()
+        estados = {r['estado_despacho']: r['count'] for r in rows}
+        total = sum(estados.values())
+        despachados = estados.get('DESPACHADO', 0) + estados.get('RETIRO EN TIENDA', 0)
+        pendientes  = estados.get('PENDIENTE', 0)
+        tasa = round(despachados / total * 100, 1) if total else 0
+
+        por_dia = c.execute(
+            """SELECT fecha_despacho as fecha,
+                      COUNT(*) as total,
+                      SUM(CASE WHEN estado_despacho='DESPACHADO' THEN 1 ELSE 0 END) as despachados,
+                      SUM(CASE WHEN estado_despacho='PENDIENTE' THEN 1 ELSE 0 END) as pendientes,
+                      SUM(CASE WHEN estado_despacho='EN PREPARACION' THEN 1 ELSE 0 END) as preparacion,
+                      SUM(CASE WHEN estado_despacho='RETIRO EN TIENDA' THEN 1 ELSE 0 END) as retiro
+               FROM ventas WHERE con_despacho=1 AND fecha_despacho BETWEEN ? AND ?
+               GROUP BY fecha_despacho ORDER BY fecha_despacho""",
+            (desde, hasta)
+        ).fetchall()
+
+        por_canal = c.execute(
+            """SELECT
+                 CASE
+                   WHEN tipo_cliente='MAYORISTA' THEN 'Mayorista'
+                   WHEN canal='suscripcion'      THEN 'Suscripción'
+                   WHEN canal='local'            THEN 'POS'
+                   ELSE 'Online'
+                 END as segmento,
+                 COUNT(*) as total,
+                 SUM(CASE WHEN estado_despacho='DESPACHADO' THEN 1 ELSE 0 END) as despachados
+               FROM ventas WHERE con_despacho=1 AND fecha_despacho BETWEEN ? AND ?
+               GROUP BY segmento ORDER BY total DESC""",
+            (desde, hasta)
+        ).fetchall()
+
+    return jsonify({
+        'periodo': periodo, 'desde': desde, 'hasta': hasta,
+        'kpis': {
+            'total': total, 'despachados': despachados,
+            'pendientes': pendientes, 'tasa_pct': tasa,
+        },
+        'por_estado': [dict(r) for r in rows],
+        'por_dia':    [dict(r) for r in por_dia],
+        'por_canal':  [dict(r) for r in por_canal],
+    })
+
+
 # ── API: Resumen para agentes (WhatsApp bot / Railway) ───────────────────────
 
 @app.route('/api/agentes/resumen')
