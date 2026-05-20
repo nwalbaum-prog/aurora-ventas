@@ -465,6 +465,26 @@ def init_db():
             );
             CREATE UNIQUE INDEX IF NOT EXISTS uq_mayorista_pedido
                 ON mayorista_pedidos(cliente_id, dia_despacho);
+            CREATE TABLE IF NOT EXISTS mayorista_semanas (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                semana       TEXT    NOT NULL UNIQUE,
+                fecha_martes TEXT    NOT NULL DEFAULT '',
+                fecha_jueves TEXT    NOT NULL DEFAULT '',
+                estado       TEXT    NOT NULL DEFAULT 'borrador'
+                                     CHECK(estado IN ('borrador','confirmado','cerrado')),
+                created_at   TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
+            );
+            CREATE TABLE IF NOT EXISTS mayorista_ajustes (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                semana_id    INTEGER NOT NULL REFERENCES mayorista_semanas(id) ON DELETE CASCADE,
+                cliente_id   INTEGER NOT NULL REFERENCES clientes(id),
+                producto_id  INTEGER NOT NULL REFERENCES productos(id),
+                dia          TEXT    NOT NULL CHECK(dia IN ('martes','jueves')),
+                cantidad     REAL    NOT NULL DEFAULT 0,
+                cancelado    INTEGER NOT NULL DEFAULT 0,
+                nota         TEXT    NOT NULL DEFAULT '',
+                UNIQUE(semana_id, cliente_id, producto_id, dia)
+            );
         """)
 
         # Migraciones: agregar columnas que no existan en tablas previas
@@ -1075,23 +1095,25 @@ def admin_required(f):
 import json as _json_mod
 
 MODULOS = [
-    ('pos',            'POS / Caja',     'bi-cash-register'),
-    ('ventas',         'Ventas',         'bi-receipt'),
-    ('despacho',       'Despacho',       'bi-truck'),
-    ('clientes',       'Clientes',       'bi-people'),
-    ('productos',      'Productos',      'bi-basket'),
-    ('suscripciones',  'Suscripciones',  'bi-calendar-check'),
-    ('mayoristas',     'Mayoristas',     'bi-shop'),
-    ('crm',            'CRM',            'bi-diagram-3'),
-    ('reportes',       'Reportes',       'bi-bar-chart-line'),
-    ('reporte_ventas', 'Reporte Ventas', 'bi-table'),
-    ('finanzas',       'Finanzas',       'bi-currency-dollar'),
-    ('produccion',     'Producción',     'bi-fire'),
-    ('inventario',     'Inventario',     'bi-boxes'),
-    ('gastos',         'Gastos',         'bi-cash-coin'),
-    ('agenda',         'Agenda',         'bi-calendar3'),
-    ('config_negocio', 'Configuración',  'bi-gear'),
-    ('agentes',        'Agentes',        'bi-robot'),
+    ('pos',               'POS / Caja',           'bi-cash-register'),
+    ('ventas',            'Ventas',               'bi-receipt'),
+    ('despacho',          'Despacho',             'bi-truck'),
+    ('clientes',          'Clientes',             'bi-people'),
+    ('productos',         'Productos',            'bi-basket'),
+    ('suscripciones',     'Suscripciones',        'bi-calendar-check'),
+    ('mayoristas',        'Mayoristas',           'bi-shop'),
+    ('crm',               'CRM',                  'bi-diagram-3'),
+    ('reportes',          'Resumen Reportes',     'bi-speedometer2'),
+    ('reporte_ventas',    'Reporte Ventas',       'bi-table'),
+    ('reporte_produccion','Reporte Producción',   'bi-clipboard-data'),
+    ('reporte_despacho',  'Reporte Despacho',     'bi-map'),
+    ('finanzas',          'Finanzas',             'bi-currency-dollar'),
+    ('produccion',        'Producción',           'bi-fire'),
+    ('inventario',        'Inventario',           'bi-boxes'),
+    ('gastos',            'Gastos',               'bi-cash-coin'),
+    ('agenda',            'Agenda',               'bi-calendar3'),
+    ('config_negocio',    'Configuración',        'bi-gear'),
+    ('agentes',           'Agentes',              'bi-robot'),
 ]
 MODULOS_DEFAULT = ['pos', 'ventas', 'clientes', 'despacho', 'agenda']
 
@@ -1299,7 +1321,23 @@ def page_mayoristas(): return render_template('mayoristas.html', active='mayoris
 
 @app.route('/reportes')
 @module_required('reportes')
-def page_reportes():      return render_template('reportes.html',       active='reportes')
+def page_reportes():
+    return render_template('reportes_resumen.html', active='reportes')
+
+@app.route('/reportes/financiero')
+@module_required('reportes')
+def page_reportes_financiero():
+    return render_template('reportes.html', active='reportes_financiero')
+
+@app.route('/reportes/produccion')
+@module_required('reporte_produccion')
+def page_reportes_produccion():
+    return render_template('reporte_produccion.html', active='reporte_produccion')
+
+@app.route('/reportes/despacho')
+@module_required('reporte_despacho')
+def page_reportes_despacho():
+    return render_template('reporte_despacho.html', active='reporte_despacho')
 
 @app.route('/reporte-ventas')
 @module_required('reporte_ventas')
@@ -2136,6 +2174,190 @@ def api_mayoristas_generar_semana():
             generadas += 1
 
     return jsonify({'generadas': generadas, 'omitidas': omitidas})
+
+
+# ── API: Mayoristas — vista semanal ──────────────────────────────────────────
+
+def _semana_iso(d: date) -> str:
+    return d.strftime('%G-W%V')
+
+def _fechas_semana(semana_str: str):
+    """Dado '2026-W21' devuelve (fecha_martes, fecha_jueves) como YYYY-MM-DD."""
+    year, week = semana_str.split('-W')
+    lunes = date.fromisocalendar(int(year), int(week), 1)
+    return str(lunes + timedelta(days=1)), str(lunes + timedelta(days=3))
+
+def _get_or_create_semana(c, semana_str: str) -> int:
+    row = c.execute('SELECT id FROM mayorista_semanas WHERE semana=?', (semana_str,)).fetchone()
+    if row:
+        return row['id']
+    martes, jueves = _fechas_semana(semana_str)
+    cur = c.execute(
+        'INSERT INTO mayorista_semanas(semana,fecha_martes,fecha_jueves) VALUES(?,?,?)',
+        (semana_str, martes, jueves)
+    )
+    return cur.lastrowid
+
+@app.route('/api/mayoristas/semana')
+@login_required
+def api_mayoristas_semana_get():
+    """Vista semanal: plantillas + ajustes para una semana dada."""
+    semana = request.args.get('semana') or _semana_iso(date.today())
+    with db() as c:
+        sem = c.execute('SELECT * FROM mayorista_semanas WHERE semana=?', (semana,)).fetchone()
+        martes, jueves = _fechas_semana(semana)
+
+        # Traer todas las plantillas activas
+        plantillas = c.execute("""
+            SELECT mp.id as pedido_id, mp.cliente_id, mp.dia_despacho as dia,
+                   cl.nombre as cliente_nombre,
+                   mpl.id as linea_id, mpl.producto_id, mpl.cantidad,
+                   pr.nombre as producto_nombre, pr.precio_mayorista
+            FROM mayorista_pedidos mp
+            JOIN clientes cl ON cl.id = mp.cliente_id
+            JOIN mayorista_pedido_lineas mpl ON mpl.pedido_id = mp.id
+            JOIN productos pr ON pr.id = mpl.producto_id
+            WHERE mp.activo = 1
+            ORDER BY cl.nombre, mp.dia_despacho, pr.nombre
+        """).fetchall()
+
+        # Ajustes de esta semana (si la semana existe)
+        ajustes_map = {}
+        if sem:
+            ajustes = c.execute("""
+                SELECT * FROM mayorista_ajustes WHERE semana_id = ?
+            """, (sem['id'],)).fetchall()
+            for a in ajustes:
+                key = (a['cliente_id'], a['producto_id'], a['dia'])
+                ajustes_map[key] = dict(a)
+
+        # Construir líneas con overrides aplicados
+        lineas = []
+        for p in plantillas:
+            key = (p['cliente_id'], p['producto_id'], p['dia'])
+            ajuste = ajustes_map.get(key)
+            lineas.append({
+                'pedido_id':       p['pedido_id'],
+                'linea_id':        p['linea_id'],
+                'cliente_id':      p['cliente_id'],
+                'cliente_nombre':  p['cliente_nombre'],
+                'producto_id':     p['producto_id'],
+                'producto_nombre': p['producto_nombre'],
+                'dia':             p['dia'],
+                'cantidad_base':   float(p['cantidad']),
+                'cantidad':        float(ajuste['cantidad']) if ajuste and not ajuste['cancelado'] else float(p['cantidad']),
+                'cancelado':       bool(ajuste['cancelado']) if ajuste else False,
+                'modificado':      ajuste is not None,
+                'ajuste_id':       ajuste['id'] if ajuste else None,
+                'nota':            ajuste['nota'] if ajuste else '',
+                'precio_mayorista':float(p['precio_mayorista']),
+            })
+
+        # Líneas extra de ajustes que no corresponden a ninguna plantilla
+        plantilla_keys = {(p['cliente_id'], p['producto_id'], p['dia']) for p in plantillas}
+        if sem:
+            for a in ajustes_map.values():
+                key = (a['cliente_id'], a['producto_id'], a['dia'])
+                if key not in plantilla_keys and not a['cancelado']:
+                    cl = c.execute('SELECT nombre FROM clientes WHERE id=?', (a['cliente_id'],)).fetchone()
+                    pr = c.execute('SELECT nombre, precio_mayorista FROM productos WHERE id=?', (a['producto_id'],)).fetchone()
+                    if cl and pr:
+                        lineas.append({
+                            'pedido_id': None, 'linea_id': None,
+                            'cliente_id': a['cliente_id'], 'cliente_nombre': cl['nombre'],
+                            'producto_id': a['producto_id'], 'producto_nombre': pr['nombre'],
+                            'dia': a['dia'],
+                            'cantidad_base': 0, 'cantidad': float(a['cantidad']),
+                            'cancelado': False, 'modificado': True,
+                            'ajuste_id': a['id'], 'nota': a['nota'],
+                            'precio_mayorista': float(pr['precio_mayorista']),
+                        })
+
+        return jsonify({
+            'semana':       semana,
+            'fecha_martes': martes,
+            'fecha_jueves': jueves,
+            'estado':       sem['estado'] if sem else 'sin_generar',
+            'lineas':       lineas,
+        })
+
+@app.route('/api/mayoristas/semana/ajuste', methods=['POST'])
+@login_required
+def api_mayoristas_ajuste_post():
+    """Crear o reemplazar ajuste de semana para una línea específica."""
+    d = request.json or {}
+    semana = d.get('semana') or _semana_iso(date.today())
+    with db() as c:
+        sem_id = _get_or_create_semana(c, semana)
+        c.execute("""
+            INSERT INTO mayorista_ajustes
+                (semana_id, cliente_id, producto_id, dia, cantidad, cancelado, nota)
+            VALUES (?,?,?,?,?,?,?)
+            ON CONFLICT(semana_id, cliente_id, producto_id, dia)
+            DO UPDATE SET cantidad=excluded.cantidad,
+                          cancelado=excluded.cancelado,
+                          nota=excluded.nota
+        """, (sem_id, d['cliente_id'], d['producto_id'], d['dia'],
+              float(d.get('cantidad', 0)), 1 if d.get('cancelado') else 0, d.get('nota', '')))
+        return jsonify({'ok': True})
+
+@app.route('/api/mayoristas/semana/ajuste/<int:aid>', methods=['DELETE'])
+@login_required
+def api_mayoristas_ajuste_delete(aid):
+    """Elimina un ajuste (restaura al valor de la plantilla)."""
+    with db() as c:
+        c.execute('DELETE FROM mayorista_ajustes WHERE id=?', (aid,))
+    return jsonify({'ok': True})
+
+@app.route('/api/mayoristas/semana/estado', methods=['PUT'])
+@login_required
+def api_mayoristas_semana_estado():
+    d = request.json or {}
+    semana = d.get('semana') or _semana_iso(date.today())
+    estado = d.get('estado', 'borrador')
+    with db() as c:
+        _get_or_create_semana(c, semana)
+        c.execute('UPDATE mayorista_semanas SET estado=? WHERE semana=?', (estado, semana))
+    return jsonify({'ok': True})
+
+@app.route('/api/mayoristas/produccion')
+@login_required
+def api_mayoristas_produccion():
+    """Totales de producción para la semana: sum por producto y día (plantillas + ajustes)."""
+    semana = request.args.get('semana') or _semana_iso(date.today())
+    with db() as c:
+        sem = c.execute('SELECT id FROM mayorista_semanas WHERE semana=?', (semana,)).fetchone()
+
+        plantillas = c.execute("""
+            SELECT mpl.producto_id, pr.nombre as producto_nombre,
+                   mp.dia_despacho as dia, mpl.cantidad
+            FROM mayorista_pedidos mp
+            JOIN mayorista_pedido_lineas mpl ON mpl.pedido_id = mp.id
+            JOIN productos pr ON pr.id = mpl.producto_id
+            WHERE mp.activo = 1
+        """).fetchall()
+
+        ajustes_map = {}
+        if sem:
+            for a in c.execute('SELECT * FROM mayorista_ajustes WHERE semana_id=?', (sem['id'],)).fetchall():
+                ajustes_map[(a['cliente_id'], a['producto_id'], a['dia'])] = dict(a)
+
+        totales = {}
+        for p in plantillas:
+            key_ajuste = None
+            for a_key, a_val in ajustes_map.items():
+                if a_val['producto_id'] == p['producto_id'] and a_val['dia'] == p['dia']:
+                    key_ajuste = a_val
+            cantidad = float(p['cantidad'])
+            if key_ajuste:
+                if key_ajuste['cancelado']:
+                    continue
+                cantidad = float(key_ajuste['cantidad'])
+            k = (p['producto_nombre'], p['dia'])
+            totales[k] = totales.get(k, 0) + cantidad
+
+        result = [{'producto': k[0], 'dia': k[1], 'total': v} for k, v in sorted(totales.items())]
+    return jsonify(result)
 
 # ── API: Reportes ─────────────────────────────────────────────────────────────
 
