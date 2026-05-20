@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% block title %}Reporte Despacho — Aurora Bakers{% endblock %}
+{% block page_title %}Reporte Despacho{% endblock %}
+{% block content %}
+
+<!-- Toggle período -->
+<div class="toolbar mb-24">
+  <div class="filter-tabs" id="periodo-tabs">
+    <button class="filter-tab active" onclick="setPeriodo(this,'mes')">Mes</button>
+    <button class="filter-tab" onclick="setPeriodo(this,'semana')">Semana</button>
+    <button class="filter-tab" onclick="setPeriodo(this,'3meses')">3 meses</button>
+  </div>
+</div>
+
+<!-- KPIs -->
+<div class="kpi-grid mb-24" id="kpi-row"></div>
+
+<!-- Gráfico: despachos por día -->
+<div class="card mb-24">
+  <div class="card-title"><i class="bi bi-truck"></i> Despachos por día</div>
+  <div class="chart-wrap"><canvas id="chart-dias"></canvas></div>
+</div>
+
+<!-- Por segmento -->
+<div class="card">
+  <div class="card-title"><i class="bi bi-pie-chart"></i> Por segmento</div>
+  <div id="tabla-canal" style="padding:.75rem 1rem"></div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+let periodo = 'mes';
+let chartDias;
+
+const C = { success:'#4ab870', warning:'#e0a832', accent:'#C8312E', info:'#6aade8' };
+
+function setPeriodo(btn, v) {
+  document.querySelectorAll('#periodo-tabs .filter-tab').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  periodo = v;
+  loadAll();
+}
+
+async function loadAll() {
+  const d = await api('GET', `/api/reportes/despacho?periodo=${periodo}`);
+  const k = d.kpis;
+  const tasaColor = k.tasa_pct >= 80 ? C.success : k.tasa_pct >= 50 ? C.warning : C.accent;
+
+  // KPIs
+  document.getElementById('kpi-row').innerHTML = [
+    { icon:'bi-truck',         label:'Total despachos',   val: k.total,           color: C.info },
+    { icon:'bi-check-circle',  label:'Despachados',       val: k.despachados,     color: C.success },
+    { icon:'bi-clock-history', label:'Pendientes',        val: k.pendientes,      color: k.pendientes > 0 ? C.warning : C.success },
+    { icon:'bi-percent',       label:'Tasa cumplimiento', val: k.tasa_pct + '%',  color: tasaColor },
+  ].map(x => `<div class="kpi-card">
+    <div class="kpi-label"><i class="bi ${x.icon}" style="color:${x.color}"></i> ${x.label}</div>
+    <div class="kpi-value">${x.val}</div>
+  </div>`).join('');
+
+  // Gráfico barras apiladas por día
+  const labels = d.por_dia.map(r => {
+    const dt = new Date(r.fecha + 'T12:00:00');
+    return dt.toLocaleDateString('es-CL', {day:'numeric', month:'short'});
+  });
+  if (chartDias) chartDias.destroy();
+  chartDias = new Chart(document.getElementById('chart-dias'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { label:'Despachado',     data: d.por_dia.map(r => r.despachados),
+          backgroundColor: C.success + '99', borderColor: C.success, borderWidth:1 },
+        { label:'En preparación', data: d.por_dia.map(r => r.preparacion),
+          backgroundColor: C.info + '66', borderColor: C.info, borderWidth:1 },
+        { label:'Pendiente',      data: d.por_dia.map(r => r.pendientes),
+          backgroundColor: C.warning + '99', borderColor: C.warning, borderWidth:1 },
+      ]
+    },
+    options: {
+      responsive:true, maintainAspectRatio:false,
+      plugins: {
+        legend:{ display:true, position:'top', labels:{ color:'#c9d1d9', font:{size:11} } }
+      },
+      scales: {
+        x: { stacked:true, grid:{ color:'rgba(48,54,61,.6)' }, ticks:{ color:'#8b949e', font:{size:11} } },
+        y: { stacked:true, grid:{ color:'rgba(48,54,61,.6)' }, ticks:{ color:'#8b949e', font:{size:11} } }
+      }
+    }
+  });
+
+  // Tabla por segmento
+  const totalSeg = d.por_canal.reduce((s, r) => s + r.total, 0) || 1;
+  document.getElementById('tabla-canal').innerHTML = d.por_canal.map(r => {
+    const pctSeg = (r.total / totalSeg * 100).toFixed(0);
+    const tasaSeg = r.total ? Math.round(r.despachados / r.total * 100) : 0;
+    const c = tasaSeg >= 80 ? C.success : tasaSeg >= 50 ? C.warning : C.accent;
+    return `<div class="flex-between mb-8">
+      <span style="font-weight:600">${r.segmento}</span>
+      <span style="display:flex;gap:1.5rem;align-items:center">
+        <span style="color:var(--muted);font-size:.8rem">${r.total} despachos (${pctSeg}%)</span>
+        <span style="color:${c};font-weight:700;width:3.5rem;text-align:right">${tasaSeg}%</span>
+      </span>
+    </div>`;
+  }).join('') || '<div style="color:var(--muted);font-size:.85rem">Sin despachos en el período</div>';
+}
+
+loadAll();
+</script>
+{% endblock %}

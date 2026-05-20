@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+{% block title %}Resumen — Aurora Bakers{% endblock %}
+{% block page_title %}Resumen{% endblock %}
+{% block content %}
+
+<!-- Toggle período -->
+<div class="toolbar mb-24">
+  <div class="filter-tabs" id="periodo-tabs">
+    <button class="filter-tab" onclick="setPeriodo(this,'hoy')">Hoy</button>
+    <button class="filter-tab active" onclick="setPeriodo(this,'semana')">Semana</button>
+    <button class="filter-tab" onclick="setPeriodo(this,'mes')">Mes</button>
+  </div>
+</div>
+
+<!-- Fila 1: KPIs ventas -->
+<div class="kpi-grid mb-24" id="kpi-ventas"></div>
+
+<!-- Fila 2: Por canal -->
+<div class="kpi-grid mb-24" id="kpi-canales"></div>
+
+<!-- Fila 3: Finanzas -->
+<div class="kpi-grid mb-24" id="kpi-finanzas"></div>
+
+<!-- Fila 4: Operaciones -->
+<div class="kpi-grid mb-24" id="kpi-ops"></div>
+
+<!-- Alertas stock bajo -->
+<div id="alerta-stock" style="display:none" class="mb-24">
+  <div class="card">
+    <div class="card-title" style="color:var(--warning)">
+      <i class="bi bi-exclamation-triangle-fill"></i> Stock bajo
+    </div>
+    <div id="stock-lista"></div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+let periodo = 'semana';
+
+const CANAL_LABEL = { mayorista:'Mayorista', suscripcion:'Suscripción', pos:'POS / Local', online:'Online' };
+const CANAL_ICON  = { mayorista:'bi-shop', suscripcion:'bi-calendar-check', pos:'bi-cash-register', online:'bi-globe' };
+const CANAL_COLOR = { mayorista:'#6aade8', suscripcion:'#4ab870', pos:'#C8312E', online:'#a855f7' };
+
+function setPeriodo(btn, v) {
+  document.querySelectorAll('#periodo-tabs .filter-tab').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  periodo = v;
+  loadAll();
+}
+
+function pct(curr, prev) {
+  if (!prev) return '';
+  const p = ((curr - prev) / prev * 100).toFixed(1);
+  const up = curr >= prev;
+  return `<span class="${up ? 'up' : 'down'}">${up ? '▲' : '▼'} ${Math.abs(p)}%</span>`;
+}
+
+function kpiCard(icon, label, value, sub, color) {
+  return `<div class="kpi-card">
+    <div class="kpi-label"><i class="bi ${icon}" style="color:${color || 'var(--accent)'}"></i> ${label}</div>
+    <div class="kpi-value">${value}</div>
+    ${sub ? `<div class="kpi-sub">${sub}</div>` : ''}
+  </div>`;
+}
+
+async function loadAll() {
+  const d = await api('GET', `/api/reportes/resumen?periodo=${periodo}`);
+  const periodoLabel = { hoy:'vs ayer', semana:'vs sem. anterior', mes:'vs mes anterior' }[periodo] || '';
+
+  // Fila 1: KPIs ventas
+  document.getElementById('kpi-ventas').innerHTML = [
+    kpiCard('bi-currency-dollar', 'Ventas hoy',      clp(d.ventas_hoy),      pct(d.ventas_hoy, d.ventas_ayer) + ' vs ayer', '#C8312E'),
+    kpiCard('bi-graph-up',        'Ventas período',  clp(d.ventas_periodo),  pct(d.ventas_periodo, d.ventas_prev) + ' ' + periodoLabel, '#C8956B'),
+    kpiCard('bi-calculator',      'Ticket promedio', clp(d.ticket),          `${d.count_periodo} ventas`, '#e0a832'),
+    kpiCard('bi-calendar-check',  'Suscripciones',   d.suscripciones_activas,'activas', '#4ab870'),
+  ].join('');
+
+  // Fila 2: Por canal
+  const totalCanal = d.por_canal.reduce((s, c) => s + c.total, 0) || 1;
+  const canalesOrden = ['pos', 'online', 'suscripcion', 'mayorista'];
+  const canalMap = Object.fromEntries(d.por_canal.map(c => [c.segmento, c]));
+  document.getElementById('kpi-canales').innerHTML = canalesOrden.map(seg => {
+    const c = canalMap[seg] || { total: 0, count: 0 };
+    const pctSeg = (c.total / totalCanal * 100).toFixed(0);
+    return kpiCard(
+      CANAL_ICON[seg],
+      CANAL_LABEL[seg],
+      clp(c.total),
+      `${c.count || 0} ventas · ${pctSeg}%`,
+      CANAL_COLOR[seg]
+    );
+  }).join('');
+
+  // Fila 3: Finanzas
+  const resColor = d.resultado >= 0 ? '#4ab870' : '#e85555';
+  document.getElementById('kpi-finanzas').innerHTML = [
+    kpiCard('bi-check-circle',   'Ingresos cobrados', clp(d.ingresos_cobrados), 'en el período', '#4ab870'),
+    kpiCard('bi-cash-coin',      'Gastos',            clp(d.gastos),            'en el período', '#e85555'),
+    kpiCard('bi-bar-chart-line', 'Resultado',         clp(d.resultado),         d.resultado >= 0 ? 'positivo' : 'negativo', resColor),
+    kpiCard('bi-clock-history',  'Por cobrar',        clp(d.por_cobrar),        'total pendiente', '#e0a832'),
+  ].join('');
+
+  // Fila 4: Operaciones
+  document.getElementById('kpi-ops').innerHTML = [
+    kpiCard('bi-fire',  'Plan producción hoy',     d.prod_planificadas_hoy,   'unidades planificadas', '#e0a832'),
+    kpiCard('bi-truck', 'Despachos pendientes hoy', d.despachos_pendientes_hoy, 'para hoy',
+            d.despachos_pendientes_hoy > 0 ? '#e85555' : '#4ab870'),
+  ].join('');
+
+  // Stock bajo
+  if (d.stock_bajo && d.stock_bajo.length) {
+    document.getElementById('alerta-stock').style.display = '';
+    document.getElementById('stock-lista').innerHTML = d.stock_bajo.map(p =>
+      `<div class="flex-between mb-8">
+        <span><i class="bi bi-basket"></i> ${p.nombre}</span>
+        <span style="color:var(--warning);font-weight:600">${p.stock} und</span>
+      </div>`
+    ).join('');
+  } else {
+    document.getElementById('alerta-stock').style.display = 'none';
+  }
+}
+
+loadAll();
+</script>
+{% endblock %}

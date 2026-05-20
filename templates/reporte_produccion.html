@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block title %}Reporte Producción — Aurora Bakers{% endblock %}
+{% block page_title %}Reporte Producción{% endblock %}
+{% block content %}
+
+<!-- Toggle período -->
+<div class="toolbar mb-24">
+  <div class="filter-tabs" id="periodo-tabs">
+    <button class="filter-tab active" onclick="setPeriodo(this,'mes')">Mes</button>
+    <button class="filter-tab" onclick="setPeriodo(this,'semana')">Semana</button>
+    <button class="filter-tab" onclick="setPeriodo(this,'3meses')">3 meses</button>
+  </div>
+</div>
+
+<!-- KPIs -->
+<div class="kpi-grid mb-24" id="kpi-row"></div>
+
+<!-- Gráfico: unidades por día -->
+<div class="card mb-24">
+  <div class="card-title"><i class="bi bi-graph-up"></i> Unidades por día</div>
+  <div class="chart-wrap"><canvas id="chart-dias"></canvas></div>
+</div>
+
+<!-- Tabla por producto -->
+<div class="card">
+  <div class="card-title"><i class="bi bi-table"></i> Por producto</div>
+  <div style="overflow-x:auto">
+    <table class="rp-table" style="width:100%;border-collapse:collapse">
+      <thead><tr>
+        <th>Producto</th>
+        <th class="right">Planificado</th>
+        <th class="right">Producido</th>
+        <th class="right">Cumplimiento</th>
+      </tr></thead>
+      <tbody id="tabla-prods"></tbody>
+    </table>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+let periodo = 'mes';
+let chartDias;
+
+const C = { accent:'#C8312E', success:'#4ab870', warning:'#e0a832', info:'#6aade8' };
+
+function setPeriodo(btn, v) {
+  document.querySelectorAll('#periodo-tabs .filter-tab').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  periodo = v;
+  loadAll();
+}
+
+async function loadAll() {
+  const d = await api('GET', `/api/reportes/produccion?periodo=${periodo}`);
+  const k = d.kpis;
+
+  // KPIs
+  document.getElementById('kpi-row').innerHTML = [
+    { icon:'bi-list-check',  label:'Planificado',  val: k.total_planificado + ' und', color: C.info },
+    { icon:'bi-check2-all',  label:'Producido',    val: k.total_producido + ' und',  color: C.success },
+    { icon:'bi-percent',     label:'Cumplimiento', val: k.cumplimiento_pct + '%',
+      color: k.cumplimiento_pct >= 80 ? C.success : C.warning },
+    { icon:'bi-trophy',      label:'Top producto', val: k.producto_top || '—',        color: C.accent },
+  ].map(x => `<div class="kpi-card">
+    <div class="kpi-label"><i class="bi ${x.icon}" style="color:${x.color}"></i> ${x.label}</div>
+    <div class="kpi-value" style="font-size:1.1rem">${x.val}</div>
+  </div>`).join('');
+
+  // Gráfico barras agrupadas por día
+  const labels = d.por_dia.map(r => {
+    const dt = new Date(r.fecha + 'T12:00:00');
+    return dt.toLocaleDateString('es-CL', {day:'numeric', month:'short'});
+  });
+  if (chartDias) chartDias.destroy();
+  chartDias = new Chart(document.getElementById('chart-dias'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { label:'Planificado', data: d.por_dia.map(r => r.planificado),
+          backgroundColor: C.info + '66', borderColor: C.info, borderWidth:1, borderRadius:3 },
+        { label:'Producido',   data: d.por_dia.map(r => r.producido),
+          backgroundColor: C.success + '99', borderColor: C.success, borderWidth:1, borderRadius:3 },
+      ]
+    },
+    options: {
+      responsive:true, maintainAspectRatio:false,
+      plugins: { legend:{ display:true, position:'top',
+        labels:{ color:'#c9d1d9', font:{size:11} } } },
+      scales: {
+        x: { grid:{ color:'rgba(48,54,61,.6)' }, ticks:{ color:'#8b949e', font:{size:11} } },
+        y: { grid:{ color:'rgba(48,54,61,.6)' }, ticks:{ color:'#8b949e', font:{size:11} },
+             title:{ display:true, text:'Unidades', color:'#8b949e', font:{size:11} } }
+      }
+    }
+  });
+
+  // Tabla por producto
+  document.getElementById('tabla-prods').innerHTML = d.por_producto.map(p => {
+    const cum = p.planificado ? Math.round(p.producido / p.planificado * 100) : 0;
+    const color = cum >= 80 ? C.success : cum >= 50 ? C.warning : C.accent;
+    return `<tr>
+      <td>${p.nombre_producto}</td>
+      <td class="right">${p.planificado}</td>
+      <td class="right">${p.producido}</td>
+      <td class="right" style="color:${color};font-weight:600">${cum}%</td>
+    </tr>`;
+  }).join('') || `<tr><td colspan="4" style="text-align:center;padding:2rem;color:var(--muted)">Sin datos en el período</td></tr>`;
+}
+
+loadAll();
+</script>
+<style>
+.right { text-align:right !important; }
+.rp-table th { text-align:left;font-size:.7rem;font-weight:700;text-transform:uppercase;
+  letter-spacing:.05em;color:var(--muted);padding:.5rem .75rem;border-bottom:2px solid var(--border); }
+.rp-table td { padding:.6rem .75rem;border-bottom:1px solid var(--border);color:var(--text);vertical-align:middle; }
+.rp-table tr:last-child td { border-bottom:none; }
+.rp-table tr:hover td { background:var(--hover,rgba(0,0,0,.03)); }
+</style>
+{% endblock %}
