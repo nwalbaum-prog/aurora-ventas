@@ -489,6 +489,20 @@ def _col_exists(c, table, col):
 
 def init_db():
     with db() as c:
+        # ── Sucursales (multi-local) ─────────────────────────────────────────
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS sucursales (
+                id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                nombre    TEXT    NOT NULL,
+                direccion TEXT    NOT NULL DEFAULT '',
+                activa    INTEGER NOT NULL DEFAULT 1
+            )
+        """)
+        if c.execute("SELECT COUNT(*) FROM sucursales").fetchone()[0] == 0:
+            c.executemany(
+                "INSERT INTO sucursales (nombre, direccion) VALUES (?,?)",
+                [('Recoleta', ''), ('Local 2', '')]
+            )
         c.executescript("""
             CREATE TABLE IF NOT EXISTS productos (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -534,7 +548,8 @@ def init_db():
                 con_despacho     INTEGER NOT NULL DEFAULT 1,
                 tipo_cliente     TEXT    NOT NULL DEFAULT 'CLIENTE',
                 estado_pago      TEXT    NOT NULL DEFAULT 'PENDIENTE',
-                estado_despacho  TEXT    NOT NULL DEFAULT 'PENDIENTE'
+                estado_despacho  TEXT    NOT NULL DEFAULT 'PENDIENTE',
+                sucursal_id      INTEGER NOT NULL DEFAULT 1
             );
             CREATE TABLE IF NOT EXISTS venta_items (
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -718,6 +733,12 @@ def init_db():
             ("crm_leads", "score_fit",                 "ALTER TABLE crm_leads ADD COLUMN score_fit INTEGER NOT NULL DEFAULT 0"),
             ("crm_leads", "nota_degustacion",          "ALTER TABLE crm_leads ADD COLUMN nota_degustacion TEXT NOT NULL DEFAULT ''"),
             ("crm_leads", "fecha_degustacion",         "ALTER TABLE crm_leads ADD COLUMN fecha_degustacion TEXT NOT NULL DEFAULT ''"),
+            # Multi-local
+            ("ventas",         "sucursal_id", "ALTER TABLE ventas ADD COLUMN sucursal_id INTEGER NOT NULL DEFAULT 1"),
+            ("pos_turnos",     "sucursal_id", "ALTER TABLE pos_turnos ADD COLUMN sucursal_id INTEGER NOT NULL DEFAULT 1"),
+            ("gastos",         "sucursal_id", "ALTER TABLE gastos ADD COLUMN sucursal_id INTEGER NOT NULL DEFAULT 1"),
+            ("producto_lotes", "sucursal_id", "ALTER TABLE producto_lotes ADD COLUMN sucursal_id INTEGER NOT NULL DEFAULT 1"),
+            ("usuarios",       "sucursal_id", "ALTER TABLE usuarios ADD COLUMN sucursal_id INTEGER DEFAULT NULL"),
         ]
 
         c.execute('''CREATE TABLE IF NOT EXISTS crm_etapa_log (
@@ -783,16 +804,47 @@ def init_db():
                    VALUES (?,?,?,?,?,?,?,?)""",
                 reglas_default
             )
-        for table, col, sql in migrations:
-            if not _col_exists(c, table, col):
-                c.execute(sql)
-
-        # Backfill producto_id for productos_terminados rows that predate the FK column.
-        # Only runs while unlinked rows exist; idempotent afterwards.
         # Guard: inventario may not exist yet on first-run (created later in this function).
         _inventario_exists = c.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='inventario'"
         ).fetchone()
+
+        for table, col, sql in migrations:
+            if not _col_exists(c, table, col):
+                c.execute(sql)
+
+        # Rebuild inventario: UNIQUE(ingrediente) → UNIQUE(ingrediente, bodega, sucursal_id)
+        # para permitir stock de terminados por sucursal. Idempotente.
+        if _inventario_exists and not _col_exists(c, 'inventario', 'sucursal_id'):
+            c.executescript("""
+                CREATE TABLE inventario_new (
+                    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ingrediente           TEXT    NOT NULL,
+                    stock_kg              REAL    NOT NULL DEFAULT 0,
+                    alerta_minimo_kg      REAL    NOT NULL DEFAULT 1,
+                    proveedor             TEXT    NOT NULL DEFAULT '',
+                    precio_kg             REAL    NOT NULL DEFAULT 0,
+                    ultima_actualizacion  TEXT    NOT NULL DEFAULT (date('now')),
+                    bodega                TEXT    NOT NULL DEFAULT 'ingredientes',
+                    unidad                TEXT    NOT NULL DEFAULT 'kg',
+                    categoria             TEXT    NOT NULL DEFAULT '',
+                    subcategoria          TEXT    NOT NULL DEFAULT '',
+                    producto_id           INTEGER REFERENCES productos(id) ON DELETE SET NULL,
+                    sucursal_id           INTEGER NOT NULL DEFAULT 1,
+                    UNIQUE(ingrediente, bodega, sucursal_id)
+                );
+                INSERT INTO inventario_new
+                    (id, ingrediente, stock_kg, alerta_minimo_kg, proveedor, precio_kg,
+                     ultima_actualizacion, bodega, unidad, categoria, subcategoria, producto_id, sucursal_id)
+                SELECT id, ingrediente, stock_kg, alerta_minimo_kg, proveedor, precio_kg,
+                       ultima_actualizacion, bodega, unidad, categoria, subcategoria, producto_id, 1
+                FROM inventario;
+                DROP TABLE inventario;
+                ALTER TABLE inventario_new RENAME TO inventario;
+            """)
+
+        # Backfill producto_id for productos_terminados rows that predate the FK column.
+        # Only runs while unlinked rows exist; idempotent afterwards.
         unlinked = c.execute(
             "SELECT COUNT(*) FROM inventario WHERE bodega='productos_terminados' AND producto_id IS NULL"
         ).fetchone()[0] if _inventario_exists else 0
@@ -853,7 +905,8 @@ def init_db():
                 activo      INTEGER NOT NULL DEFAULT 1,
                 creado_en   TEXT    NOT NULL DEFAULT (datetime('now')),
                 ultimo_login TEXT   NOT NULL DEFAULT '',
-                permisos    TEXT    NOT NULL DEFAULT '[]'
+                permisos    TEXT    NOT NULL DEFAULT '[]',
+                sucursal_id INTEGER DEFAULT NULL
             )
         """)
         if not _col_exists(c, 'usuarios', 'permisos'):
@@ -1041,14 +1094,19 @@ Aurora Bakers | panypasta.cl""",
         c.executescript("""
             CREATE TABLE IF NOT EXISTS inventario (
                 id                    INTEGER PRIMARY KEY AUTOINCREMENT,
-                ingrediente           TEXT    NOT NULL UNIQUE,
+                ingrediente           TEXT    NOT NULL,
                 stock_kg              REAL    NOT NULL DEFAULT 0,
                 alerta_minimo_kg      REAL    NOT NULL DEFAULT 1,
                 proveedor             TEXT    NOT NULL DEFAULT '',
                 precio_kg             REAL    NOT NULL DEFAULT 0,
                 ultima_actualizacion  TEXT    NOT NULL DEFAULT (date('now')),
                 bodega                TEXT    NOT NULL DEFAULT 'ingredientes',
-                unidad                TEXT    NOT NULL DEFAULT 'kg'
+                unidad                TEXT    NOT NULL DEFAULT 'kg',
+                categoria             TEXT    NOT NULL DEFAULT '',
+                subcategoria          TEXT    NOT NULL DEFAULT '',
+                producto_id           INTEGER REFERENCES productos(id) ON DELETE SET NULL,
+                sucursal_id           INTEGER NOT NULL DEFAULT 1,
+                UNIQUE(ingrediente, bodega, sucursal_id)
             );
             CREATE TABLE IF NOT EXISTS recetas (
                 id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1074,7 +1132,8 @@ Aurora Bakers | panypasta.cl""",
                 monto       REAL    NOT NULL DEFAULT 0,
                 proveedor   TEXT    NOT NULL DEFAULT '',
                 comprobante TEXT    NOT NULL DEFAULT '',
-                recurrente  INTEGER NOT NULL DEFAULT 0
+                recurrente  INTEGER NOT NULL DEFAULT 0,
+                sucursal_id INTEGER NOT NULL DEFAULT 1
             );
             CREATE TABLE IF NOT EXISTS agenda (
                 id               INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1228,7 +1287,8 @@ Aurora Bakers""",
                 monto_inicial_efectivo   REAL NOT NULL DEFAULT 0,
                 fecha_cierre             TEXT,
                 monto_declarado_efectivo REAL,
-                estado                   TEXT NOT NULL DEFAULT 'abierto'
+                estado                   TEXT NOT NULL DEFAULT 'abierto',
+                sucursal_id              INTEGER NOT NULL DEFAULT 1
             );
             CREATE TABLE IF NOT EXISTS pos_ventas (
                 id             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1251,7 +1311,8 @@ Aurora Bakers""",
                 cantidad_actual   REAL    NOT NULL,
                 merma             REAL    NOT NULL DEFAULT 0,
                 notas             TEXT    NOT NULL DEFAULT '',
-                creado_en         TEXT    NOT NULL DEFAULT (datetime('now'))
+                creado_en         TEXT    NOT NULL DEFAULT (datetime('now')),
+                sucursal_id       INTEGER NOT NULL DEFAULT 1
             );
             CREATE TABLE IF NOT EXISTS lote_movimientos (
                 id        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1303,6 +1364,8 @@ Aurora Bakers""",
             CREATE INDEX IF NOT EXISTS idx_crm_leads_telefono     ON crm_leads(telefono);
             CREATE INDEX IF NOT EXISTS idx_producto_lotes_prod    ON producto_lotes(producto_id);
             CREATE INDEX IF NOT EXISTS idx_lote_movimientos_venta ON lote_movimientos(venta_id);
+            CREATE INDEX IF NOT EXISTS idx_ventas_sucursal        ON ventas(sucursal_id);
+            CREATE INDEX IF NOT EXISTS idx_producto_lotes_suc     ON producto_lotes(sucursal_id);
         """)
 
         # Backfill lotes: si productos.stock supera la suma de lotes vigentes,
