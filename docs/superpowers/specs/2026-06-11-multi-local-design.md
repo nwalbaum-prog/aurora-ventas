@@ -86,10 +86,15 @@ sucursal 1. La fila de sucursal 2 para un producto se crea on-demand
 
 - **Producción** (confirmar plan, hornear batch, carga manual, crear lote):
   siempre suma a sucursal 1 (Recoleta — único horno).
-- **Venta** (ERP, POS, entrega suscripción): descuenta inventario + lotes FIFO
-  **de la sucursal de la venta**. `_descontar_lotes_fifo` y
-  `_restaurar_lotes_venta` ganan dimensión sucursal (los movimientos ya
-  referencian lote, que tiene sucursal — restauración no cambia).
+- **Venta** (ERP, POS): descuenta inventario + lotes FIFO **de la sucursal de
+  la venta**. `_descontar_lotes_fifo` gana dimensión sucursal;
+  `_restaurar_lotes_venta` no cambia (los movimientos referencian lote, que ya
+  tiene sucursal).
+- **Entrega de suscripción**: descuenta de sucursal 1 (los despachos a
+  domicilio salen de Recoleta).
+- Nota implementación: el upsert de `api_inventario_create` usa
+  `ON CONFLICT(ingrediente)` hoy — debe actualizarse al nuevo conflict target
+  `(ingrediente, bodega, sucursal_id)` tras la reconstrucción.
 - **Traspaso**: ver sección 3.
 
 ## 3. Módulo Traspasos (nuevo)
