@@ -46,6 +46,18 @@
     <!-- Resumen y pago -->
     <div style="padding:.75rem;border-top:1px solid var(--border)">
       <div id="promos-aplicadas" style="margin-bottom:.4rem"></div>
+      <div style="display:flex;align-items:center;gap:.3rem;margin-bottom:.4rem">
+        <span style="font-size:.72rem;color:var(--muted);flex:none">Dto. manual:</span>
+        <input type="number" id="desc-pct" min="0" max="100" step="1" placeholder="%"
+               style="width:46px;font-size:.76rem;padding:.12rem .3rem;text-align:center;border:1px solid var(--border);border-radius:.25rem;background:var(--bg-3);color:var(--text)"
+               oninput="renderCarrito()">
+        <span style="font-size:.72rem;color:var(--muted)">%  ó</span>
+        <input type="number" id="desc-monto" min="0" step="100" placeholder="$"
+               style="width:58px;font-size:.76rem;padding:.12rem .3rem;text-align:center;border:1px solid var(--border);border-radius:.25rem;background:var(--bg-3);color:var(--text)"
+               oninput="renderCarrito()">
+        <button onclick="limpiarDescuentoManual()" title="Limpiar"
+                style="background:none;border:none;color:var(--text-3);cursor:pointer;font-size:.85rem;padding:0 2px;line-height:1">✕</button>
+      </div>
       <div style="display:flex;justify-content:space-between;margin-bottom:.25rem;font-size:.8rem;color:var(--text-3)">
         <span>Subtotal</span><span id="subtotal-val">$0</span>
       </div>
@@ -374,7 +386,23 @@ function calcDescuento() {
       }
     }
   }
+  // Descuento manual
+  const pctManual   = parseFloat(document.getElementById('desc-pct')?.value)   || 0;
+  const montoManual = parseFloat(document.getElementById('desc-monto')?.value) || 0;
+  if (pctManual > 0) {
+    const d = Math.round(subtotal * pctManual / 100);
+    descuento += d; detalle.push(`Dto. manual ${pctManual}%: -${fmt(d)}`);
+  } else if (montoManual > 0) {
+    descuento += montoManual; detalle.push(`Dto. manual: -${fmt(montoManual)}`);
+  }
+
   return { descuento: Math.max(0, descuento), detalle };
+}
+
+function limpiarDescuentoManual() {
+  document.getElementById('desc-pct').value   = '';
+  document.getElementById('desc-monto').value = '';
+  renderCarrito();
 }
 
 // ── Lotes FIFO override ───────────────────────────────────────────────────────
@@ -500,6 +528,8 @@ function nuevaVenta() {
   document.getElementById('btn-ef').style.background    = 'var(--bg-3)';
   document.getElementById('btn-tj').style.background    = 'var(--bg-3)';
   document.getElementById('monto-ef-wrap').style.display = 'none';
+  document.getElementById('desc-pct').value             = '';
+  document.getElementById('desc-monto').value           = '';
   renderCarrito();
   document.getElementById('search-input').focus();
 }

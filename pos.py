@@ -213,11 +213,11 @@ def api_pos_productos():
     prods_data = []
     for p in productos:
         d = dict(p)
-        d['sin_stock'] = d['stock'] == 0
+        d['sin_stock'] = d['stock'] <= 0
         prods_data.append(d)
     return jsonify({
         'productos':  prods_data,
-        'frecuentes': [dict(f) | {'sin_stock': f['stock'] == 0} for f in frecuentes_rows]
+        'frecuentes': [dict(f) | {'sin_stock': f['stock'] <= 0} for f in frecuentes_rows]
     })
 
 
@@ -454,21 +454,24 @@ def api_pos_venta():
         )
         venta_id = cur.lastrowid
 
+        import app as _app_mod
         for item in items:
             c.execute(
                 "INSERT INTO venta_items (venta_id,producto_id,cantidad,precio_unitario) VALUES (?,?,?,?)",
                 (venta_id, item['producto_id'], float(item['cantidad']), float(item['precio_unitario']))
             )
-            # Descontar stock de inventario y productos (ambos counters en sync)
+            # Descontar stock: inventario, productos y lotes FIFO (3 counters en sync).
+            # Sin clamp: simétrico con la restauración al editar/borrar la venta.
             c.execute(
-                """UPDATE inventario SET stock_kg=MAX(0,stock_kg-?), ultima_actualizacion=date('now')
+                """UPDATE inventario SET stock_kg=stock_kg-?, ultima_actualizacion=date('now')
                    WHERE bodega='productos_terminados' AND producto_id=?""",
                 (float(item['cantidad']), item['producto_id'])
             )
             c.execute(
-                "UPDATE productos SET stock=MAX(0, stock-?) WHERE id=?",
+                "UPDATE productos SET stock=stock-? WHERE id=?",
                 (float(item['cantidad']), item['producto_id'])
             )
+            _app_mod._descontar_lotes_fifo(c, int(item['producto_id']), float(item['cantidad']), venta_id)
 
         pv_cur = c.execute(
             """INSERT INTO pos_ventas (turno_id,venta_id,metodo_pago,monto_efectivo,monto_tarjeta,vuelto,boleta_estado)

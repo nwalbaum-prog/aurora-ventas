@@ -3,6 +3,7 @@
 /* Paleta extendida: Horno #e17d34 · Sol #e8b036 · Cielo #4995aa · Oliva #729763 */
 /* Tipografía: Courier Prime 400/700 (Google Fonts) */
 @import url('https://fonts.googleapis.com/css2?family=Courier+Prime:ital,wght@0,400;0,700;1,400&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Averia+Sans+Libre:wght@300;400;700&display=swap');
 
 :root {
   /* ── Fondos — inspirados en Miga ────────────────────────── */
@@ -45,13 +46,39 @@
   --green:  #527a3b;
   --blue:   #2d7d96;
   --primary: #d41e2f;
+
+  /* ── Font families ───────────────────────────────────────── */
+  --font-ui:   'Inter', system-ui, -apple-system, sans-serif;
+  --font-mark: 'Courier Prime', 'Courier New', Courier, monospace;
+  --font-lema: 'Averia Sans Libre', cursive;
+
+  /* ── Extended surfaces ───────────────────────────────────── */
+  --bg-elev:   #ffffff;
+  --bg-sunken: #ede8df;
+  --bg-hover:  rgba(212,30,47,.04);
+  --bg-active: rgba(212,30,47,.08);
+
+  /* ── Shadows ─────────────────────────────────────────────── */
+  --sh-xs:    0 1px 2px rgba(0,0,0,.06);
+  --sh-sm:    0 1px 3px rgba(0,0,0,.10), 0 1px 2px rgba(0,0,0,.06);
+  --sh-md:    0 4px 6px rgba(0,0,0,.07), 0 2px 4px rgba(0,0,0,.05);
+  --sh-lg:    0 10px 15px rgba(0,0,0,.10), 0 4px 6px rgba(0,0,0,.05);
+  --sh-pop:   0 20px 25px rgba(0,0,0,.15), 0 10px 10px rgba(0,0,0,.04);
+  --sh-fuego: 0 4px 14px rgba(212,30,47,.35);
+
+  /* ── Radii tokens ────────────────────────────────────────── */
+  --r-xs:   4px;
+  --r-sm:   6px;
+  --r-lg:   12px;
+  --r-xl:   16px;
+  --r-full: 9999px;
 }
 
 *,*::before,*::after { box-sizing:border-box; margin:0; padding:0; }
 
 body {
   background:var(--bg); color:var(--text);
-  font-family:'Courier Prime','Courier New',Courier,monospace;
+  font-family:var(--font-ui);
   font-size:13.5px; line-height:1.55;
 }
 a { color:inherit; text-decoration:none; }
@@ -674,4 +701,160 @@ input:focus, select:focus, textarea:focus {
 .kpi-card:hover {
   border-top-color: var(--accent);
   box-shadow: 0 3px 12px rgba(0,0,0,.07);
+}
+
+/* ══════════════════════════════════════════════════════════
+   DESIGN SYSTEM 2.0 — Handoff 2026-05-20
+   ══════════════════════════════════════════════════════════ */
+
+/* ── Dark mode ────────────────────────────────────────────── */
+[data-theme="dark"] {
+  --bg:         #0d0a07;
+  --bg-card:    #1a1410;
+  --bg-input:   #211a13;
+  --border:     rgba(255,255,255,.10);
+  --text:       #f0ebe2;
+  --muted:      rgba(240,235,226,.45);
+  --bg-elev:    #211a13;
+  --bg-sunken:  #080604;
+  --bg-hover:   rgba(212,30,47,.08);
+  --bg-active:  rgba(212,30,47,.14);
+  --bg-2:       #1a1410;
+  --bg-3:       #211a13;
+  --text-2:     #e0d8cc;
+  --text-3:     rgba(240,235,226,.50);
+  --accent-dim: rgba(212,30,47,.15);
+  --aurora-dim: rgba(225,125,52,.12);
+  --success-dim: rgba(114,151,99,.12);
+  --warning-dim: rgba(232,176,54,.12);
+  --danger-dim:  rgba(212,30,47,.12);
+  --info-dim:    rgba(73,149,170,.12);
+}
+[data-theme="dark"] .topbar        { background:#1a1410; border-color:rgba(255,255,255,.08); }
+[data-theme="dark"] thead th       { background:#211a13; }
+[data-theme="dark"] .card-header   { background:#211a13; }
+[data-theme="dark"] .filter-tabs   { background:#211a13; }
+[data-theme="dark"] input[type="date"] { color-scheme:dark; }
+[data-theme="dark"] .skeleton      { background:#211a13; }
+[data-theme="dark"] .skeleton-row  { background:linear-gradient(90deg,#211a13 25%,#2a2018 50%,#211a13 75%); background-size:200% 100%; }
+
+/* ── Density ──────────────────────────────────────────────── */
+[data-density="compact"] { font-size:12.5px; }
+[data-density="compact"] .btn      { padding:4px 10px; font-size:12px; }
+[data-density="compact"] .kpi-card { padding:12px 14px; }
+[data-density="compact"] tbody td,
+[data-density="compact"] tbody th  { padding:6px 10px; }
+[data-density="cozy"]    { font-size:14px; }
+[data-density="cozy"]    .btn      { padding:10px 18px; }
+[data-density="cozy"]    .kpi-card { padding:22px 24px; }
+[data-density="cozy"]    tbody td,
+[data-density="cozy"]    tbody th  { padding:13px 16px; }
+
+/* ── Topbar redesign ──────────────────────────────────────── */
+.topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 20px 0 14px;
+}
+.topbar-left {
+  display: flex; align-items: center; gap: 10px;
+}
+.topbar-right {
+  display: flex; align-items: center; gap: 6px;
+}
+.topbar h1 {
+  font-family: var(--font-mark);
+  font-size: 15px; font-weight: 700; letter-spacing: -.3px; color: var(--text);
+}
+.topbar-toggle {
+  background: none; border: none; cursor: pointer;
+  color: var(--muted); font-size: 19px;
+  padding: 4px 6px; border-radius: var(--r);
+  display: flex; align-items: center; transition: color .15s, background .15s;
+  line-height: 1;
+}
+.topbar-toggle:hover { color: var(--text); background: var(--bg-hover); }
+.topbar-date { font-size: 11.5px; color: var(--muted); white-space: nowrap; margin-right: 4px; }
+.topbar-search-btn {
+  display: flex; align-items: center; gap: 7px;
+  padding: 5px 10px; border-radius: var(--r);
+  border: 1px solid var(--border); background: var(--bg-input);
+  color: var(--muted); font-size: 12.5px; cursor: pointer;
+  font-family: var(--font-ui); transition: border-color .15s, color .15s;
+  white-space: nowrap;
+}
+.topbar-search-btn:hover { border-color: var(--muted); color: var(--text); }
+.topbar-search-btn kbd {
+  font-size: 10px; padding: 1px 5px; border-radius: 3px;
+  background: var(--bg); border: 1px solid var(--border);
+  color: var(--muted); font-family: inherit;
+}
+.topbar-icon-btn {
+  width: 32px; height: 32px; border-radius: var(--r);
+  border: none; background: none; cursor: pointer;
+  color: var(--muted); font-size: 14px;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: color .15s, background .15s;
+}
+.topbar-icon-btn:hover { color: var(--text); background: var(--bg-hover); }
+.topbar-sep { width: 1px; height: 22px; background: var(--border); margin: 0 6px; }
+
+/* ── Sidebar user footer ──────────────────────────────────── */
+.sb-user { display: flex; align-items: center; gap: 10px; }
+.sb-avatar {
+  width: 30px; height: 30px; border-radius: 50%;
+  background: var(--accent); color: #fff;
+  font-size: 10.5px; font-weight: 700; letter-spacing: .3px;
+  font-family: var(--font-ui);
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.sb-user-name {
+  font-size: 12px; font-weight: 600;
+  color: rgba(255,255,255,.80); overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+.sb-logout {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 10.5px; color: rgba(255,255,255,.35); margin-top: 2px;
+  transition: color .15s;
+}
+.sb-logout:hover { color: rgba(255,255,255,.65); }
+
+/* ── Command palette ──────────────────────────────────────── */
+.cmd-palette-wrap {
+  align-items: flex-start !important;
+  padding-top: 14vh;
+}
+.cmd-searchbar {
+  display: flex; align-items: center; gap: 10px;
+  padding-bottom: 10px; border-bottom: 1px solid var(--border); margin-bottom: 6px;
+}
+.cmd-searchbar > i { color: var(--muted); font-size: 15px; flex-shrink: 0; }
+.cmd-searchbar input {
+  border: none; background: none; outline: none;
+  width: 100%; font-size: 14px; color: var(--text);
+  padding: 0; font-family: inherit; box-shadow: none !important;
+}
+.cmd-searchbar kbd {
+  font-size: 10px; color: var(--muted); border: 1px solid var(--border);
+  padding: 2px 6px; border-radius: 3px; white-space: nowrap; flex-shrink: 0;
+}
+.cmd-results { max-height: 45vh; overflow-y: auto; }
+.cmd-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px; border-radius: var(--r);
+  color: var(--text); font-size: 13px; transition: background .1s;
+}
+.cmd-item:hover { background: var(--bg-hover); }
+.cmd-item i { color: var(--muted); font-size: 14px; width: 16px; flex-shrink: 0; }
+
+/* ── Mobile sidebar ───────────────────────────────────────── */
+@media (max-width: 768px) {
+  .sidebar { transform: translateX(-100%); transition: transform .25s ease; z-index: 150; }
+  .sidebar.open { transform: translateX(0); }
+  .main { margin-left: 0 !important; }
+  .topbar-search-btn span { display: none; }
+  .topbar-date { display: none; }
+}
+@media (min-width: 769px) {
+  .topbar-toggle { display: none; }
 }

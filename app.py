@@ -12,7 +12,7 @@ from datetime import date, datetime, timedelta
 from contextlib import contextmanager
 
 ANTHROPIC_API_KEY    = os.environ.get('ANTHROPIC_API_KEY', '')
-GOOGLE_PLACES_API_KEY= os.environ.get('GOOGLE_PLACES_API_KEY', 'AIzaSyA7_nd5CxsV22JmJfyhPedvxhVWAGxiBis')
+GOOGLE_PLACES_API_KEY= os.environ.get('GOOGLE_PLACES_API_KEY', '')
 
 SMTP_HOST   = os.environ.get('SMTP_HOST',  'smtp.gmail.com')
 SMTP_PORT   = int(os.environ.get('SMTP_PORT', '587'))
@@ -49,6 +49,15 @@ def _cfg(key: str, default: str = '') -> str:
     """Lee config: env var tiene prioridad, luego aurora_config.json."""
     return os.environ.get(key.upper(), '') or _load_config().get(key, default)
 
+def _limpiar_texto(s: str) -> str:
+    """Quita < y > de texto que entra desde fuentes externas (WhatsApp, Google
+    Places, IA). Los templates renderizan estos campos con innerHTML; sin esto
+    un nombre malicioso ejecuta HTML/JS en el navegador del CRM."""
+    return (s or '').replace('<', '').replace('>', '')
+
+# Fallback a aurora_config.json (gitignoreado) — nunca hardcodear la key aquí
+GOOGLE_PLACES_API_KEY = GOOGLE_PLACES_API_KEY or _cfg('google_places_api_key')
+
 def _get_or_create_inv_terminado(c, producto_id, nombre):
     """Obtiene o crea entrada en inventario para un producto terminado."""
     row = c.execute(
@@ -65,13 +74,17 @@ def _get_or_create_inv_terminado(c, producto_id, nombre):
     return cur.lastrowid
 
 
-def _auto_plan_produccion(items, c):
-    """Agrega/incrementa items en plan_produccion para el día siguiente.
+def _auto_plan_produccion(items, c, fecha_destino=None):
+    """Agrega/incrementa items en plan_produccion.
+    Planifica para fecha_destino (fecha_despacho de la venta) si es futura;
+    si no viene o ya pasó, para el día siguiente.
     items: lista de {'nombre_producto': str, 'cantidad': float}
     c: conexión SQLite activa (se ejecuta dentro de la transacción del llamador).
     """
     from datetime import date, timedelta
-    fecha = str(date.today() + timedelta(days=1))
+    hoy    = str(date.today())
+    manana = str(date.today() + timedelta(days=1))
+    fecha  = fecha_destino if (fecha_destino and fecha_destino > hoy) else manana
     for item in items:
         nombre   = item['nombre_producto']
         cantidad = max(1, round(float(item['cantidad'])))
@@ -94,6 +107,73 @@ def _auto_plan_produccion(items, c):
                 (fecha, 'P' + str(pid) if pid else nombre[:4].upper(),
                  nombre, cantidad, 'pendiente', 'Auto-venta', pid)
             )
+
+
+# ── Mayoristas B2B — helpers ──────────────────────────────────────────────────
+
+def _precio_mayorista(c, mayorista_id, producto_id) -> float:
+    """Precio de venta mayorista: precio específico > precio_mayorista > 80% del precio base."""
+    row = c.execute(
+        "SELECT precio FROM mayoristas_precios WHERE mayorista_id=? AND producto_id=? AND activo=1",
+        (mayorista_id, producto_id)
+    ).fetchone()
+    if row:
+        return float(row['precio'])
+    prod = c.execute("SELECT precio, precio_mayorista FROM productos WHERE id=?", (producto_id,)).fetchone()
+    if not prod:
+        return 0.0
+    if prod['precio_mayorista'] and float(prod['precio_mayorista']) > 0:
+        return float(prod['precio_mayorista'])
+    return round(float(prod['precio']) * 0.80, 0)
+
+
+def _calcular_score_fit(tipo_negocio: str, zona: str, notas: str = '') -> int:
+    """Score 0-8 de fit del prospecto para Aurora Bakers."""
+    score = 0
+    tipo = (tipo_negocio or '').lower()
+    notas_l = (notas or '').lower()
+    if tipo in ['restaurante', 'café', 'cafetería', 'bistró', 'deli']:
+        score += 3
+    elif tipo in ['hotel', 'catering', 'oficina', 'cowork', 'tienda gourmet']:
+        score += 2
+    if zona in COMUNAS_DESPACHO:
+        score += 2
+    if any(w in notas_l for w in ['desayuno', 'brunch', 'masa madre', 'artesanal']):
+        score += 1
+    if any(w in notas_l for w in ['panadería propia', 'panaderia propia', 'pan propio']):
+        score -= 1
+    return score
+
+
+def _deuda_mayorista(c, mayorista_id: int) -> dict:
+    """Resumen de deuda pendiente de un mayorista."""
+    rows = c.execute(
+        """SELECT monto, fecha_vencimiento FROM mayoristas_cobranza
+           WHERE mayorista_id=? AND estado IN ('PENDIENTE','VENCIDO')""",
+        (mayorista_id,)
+    ).fetchall()
+    today = str(date.today())
+    total = 0.0
+    vencida = 0.0
+    mas_antigua_dias = 0
+    for r in rows:
+        m = float(r['monto'])
+        total += m
+        fv = r['fecha_vencimiento'] or ''
+        if fv and fv < today:
+            vencida += m
+            try:
+                dias = (date.today() - date.fromisoformat(fv)).days
+                if dias > mas_antigua_dias:
+                    mas_antigua_dias = dias
+            except Exception:
+                pass
+    return {
+        'total':           round(total, 0),
+        'vencida':         round(vencida, 0),
+        'documentos':      len(rows),
+        'mas_antigua_dias': mas_antigua_dias,
+    }
 
 
 def _descontar_lotes_fifo(c, producto_id, cantidad, venta_id, lote_id_override=None):
@@ -142,6 +222,21 @@ def _descontar_lotes_fifo(c, producto_id, cantidad, venta_id, lote_id_override=N
         restante -= descontar
 
     return movimientos
+
+
+def _restaurar_lotes_venta(c, venta_id):
+    """Reversa los movimientos de lote de una venta: devuelve las unidades a sus
+    lotes originales y elimina los movimientos tipo 'venta' asociados."""
+    movs = c.execute(
+        "SELECT lote_id, cantidad FROM lote_movimientos WHERE venta_id=? AND tipo='venta'",
+        (venta_id,)
+    ).fetchall()
+    for m in movs:
+        c.execute(
+            "UPDATE producto_lotes SET cantidad_actual=cantidad_actual+? WHERE id=?",
+            (-m['cantidad'], m['lote_id'])
+        )
+    c.execute("DELETE FROM lote_movimientos WHERE venta_id=? AND tipo='venta'", (venta_id,))
 
 
 def _calcular_orden_produccion(c, fecha_horneado: str) -> dict:
@@ -337,8 +432,19 @@ BASE_DIR  = _BASE_DIR_EARLY
 _DATA_DIR = _DATA_DIR_EARLY
 DB_PATH   = os.path.join(_DATA_DIR, 'aurora.db')
 
-# API key para agentes (aurora-bakers → aurora-ventas)
-AGENT_API_KEY = os.environ.get('VENTAS_API_KEY', 'aurora_agent_2024')
+# API key para agentes (aurora-bakers → aurora-ventas).
+# Acepta VENTAS_API_KEY o AGENT_API_KEY como env var; única fuente de verdad.
+AGENT_API_KEY = (os.environ.get('VENTAS_API_KEY')
+                 or os.environ.get('AGENT_API_KEY')
+                 or 'aurora_agent_2024')
+
+# ── Mayoristas B2B — constantes ───────────────────────────────────────────────
+MAYORISTAS_ESTADOS_PEDIDO = ['PENDIENTE','CONFIRMADO','EN_PRODUCCION','DESPACHADO','ENTREGADO','CANCELADO']
+MAYORISTAS_ESTADOS_PAGO   = ['PENDIENTE','PARCIAL','PAGADO','VENCIDO']
+TIPOS_NEGOCIO_B2B = ['restaurante','café','cafetería','hotel','hostal','oficina','cowork',
+                     'catering','deli','bistró','tienda gourmet','panadería complementaria']
+COMUNAS_DESPACHO = ['Providencia','Las Condes','Vitacura','Ñuñoa','Santiago Centro',
+                    'Recoleta','Independencia','La Reina','Macul','San Miguel','Barrio Italia']
 
 # ── Clave secreta para sesiones ───────────────────────────────────────────────
 _SK_FILE = os.path.join(_DATA_DIR, '.secret_key')
@@ -485,6 +591,81 @@ def init_db():
                 nota         TEXT    NOT NULL DEFAULT '',
                 UNIQUE(semana_id, cliente_id, producto_id, dia)
             );
+            CREATE TABLE IF NOT EXISTS mayoristas (
+                id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+                nombre               TEXT    NOT NULL,
+                razon_social         TEXT    NOT NULL DEFAULT '',
+                rut                  TEXT    NOT NULL DEFAULT '',
+                giro                 TEXT    NOT NULL DEFAULT '',
+                tipo_negocio         TEXT    NOT NULL DEFAULT '',
+                encargado_nombre     TEXT    NOT NULL DEFAULT '',
+                encargado_telefono   TEXT    NOT NULL DEFAULT '',
+                encargado_email      TEXT    NOT NULL DEFAULT '',
+                telefono             TEXT    NOT NULL DEFAULT '',
+                email                TEXT    NOT NULL DEFAULT '',
+                direccion            TEXT    NOT NULL DEFAULT '',
+                zona                 TEXT    NOT NULL DEFAULT '',
+                dia_despacho_1       TEXT    NOT NULL DEFAULT '',
+                dia_despacho_2       TEXT    NOT NULL DEFAULT '',
+                volumen_semanal_panes INTEGER NOT NULL DEFAULT 0,
+                condicion_pago       TEXT    NOT NULL DEFAULT 'contado',
+                limite_credito       REAL    NOT NULL DEFAULT 0,
+                activo               INTEGER NOT NULL DEFAULT 1,
+                tiene_factura        INTEGER NOT NULL DEFAULT 0,
+                notas                TEXT    NOT NULL DEFAULT '',
+                fecha_alta           TEXT    NOT NULL DEFAULT (date('now')),
+                fecha_ultimo_pedido  TEXT    NOT NULL DEFAULT '',
+                crm_lead_id          INTEGER REFERENCES crm_leads(id) ON DELETE SET NULL
+            );
+            CREATE TABLE IF NOT EXISTS mayoristas_precios (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                mayorista_id  INTEGER REFERENCES mayoristas(id) ON DELETE CASCADE,
+                producto_id   INTEGER REFERENCES productos(id) ON DELETE CASCADE,
+                precio        REAL    NOT NULL,
+                descuento_pct REAL    NOT NULL DEFAULT 0,
+                min_unidades  INTEGER NOT NULL DEFAULT 1,
+                activo        INTEGER NOT NULL DEFAULT 1,
+                UNIQUE(mayorista_id, producto_id)
+            );
+            CREATE TABLE IF NOT EXISTS mayoristas_pedidos (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                mayorista_id    INTEGER NOT NULL REFERENCES mayoristas(id) ON DELETE RESTRICT,
+                fecha_pedido    TEXT    NOT NULL DEFAULT (date('now')),
+                fecha_entrega   TEXT    NOT NULL DEFAULT '',
+                dia_entrega     TEXT    NOT NULL DEFAULT '',
+                estado          TEXT    NOT NULL DEFAULT 'PENDIENTE',
+                subtotal        REAL    NOT NULL DEFAULT 0,
+                descuento       REAL    NOT NULL DEFAULT 0,
+                total           REAL    NOT NULL DEFAULT 0,
+                condicion_pago  TEXT    NOT NULL DEFAULT 'contado',
+                estado_pago     TEXT    NOT NULL DEFAULT 'PENDIENTE',
+                notas           TEXT    NOT NULL DEFAULT '',
+                notas_produccion TEXT   NOT NULL DEFAULT '',
+                creado_por      TEXT    NOT NULL DEFAULT ''
+            );
+            CREATE TABLE IF NOT EXISTS mayoristas_pedido_items (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                pedido_id    INTEGER NOT NULL REFERENCES mayoristas_pedidos(id) ON DELETE CASCADE,
+                producto_id  INTEGER NOT NULL REFERENCES productos(id) ON DELETE RESTRICT,
+                cantidad     INTEGER NOT NULL DEFAULT 1,
+                precio_unit  REAL    NOT NULL DEFAULT 0,
+                descuento    REAL    NOT NULL DEFAULT 0,
+                subtotal     REAL    NOT NULL DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS mayoristas_cobranza (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                mayorista_id    INTEGER NOT NULL REFERENCES mayoristas(id) ON DELETE RESTRICT,
+                pedido_id       INTEGER REFERENCES mayoristas_pedidos(id) ON DELETE SET NULL,
+                tipo_doc        TEXT    NOT NULL DEFAULT 'boleta',
+                numero_doc      TEXT    NOT NULL DEFAULT '',
+                monto           REAL    NOT NULL DEFAULT 0,
+                fecha_emision   TEXT    NOT NULL DEFAULT (date('now')),
+                fecha_vencimiento TEXT  NOT NULL DEFAULT '',
+                fecha_pago      TEXT    NOT NULL DEFAULT '',
+                estado          TEXT    NOT NULL DEFAULT 'PENDIENTE',
+                medio_pago      TEXT    NOT NULL DEFAULT '',
+                notas           TEXT    NOT NULL DEFAULT ''
+            );
         """)
 
         # Migraciones: agregar columnas que no existan en tablas previas
@@ -524,7 +705,84 @@ def init_db():
             ("agenda", "payload_json",      "ALTER TABLE agenda ADD COLUMN payload_json TEXT DEFAULT NULL"),
             ("agenda", "ejecutado_en",      "ALTER TABLE agenda ADD COLUMN ejecutado_en TEXT DEFAULT NULL"),
             ("plan_produccion", "rendimiento_real", "ALTER TABLE plan_produccion ADD COLUMN rendimiento_real REAL DEFAULT NULL"),
+            ("crm_leads", "razon_perdida", "ALTER TABLE crm_leads ADD COLUMN razon_perdida TEXT NOT NULL DEFAULT ''"),
+            ("crm_leads", "cliente_id",    "ALTER TABLE crm_leads ADD COLUMN cliente_id INTEGER REFERENCES clientes(id) ON DELETE SET NULL"),
+            ("crm_leads", "canal_origen_detalle", "ALTER TABLE crm_leads ADD COLUMN canal_origen_detalle TEXT NOT NULL DEFAULT ''"),
+            # Automatización CRM
+            ("crm_leads", "auto_discovery",       "ALTER TABLE crm_leads ADD COLUMN auto_discovery INTEGER NOT NULL DEFAULT 0"),
+            ("crm_leads", "auto_contact_estado",  "ALTER TABLE crm_leads ADD COLUMN auto_contact_estado TEXT NOT NULL DEFAULT ''"),
+            ("crm_leads", "auto_score",           "ALTER TABLE crm_leads ADD COLUMN auto_score INTEGER NOT NULL DEFAULT 0"),
+            # Módulo Mayoristas B2B — columnas nuevas en crm_leads
+            ("crm_leads", "tipo_negocio",             "ALTER TABLE crm_leads ADD COLUMN tipo_negocio TEXT NOT NULL DEFAULT ''"),
+            ("crm_leads", "volumen_estimado_semanal",  "ALTER TABLE crm_leads ADD COLUMN volumen_estimado_semanal INTEGER NOT NULL DEFAULT 0"),
+            ("crm_leads", "score_fit",                 "ALTER TABLE crm_leads ADD COLUMN score_fit INTEGER NOT NULL DEFAULT 0"),
+            ("crm_leads", "nota_degustacion",          "ALTER TABLE crm_leads ADD COLUMN nota_degustacion TEXT NOT NULL DEFAULT ''"),
+            ("crm_leads", "fecha_degustacion",         "ALTER TABLE crm_leads ADD COLUMN fecha_degustacion TEXT NOT NULL DEFAULT ''"),
         ]
+
+        c.execute('''CREATE TABLE IF NOT EXISTS crm_etapa_log (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            lead_id    INTEGER NOT NULL REFERENCES crm_leads(id) ON DELETE CASCADE,
+            etapa_from TEXT    NOT NULL DEFAULT '',
+            etapa_to   TEXT    NOT NULL DEFAULT '',
+            usuario    TEXT    NOT NULL DEFAULT '',
+            fecha      TEXT    NOT NULL DEFAULT (datetime('now'))
+        )''')
+        c.execute('''CREATE TABLE IF NOT EXISTS crm_segmentos (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            nombre        TEXT NOT NULL,
+            modulo        TEXT NOT NULL DEFAULT 'B2B',
+            filtros_json  TEXT NOT NULL DEFAULT '{}',
+            fecha_creacion TEXT NOT NULL DEFAULT (date('now'))
+        )''')
+        # ── Automatización CRM ────────────────────────────────────────────────
+        c.execute('''CREATE TABLE IF NOT EXISTS crm_automatizacion_log (
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            fecha     TEXT    NOT NULL DEFAULT (datetime('now')),
+            job       TEXT    NOT NULL DEFAULT '',
+            accion    TEXT    NOT NULL DEFAULT '',
+            lead_id   INTEGER REFERENCES crm_leads(id) ON DELETE SET NULL,
+            detalle   TEXT    NOT NULL DEFAULT '',
+            ok        INTEGER NOT NULL DEFAULT 1
+        )''')
+        c.execute('''CREATE TABLE IF NOT EXISTS crm_reglas_seguimiento (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            modulo              TEXT    NOT NULL DEFAULT 'B2B',
+            etapa               TEXT    NOT NULL,
+            dias_sin_actividad  INTEGER NOT NULL DEFAULT 3,
+            accion              TEXT    NOT NULL DEFAULT 'crear_tarea',
+            titulo_tarea        TEXT    NOT NULL DEFAULT '',
+            prioridad           TEXT    NOT NULL DEFAULT 'media',
+            cambio_temperatura  TEXT    NOT NULL DEFAULT '',
+            cambio_etapa        TEXT    NOT NULL DEFAULT '',
+            activa              INTEGER NOT NULL DEFAULT 1,
+            creado_en           TEXT    NOT NULL DEFAULT (datetime('now'))
+        )''')
+        # Seed reglas default (solo si tabla vacía)
+        if c.execute("SELECT COUNT(*) FROM crm_reglas_seguimiento").fetchone()[0] == 0:
+            reglas_default = [
+                ('B2B', 'PROSPECTO',         3,  'crear_tarea',  'Primer contacto pendiente',           'alta',   '',      ''),
+                ('B2B', 'CONTACTADO',        4,  'crear_tarea',  'Hacer seguimiento — sin respuesta',   'alta',   '',      ''),
+                ('B2B', 'CONTACTADO',        14, 'enfriar',      'Lead sin respuesta hace 14 días',     'media',  'COLD',  ''),
+                ('B2B', 'CONTACTADO',        30, 'marcar_perdido','Cerrar como perdido — no respondió', 'baja',   '',      'PERDIDO'),
+                ('B2B', 'MUESTRA_ENVIADA',   3,  'crear_tarea',  'Pedir feedback de la muestra',        'alta',   'WARM',  ''),
+                ('B2B', 'MUESTRA_ENVIADA',   10, 'crear_tarea',  'Seguimiento final post-muestra',      'alta',   '',      ''),
+                ('B2B', 'NEGOCIACION',       2,  'crear_tarea',  'Avanzar negociación — enviar propuesta','alta', 'HOT',   ''),
+                ('B2B', 'NEGOCIACION',       7,  'crear_tarea',  'Negociación estancada — llamar',      'alta',   '',      ''),
+                ('B2B', 'CONTRATO_FIRMADO',  3,  'crear_tarea',  'Iniciar onboarding',                  'alta',   '',      'ONBOARDING'),
+                ('B2B', 'ONBOARDING',        7,  'crear_tarea',  'Confirmar primera entrega',           'alta',   '',      ''),
+                ('B2B', 'CUENTA_ACTIVA',     30, 'crear_tarea',  'Check-in cuenta activa',              'media',  '',      ''),
+                ('B2B', 'EN_RIESGO',         2,  'crear_tarea',  'URGENTE — Reactivar cuenta en riesgo','alta',   'HOT',   ''),
+                ('B2C', 'NUEVO_CONTACTO',    2,  'crear_tarea',  'Convertir lead a primera compra',     'alta',   '',      ''),
+                ('B2C', 'CALIFICADO',        5,  'crear_tarea',  'Cerrar primera compra',               'alta',   '',      ''),
+                ('B2C', 'INACTIVO',          30, 'crear_tarea',  'Reactivar cliente inactivo',          'media',  '',      ''),
+            ]
+            c.executemany(
+                """INSERT INTO crm_reglas_seguimiento
+                   (modulo,etapa,dias_sin_actividad,accion,titulo_tarea,prioridad,cambio_temperatura,cambio_etapa)
+                   VALUES (?,?,?,?,?,?,?,?)""",
+                reglas_default
+            )
         for table, col, sql in migrations:
             if not _col_exists(c, table, col):
                 c.execute(sql)
@@ -580,8 +838,9 @@ def init_db():
                       WHERE i.bodega='productos_terminados' AND i.producto_id=p.id
                   )
             """)
-        # Clamp negativos en productos.stock
-        c.execute("UPDATE productos SET stock=0 WHERE stock < 0")
+        # Nota: ya no se clampean negativos en productos.stock. El descuento de
+        # ventas es simétrico con la restauración (editar/borrar venta); un stock
+        # negativo señala sobreventa real y se corrige con producción o ajuste.
 
         # Tabla de usuarios
         c.execute("""
@@ -1035,6 +1294,36 @@ Aurora Bakers""",
                 ]
             )
 
+        # Índices para columnas calientes (consultas de reportes y joins frecuentes)
+        c.executescript("""
+            CREATE INDEX IF NOT EXISTS idx_ventas_fecha           ON ventas(fecha);
+            CREATE INDEX IF NOT EXISTS idx_ventas_fecha_despacho  ON ventas(fecha_despacho);
+            CREATE INDEX IF NOT EXISTS idx_venta_items_venta      ON venta_items(venta_id);
+            CREATE INDEX IF NOT EXISTS idx_venta_items_producto   ON venta_items(producto_id);
+            CREATE INDEX IF NOT EXISTS idx_crm_leads_telefono     ON crm_leads(telefono);
+            CREATE INDEX IF NOT EXISTS idx_producto_lotes_prod    ON producto_lotes(producto_id);
+            CREATE INDEX IF NOT EXISTS idx_lote_movimientos_venta ON lote_movimientos(venta_id);
+        """)
+
+        # Backfill lotes: si productos.stock supera la suma de lotes vigentes,
+        # crear un lote de ajuste. Idempotente; repara drift histórico (ediciones
+        # directas de stock) y mantiene el tercer contador en sync.
+        desync_rows = c.execute("""
+            SELECT p.id, p.stock,
+                   COALESCE((SELECT SUM(pl.cantidad_actual) FROM producto_lotes pl
+                             WHERE pl.producto_id = p.id), 0) AS lotes
+            FROM productos p WHERE p.activo=1
+        """).fetchall()
+        for r in desync_rows:
+            diff = round((r['stock'] or 0) - r['lotes'], 3)
+            if diff > 0:
+                c.execute(
+                    """INSERT INTO producto_lotes
+                       (producto_id, fecha_elaboracion, cantidad_inicial, cantidad_actual, notas)
+                       VALUES (?, date('now'), ?, ?, 'Ajuste sincronización lotes')""",
+                    (r['id'], diff, diff)
+                )
+
 # ── Health ───────────────────────────────────────────────────────────────────
 
 @app.route('/health')
@@ -1048,20 +1337,43 @@ def health():
     return jsonify({'status': 'ok' if db_ok else 'degraded', 'db': db_ok, 'ts': datetime.now().isoformat()})
 
 
-# ── Autenticación de agentes (before_request) ────────────────────────────────
+# ── Autenticación global (before_request) ────────────────────────────────────
+
+# Rutas públicas: login, health y la pantalla de cliente del POS (2do monitor)
+_RUTAS_PUBLICAS = ('/login', '/logout', '/health', '/pos/cliente', '/api/pos/cliente/estado')
 
 @app.before_request
-def _validate_agent_key():
-    """Valida X-Agent-Key en rutas /api/agentes/*.
-    Permite acceso si: key correcta O sesión web activa (admin en navegador)."""
-    if request.path.startswith('/api/agentes/'):
-        key = request.headers.get('X-Agent-Key', '')
-        if key == AGENT_API_KEY:
-            return  # key correcta
-        if session.get('user_id'):
-            return  # sesión web activa
-        if AGENT_API_KEY:
-            return jsonify({'error': 'Unauthorized'}), 401
+def _global_auth():
+    """Toda ruta requiere sesión web o X-Agent-Key válida, salvo whitelist.
+    Con sesión activa, refresca rol/permisos desde la DB para que cambios de
+    permisos o desactivación de usuario apliquen sin re-login."""
+    p = request.path
+    if p in _RUTAS_PUBLICAS or p.startswith('/static/'):
+        return
+
+    if session.get('user_id'):
+        with db() as c:
+            u = c.execute("SELECT rol, activo, permisos FROM usuarios WHERE id=?",
+                          (session['user_id'],)).fetchone()
+        if not u or not u['activo']:
+            session.clear()
+            if p.startswith('/api/'):
+                return jsonify({'error': 'Unauthorized'}), 401
+            return redirect(url_for('page_login', next=p))
+        session['user_rol'] = u['rol']
+        permisos = _json_mod.loads(u['permisos'] or '[]')
+        if not permisos and u['rol'] != 'admin':
+            permisos = MODULOS_DEFAULT
+        session['user_permisos'] = permisos
+        return
+
+    key = request.headers.get('X-Agent-Key', '') or request.args.get('key', '')
+    if AGENT_API_KEY and key == AGENT_API_KEY:
+        return
+
+    if p.startswith('/api/'):
+        return jsonify({'error': 'Unauthorized'}), 401
+    return redirect(url_for('page_login', next=p))
 
 
 # ── Autenticación de usuarios ─────────────────────────────────────────────────
@@ -1167,6 +1479,9 @@ def page_login():
                 c.execute("UPDATE usuarios SET ultimo_login=? WHERE id=?",
                           (datetime.now().strftime('%Y-%m-%d %H:%M'), u['id']))
             next_url = request.args.get('next', '/')
+            # Solo rutas internas: evita open redirect
+            if not next_url.startswith('/') or next_url.startswith('//'):
+                next_url = '/'
             return redirect(next_url)
         error = 'Correo o contraseña incorrectos'
     return render_template('login.html', error=error)
@@ -1319,6 +1634,51 @@ def page_suscripciones(): return render_template('suscripciones.html', active='s
 @module_required('mayoristas')
 def page_mayoristas(): return render_template('mayoristas.html', active='mayoristas')
 
+@app.route('/mayoristas/clientes')
+@module_required('mayoristas')
+def page_mayoristas_clientes():
+    return render_template('mayoristas_clientes.html', active='mayoristas')
+
+@app.route('/mayoristas/clientes/<int:mid>')
+@module_required('mayoristas')
+def page_mayoristas_cliente(mid):
+    return render_template('mayoristas_cliente.html', active='mayoristas', mayorista_id=mid)
+
+@app.route('/mayoristas/pedidos')
+@module_required('mayoristas')
+def page_mayoristas_pedidos():
+    return render_template('mayoristas_pedidos.html', active='mayoristas')
+
+@app.route('/mayoristas/pedidos/<int:pid>')
+@module_required('mayoristas')
+def page_mayoristas_pedido(pid):
+    return render_template('mayoristas_pedido.html', active='mayoristas', pedido_id=pid)
+
+@app.route('/mayoristas/produccion')
+@module_required('mayoristas')
+def page_mayoristas_produccion():
+    return render_template('mayoristas_produccion.html', active='mayoristas')
+
+@app.route('/mayoristas/precios')
+@module_required('mayoristas')
+def page_mayoristas_precios():
+    return render_template('mayoristas_precios.html', active='mayoristas')
+
+@app.route('/mayoristas/cobranza')
+@module_required('mayoristas')
+def page_mayoristas_cobranza():
+    return render_template('mayoristas_cobranza.html', active='mayoristas')
+
+@app.route('/mayoristas/ingresos')
+@module_required('mayoristas')
+def page_mayoristas_ingresos():
+    return render_template('mayoristas_ingresos.html', active='mayoristas')
+
+@app.route('/mayoristas/crm')
+@module_required('mayoristas')
+def page_mayoristas_crm():
+    return render_template('mayoristas_crm.html', active='mayoristas')
+
 @app.route('/reportes')
 @module_required('reportes')
 def page_reportes():
@@ -1468,7 +1828,8 @@ def api_producto_lotes_create():
     if not prod_id or cantidad <= 0:
         return jsonify({'error': 'producto_id y cantidad requeridos'}), 400
     with db() as c:
-        if not c.execute("SELECT id FROM productos WHERE id=? AND activo=1", (prod_id,)).fetchone():
+        prod = c.execute("SELECT id, nombre FROM productos WHERE id=? AND activo=1", (prod_id,)).fetchone()
+        if not prod:
             return jsonify({'error': 'Producto no encontrado'}), 404
         c.execute(
             """INSERT INTO producto_lotes (producto_id, fecha_elaboracion, cantidad_inicial, cantidad_actual, notas)
@@ -1476,6 +1837,13 @@ def api_producto_lotes_create():
             (prod_id, fecha, cantidad, cantidad, notas)
         )
         lote_id = c.execute("SELECT last_insert_rowid()").fetchone()[0]
+        # Crear lote = entra stock: mantener los 3 contadores en sync
+        c.execute("UPDATE productos SET stock=stock+? WHERE id=?", (cantidad, prod_id))
+        inv_id = _get_or_create_inv_terminado(c, prod_id, prod['nombre'])
+        c.execute(
+            "UPDATE inventario SET stock_kg=stock_kg+?, ultima_actualizacion=date('now') WHERE id=?",
+            (cantidad, inv_id)
+        )
     return jsonify({'ok': True, 'id': lote_id}), 201
 
 @app.route('/api/producto-lotes/<int:lid>/ajustar', methods=['PUT'])
@@ -1510,15 +1878,17 @@ def api_producto_lotes_ajustar(lid):
             "INSERT INTO lote_movimientos (lote_id, tipo, cantidad, notas) VALUES (?,?,?,?)",
             (lid, tipo, delta, notas)
         )
-        # Sincronizar productos.stock e inventario.stock_kg
+        # Sincronizar productos.stock e inventario.stock_kg con el delta efectivo:
+        # si el lote se clampeó en 0, solo salió lo que realmente había.
+        delta_efectivo = nueva_cantidad - lote['cantidad_actual']
         c.execute(
-            "UPDATE productos SET stock=MAX(0, stock+?) WHERE id=?",
-            (delta, lote['producto_id'])
+            "UPDATE productos SET stock=stock+? WHERE id=?",
+            (delta_efectivo, lote['producto_id'])
         )
         c.execute(
-            """UPDATE inventario SET stock_kg=MAX(0, stock_kg+?), ultima_actualizacion=date('now')
+            """UPDATE inventario SET stock_kg=stock_kg+?, ultima_actualizacion=date('now')
                WHERE bodega='productos_terminados' AND producto_id=?""",
-            (delta, lote['producto_id'])
+            (delta_efectivo, lote['producto_id'])
         )
         lote_updated = c.execute("SELECT * FROM producto_lotes WHERE id=?", (lid,)).fetchone()
     return jsonify(dict(lote_updated))
@@ -1574,6 +1944,11 @@ def api_clientes_update(cid):
 @app.route('/api/clientes/<int:cid>', methods=['DELETE'])
 def api_clientes_delete(cid):
     with db() as c:
+        # Limpiar referencias FK antes de borrar: las ventas históricas se
+        # conservan sin cliente; suscripciones y pedidos fijos se eliminan.
+        c.execute("UPDATE ventas SET cliente_id=NULL WHERE cliente_id=?", (cid,))
+        c.execute("DELETE FROM suscripciones WHERE cliente_id=?", (cid,))
+        c.execute("DELETE FROM mayorista_ajustes WHERE cliente_id=?", (cid,))
         c.execute("DELETE FROM mayorista_pedidos WHERE cliente_id=?", (cid,))
         c.execute("DELETE FROM clientes WHERE id=?", (cid,))
         return jsonify({'ok': True})
@@ -1688,22 +2063,25 @@ def api_ventas_create():
                 "INSERT INTO venta_items (venta_id,producto_id,cantidad,precio_unitario) VALUES (?,?,?,?)",
                 (vid, i['producto_id'], float(i['cantidad']), float(i['precio_unitario']))
             )
-            # Descontar stock de inventario y productos (ambos counters en sync)
+            # Descontar stock: inventario, productos y lotes FIFO (3 counters en sync).
+            # Sin clamp MAX(0,...): el descuento debe ser simétrico con la
+            # restauración al editar/borrar la venta; negativo = sobreventa real.
             c.execute(
-                """UPDATE inventario SET stock_kg=MAX(0,stock_kg-?), ultima_actualizacion=date('now')
+                """UPDATE inventario SET stock_kg=stock_kg-?, ultima_actualizacion=date('now')
                    WHERE bodega='productos_terminados' AND producto_id=?""",
                 (float(i['cantidad']), int(i['producto_id']))
             )
             c.execute(
-                "UPDATE productos SET stock=MAX(0, stock-?) WHERE id=?",
+                "UPDATE productos SET stock=stock-? WHERE id=?",
                 (float(i['cantidad']), int(i['producto_id']))
             )
+            _descontar_lotes_fifo(c, int(i['producto_id']), float(i['cantidad']), vid)
             p = c.execute("SELECT nombre FROM productos WHERE id=?", (i['producto_id'],)).fetchone()
             if p:
                 items_plan.append({'nombre_producto': p['nombre'], 'cantidad': float(i['cantidad']),
                                    'producto_id': int(i['producto_id'])})
 
-        _auto_plan_produccion(items_plan, c)
+        _auto_plan_produccion(items_plan, c, d.get('fecha_despacho', ''))
 
         # Auto-crear suscripción si el canal es 'suscripcion' y hay cliente
         sub_id = None
@@ -1763,7 +2141,8 @@ def api_ventas_update(vid):
         # Si vienen items: reemplazar con corrección de stock
         if 'items' in d:
             items_nuevos = d['items']
-            # Restaurar stock de items anteriores
+            # Restaurar stock de items anteriores (incluye lotes)
+            _restaurar_lotes_venta(c, vid)
             for i in c.execute("SELECT producto_id, cantidad FROM venta_items WHERE venta_id=?", (vid,)).fetchall():
                 c.execute(
                     """UPDATE inventario SET stock_kg=stock_kg+?, ultima_actualizacion=date('now')
@@ -1785,14 +2164,15 @@ def api_ventas_update(vid):
                     (vid, int(i['producto_id']), cant, precio)
                 )
                 c.execute(
-                    """UPDATE inventario SET stock_kg=MAX(0,stock_kg-?), ultima_actualizacion=date('now')
+                    """UPDATE inventario SET stock_kg=stock_kg-?, ultima_actualizacion=date('now')
                        WHERE bodega='productos_terminados' AND producto_id=?""",
                     (cant, int(i['producto_id']))
                 )
                 c.execute(
-                    "UPDATE productos SET stock=MAX(0, stock-?) WHERE id=?",
+                    "UPDATE productos SET stock=stock-? WHERE id=?",
                     (cant, int(i['producto_id']))
                 )
+                _descontar_lotes_fifo(c, int(i['producto_id']), cant, vid)
                 total += cant * precio
             campos['total'] = total
 
@@ -1812,6 +2192,7 @@ def api_ventas_update(vid):
 @app.route('/api/ventas/<int:vid>', methods=['DELETE'])
 def api_ventas_delete(vid):
     with db() as c:
+        _restaurar_lotes_venta(c, vid)
         for i in c.execute("SELECT producto_id, cantidad FROM venta_items WHERE venta_id=?", (vid,)).fetchall():
             c.execute(
                 """UPDATE inventario SET stock_kg=stock_kg+?, ultima_actualizacion=date('now')
@@ -1932,21 +2313,28 @@ def api_registrar_entrega(sid):
         )
 
         try:
-            for item in json.loads(sub['productos_json'] or '[]'):
-                pid = item.get('producto_id') or item.get('id')
+            items_sub = json.loads(sub['productos_json'] or '[]')
+        except Exception as e:
+            items_sub = []
+            print(f"[suscripciones] productos_json inválido en sub {sid}: {e}")
+        for item in items_sub:
+            pid = item.get('producto_id') or item.get('id')
+            try:
                 qty = float(item.get('cantidad', 1))
-                if pid:
-                    c.execute(
-                        """UPDATE inventario SET stock_kg=MAX(0, stock_kg-?), ultima_actualizacion=date('now')
-                           WHERE bodega='productos_terminados' AND producto_id=?""",
-                        (qty, int(pid))
-                    )
-                    c.execute(
-                        "UPDATE productos SET stock=MAX(0, stock-?) WHERE id=?",
-                        (qty, int(pid))
-                    )
-        except Exception:
-            pass
+            except (TypeError, ValueError):
+                qty = 1.0
+            if not pid:
+                continue
+            c.execute(
+                """UPDATE inventario SET stock_kg=stock_kg-?, ultima_actualizacion=date('now')
+                   WHERE bodega='productos_terminados' AND producto_id=?""",
+                (qty, int(pid))
+            )
+            c.execute(
+                "UPDATE productos SET stock=stock-? WHERE id=?",
+                (qty, int(pid))
+            )
+            _descontar_lotes_fifo(c, int(pid), qty, None)
 
         ciclo_completo = nuevas_entregas >= 4
         email_sent = False
@@ -1990,70 +2378,17 @@ def _fecha_despacho_semana(dia: str) -> str:
         target += timedelta(weeks=1)
     return str(target)
 
-@app.route('/api/mayoristas', methods=['GET'])
-@login_required
-def api_mayoristas_list():
-    with db() as c:
-        clientes = c.execute(
-            "SELECT id, nombre FROM clientes WHERE tipo='MAYORISTA' AND id IN "
-            "(SELECT DISTINCT cliente_id FROM mayorista_pedidos) ORDER BY nombre"
-        ).fetchall()
-        result = []
-        for cl in clientes:
-            pedidos = c.execute(
-                "SELECT id, dia_despacho, activo FROM mayorista_pedidos WHERE cliente_id=?",
-                (cl['id'],)
-            ).fetchall()
-            dias = {}
-            for p in pedidos:
-                row = c.execute(
-                    """SELECT COUNT(*) as n,
-                              COALESCE(SUM(ml.cantidad * pr.precio_mayorista), 0) as total
-                       FROM mayorista_pedido_lineas ml
-                       JOIN productos pr ON pr.id = ml.producto_id
-                       WHERE ml.pedido_id=?""",
-                    (p['id'],)
-                ).fetchone()
-                dias[p['dia_despacho']] = {
-                    'activo': bool(p['activo']),
-                    'n_productos': row['n'],
-                    'total': float(row['total'])
-                }
-            result.append({'id': cl['id'], 'nombre': cl['nombre'], 'dias': dias})
-    return jsonify(result)
-
 @app.route('/api/mayoristas/clientes', methods=['GET'])
 @login_required
 def api_mayoristas_clientes():
-    """Lista todos los clientes tipo MAYORISTA para el dropdown."""
+    """Lista clientes de tabla legacy — usada por panel Plantillas en mayoristas_pedidos.html."""
     with db() as c:
         rows = c.execute(
             "SELECT id, nombre FROM clientes WHERE tipo='MAYORISTA' ORDER BY nombre"
         ).fetchall()
     return jsonify([dict(r) for r in rows])
 
-@app.route('/api/mayoristas', methods=['POST'])
-@login_required
-def api_mayoristas_create():
-    """Marca un cliente existente como MAYORISTA o crea uno nuevo."""
-    d = request.json or {}
-    with db() as c:
-        if d.get('cliente_id'):
-            c.execute("UPDATE clientes SET tipo='MAYORISTA' WHERE id=?", (d['cliente_id'],))
-            cid = d['cliente_id']
-        else:
-            nombre = (d.get('nombre') or '').strip()
-            if not nombre:
-                return jsonify({'error': 'Nombre requerido'}), 400
-            cur = c.execute(
-                "INSERT INTO clientes (nombre,email,telefono,direccion,notas,tipo) VALUES (?,?,?,?,?,?)",
-                (nombre, d.get('email',''), d.get('telefono',''),
-                 d.get('direccion',''), d.get('notas',''), 'MAYORISTA')
-            )
-            cid = cur.lastrowid
-    return jsonify({'id': cid}), 201
-
-@app.route('/api/mayoristas/<int:cid>/pedidos', methods=['GET'])
+@app.route('/api/mayoristas/legacy/<int:cid>/pedidos', methods=['GET'])
 @login_required
 def api_mayoristas_pedidos_get(cid):
     with db() as c:
@@ -2082,7 +2417,7 @@ def api_mayoristas_pedidos_get(cid):
             })
     return jsonify({'cliente': dict(cl), 'pedidos': pedidos})
 
-@app.route('/api/mayoristas/<int:cid>/pedidos', methods=['PUT'])
+@app.route('/api/mayoristas/legacy/<int:cid>/pedidos', methods=['PUT'])
 @login_required
 def api_mayoristas_pedidos_put(cid):
     """Reemplaza la plantilla completa de pedidos de un mayorista."""
@@ -2320,6 +2655,55 @@ def api_mayoristas_semana_estado():
         c.execute('UPDATE mayorista_semanas SET estado=? WHERE semana=?', (estado, semana))
     return jsonify({'ok': True})
 
+
+@app.route('/api/mayoristas/resumen', methods=['GET'])
+@login_required
+def api_mayoristas_resumen():
+    hoy = date.today()
+    hace4s = hoy - timedelta(weeks=4)
+    semana = _semana_iso(hoy)
+    with db() as c:
+        clientes = c.execute(
+            "SELECT COUNT(*) FROM clientes WHERE tipo='MAYORISTA'"
+        ).fetchone()[0]
+        pedidos_activos = c.execute(
+            "SELECT COUNT(DISTINCT cliente_id) FROM mayorista_pedidos WHERE activo=1"
+        ).fetchone()[0]
+        ventas_4s = c.execute(
+            "SELECT COALESCE(SUM(total),0) FROM ventas WHERE canal='MAYORISTA' AND fecha>=?",
+            (str(hace4s),)
+        ).fetchone()[0]
+        por_cobrar = c.execute(
+            "SELECT COALESCE(SUM(total),0) FROM ventas WHERE canal='MAYORISTA' AND estado_pago='PENDIENTE'"
+        ).fetchone()[0]
+        sem_row = c.execute(
+            "SELECT estado FROM mayorista_semanas WHERE semana=?", (semana,)
+        ).fetchone()
+        sem_estado = sem_row['estado'] if sem_row else 'sin_generar'
+        filas = c.execute("""
+            SELECT mp.dia_despacho as dia, cl.nombre as cliente,
+                   COUNT(mpl.id) as n_productos,
+                   COALESCE(SUM(mpl.cantidad * pr.precio_mayorista), 0) as total
+            FROM mayorista_pedidos mp
+            JOIN clientes cl ON cl.id = mp.cliente_id
+            JOIN mayorista_pedido_lineas mpl ON mpl.pedido_id = mp.id
+            JOIN productos pr ON pr.id = mpl.producto_id
+            WHERE mp.activo=1
+            GROUP BY mp.id
+            ORDER BY cl.nombre
+        """).fetchall()
+    return jsonify({
+        'clientes':        clientes,
+        'pedidos_activos': pedidos_activos,
+        'ventas_4s':       float(ventas_4s),
+        'por_cobrar':      float(por_cobrar),
+        'semana':          semana,
+        'sem_estado':      sem_estado,
+        'martes':          [dict(r) for r in filas if r['dia'] == 'martes'],
+        'jueves':          [dict(r) for r in filas if r['dia'] == 'jueves'],
+    })
+
+
 @app.route('/api/mayoristas/produccion')
 @login_required
 def api_mayoristas_produccion():
@@ -2329,7 +2713,7 @@ def api_mayoristas_produccion():
         sem = c.execute('SELECT id FROM mayorista_semanas WHERE semana=?', (semana,)).fetchone()
 
         plantillas = c.execute("""
-            SELECT mpl.producto_id, pr.nombre as producto_nombre,
+            SELECT mp.cliente_id, mpl.producto_id, pr.nombre as producto_nombre,
                    mp.dia_despacho as dia, mpl.cantidad
             FROM mayorista_pedidos mp
             JOIN mayorista_pedido_lineas mpl ON mpl.pedido_id = mp.id
@@ -2343,21 +2727,1133 @@ def api_mayoristas_produccion():
                 ajustes_map[(a['cliente_id'], a['producto_id'], a['dia'])] = dict(a)
 
         totales = {}
+        plantilla_keys = set()
         for p in plantillas:
-            key_ajuste = None
-            for a_key, a_val in ajustes_map.items():
-                if a_val['producto_id'] == p['producto_id'] and a_val['dia'] == p['dia']:
-                    key_ajuste = a_val
+            key = (p['cliente_id'], p['producto_id'], p['dia'])
+            plantilla_keys.add(key)
+            ajuste = ajustes_map.get(key)
             cantidad = float(p['cantidad'])
-            if key_ajuste:
-                if key_ajuste['cancelado']:
+            if ajuste:
+                if ajuste['cancelado']:
                     continue
-                cantidad = float(key_ajuste['cantidad'])
+                cantidad = float(ajuste['cantidad'])
             k = (p['producto_nombre'], p['dia'])
             totales[k] = totales.get(k, 0) + cantidad
 
+        # Ajustes extra sin plantilla (pedidos puntuales de la semana)
+        for key, a in ajustes_map.items():
+            if key in plantilla_keys or a['cancelado'] or float(a['cantidad']) <= 0:
+                continue
+            pr = c.execute('SELECT nombre FROM productos WHERE id=?', (a['producto_id'],)).fetchone()
+            if pr:
+                k = (pr['nombre'], a['dia'])
+                totales[k] = totales.get(k, 0) + float(a['cantidad'])
+
         result = [{'producto': k[0], 'dia': k[1], 'total': v} for k, v in sorted(totales.items())]
     return jsonify(result)
+
+# ── API: Mayoristas B2B — Clientes ───────────────────────────────────────────
+
+@app.route('/api/mayoristas', methods=['GET'])
+@login_required
+def api_may_clientes_list():
+    q     = request.args.get('q', '').strip()
+    zona  = request.args.get('zona', '')
+    tipo  = request.args.get('tipo_negocio', '')
+    activo = request.args.get('activo', '1')
+    con_deuda = request.args.get('con_deuda', '')
+    sin_pedido_dias = request.args.get('sin_pedido_dias', '')
+    order_by = request.args.get('order_by', 'nombre')
+    with db() as c:
+        sql = "SELECT * FROM mayoristas WHERE 1=1"
+        params = []
+        if activo != '':
+            sql += " AND activo=?"
+            params.append(int(activo))
+        if zona:
+            sql += " AND zona=?"
+            params.append(zona)
+        if tipo:
+            sql += " AND tipo_negocio=?"
+            params.append(tipo)
+        if q:
+            sql += " AND (nombre LIKE ? OR razon_social LIKE ? OR encargado_nombre LIKE ? OR telefono LIKE ? OR encargado_telefono LIKE ?)"
+            params += [f'%{q}%'] * 5
+        if sin_pedido_dias:
+            cutoff = str(date.today() - timedelta(days=int(sin_pedido_dias)))
+            sql += " AND (fecha_ultimo_pedido='' OR fecha_ultimo_pedido < ?)"
+            params.append(cutoff)
+        valid_orders = {'volumen_semanal_panes': 'volumen_semanal_panes DESC',
+                        'fecha_ultimo_pedido': 'fecha_ultimo_pedido DESC',
+                        'deuda': 'nombre', 'nombre': 'nombre'}
+        sql += f" ORDER BY {valid_orders.get(order_by, 'nombre')}"
+        rows = c.execute(sql, params).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            d['deuda'] = _deuda_mayorista(c, r['id'])
+            ult = c.execute(
+                "SELECT id, fecha_pedido, estado, total FROM mayoristas_pedidos WHERE mayorista_id=? ORDER BY fecha_pedido DESC LIMIT 1",
+                (r['id'],)
+            ).fetchone()
+            d['ultimo_pedido'] = dict(ult) if ult else None
+            result.append(d)
+        if order_by == 'deuda':
+            result.sort(key=lambda x: x['deuda']['total'], reverse=True)
+    return jsonify(result)
+
+
+@app.route('/api/mayoristas', methods=['POST'])
+@login_required
+def api_may_clientes_create():
+    d = request.json or {}
+    nombre = (d.get('nombre') or '').strip()
+    if not nombre:
+        return jsonify({'error': 'Nombre requerido'}), 400
+    with db() as c:
+        cur = c.execute(
+            """INSERT INTO mayoristas
+               (nombre, razon_social, rut, giro, tipo_negocio,
+                encargado_nombre, encargado_telefono, encargado_email,
+                telefono, email, direccion, zona,
+                dia_despacho_1, dia_despacho_2, volumen_semanal_panes,
+                condicion_pago, limite_credito, activo, tiene_factura, notas)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (nombre, d.get('razon_social',''), d.get('rut',''), d.get('giro',''), d.get('tipo_negocio',''),
+             d.get('encargado_nombre',''), d.get('encargado_telefono',''), d.get('encargado_email',''),
+             d.get('telefono',''), d.get('email',''), d.get('direccion',''), d.get('zona',''),
+             d.get('dia_despacho_1',''), d.get('dia_despacho_2',''), int(d.get('volumen_semanal_panes', 0)),
+             d.get('condicion_pago','contado'), float(d.get('limite_credito', 0)),
+             1 if d.get('activo', True) else 0,
+             1 if d.get('tiene_factura') else 0,
+             d.get('notas',''))
+        )
+        mid = cur.lastrowid
+    print(f"[mayoristas] Nuevo cliente B2B id={mid} nombre={nombre}")
+    return jsonify({'id': mid}), 201
+
+
+@app.route('/api/mayoristas/<int:mid>', methods=['GET'])
+@login_required
+def api_may_clientes_get(mid):
+    with db() as c:
+        m = c.execute("SELECT * FROM mayoristas WHERE id=?", (mid,)).fetchone()
+        if not m:
+            return jsonify({'error': 'No encontrado'}), 404
+        d = dict(m)
+        d['deuda'] = _deuda_mayorista(c, mid)
+        pedidos = c.execute(
+            "SELECT id, fecha_pedido, fecha_entrega, estado, total, estado_pago FROM mayoristas_pedidos WHERE mayorista_id=? ORDER BY fecha_pedido DESC LIMIT 10",
+            (mid,)
+        ).fetchall()
+        d['pedidos_recientes'] = [dict(p) for p in pedidos]
+        interacciones = c.execute(
+            """SELECT ci.id, ci.tipo, ci.asunto, ci.fecha, ci.resultado
+               FROM crm_interacciones ci
+               JOIN crm_leads cl ON cl.id = ci.lead_id
+               WHERE cl.id = (SELECT crm_lead_id FROM mayoristas WHERE id=?)
+               ORDER BY ci.fecha DESC LIMIT 20""",
+            (mid,)
+        ).fetchall()
+        d['interacciones'] = [dict(i) for i in interacciones]
+    return jsonify(d)
+
+
+@app.route('/api/mayoristas/<int:mid>', methods=['PUT'])
+@login_required
+def api_may_clientes_update(mid):
+    d = request.json or {}
+    allowed = ['nombre','razon_social','rut','giro','tipo_negocio','encargado_nombre',
+               'encargado_telefono','encargado_email','telefono','email','direccion','zona',
+               'dia_despacho_1','dia_despacho_2','volumen_semanal_panes','condicion_pago',
+               'limite_credito','activo','tiene_factura','notas']
+    sets = [f"{k}=?" for k in allowed if k in d]
+    if not sets:
+        return jsonify({'error': 'Sin campos para actualizar'}), 400
+    vals = [d[k] for k in allowed if k in d]
+    vals.append(mid)
+    with db() as c:
+        if not c.execute("SELECT id FROM mayoristas WHERE id=?", (mid,)).fetchone():
+            return jsonify({'error': 'No encontrado'}), 404
+        c.execute(f"UPDATE mayoristas SET {', '.join(sets)} WHERE id=?", vals)
+    return jsonify({'ok': True})
+
+
+@app.route('/api/mayoristas/<int:mid>', methods=['DELETE'])
+@login_required
+def api_may_clientes_delete(mid):
+    with db() as c:
+        if not c.execute("SELECT id FROM mayoristas WHERE id=?", (mid,)).fetchone():
+            return jsonify({'error': 'No encontrado'}), 404
+        c.execute("UPDATE mayoristas SET activo=0 WHERE id=?", (mid,))
+    return jsonify({'ok': True})
+
+
+@app.route('/api/mayoristas/<int:mid>/pedidos', methods=['GET'])
+@login_required
+def api_may_cliente_pedidos(mid):
+    with db() as c:
+        if not c.execute("SELECT id FROM mayoristas WHERE id=?", (mid,)).fetchone():
+            return jsonify({'error': 'No encontrado'}), 404
+        rows = c.execute(
+            "SELECT * FROM mayoristas_pedidos WHERE mayorista_id=? ORDER BY fecha_pedido DESC",
+            (mid,)
+        ).fetchall()
+        result = []
+        for r in rows:
+            p = dict(r)
+            items = c.execute(
+                """SELECT mpi.*, pr.nombre as producto_nombre
+                   FROM mayoristas_pedido_items mpi
+                   JOIN productos pr ON pr.id = mpi.producto_id
+                   WHERE mpi.pedido_id=?""",
+                (r['id'],)
+            ).fetchall()
+            p['items'] = [dict(i) for i in items]
+            result.append(p)
+    return jsonify(result)
+
+
+@app.route('/api/mayoristas/<int:mid>/cobranza', methods=['GET'])
+@login_required
+def api_may_cliente_cobranza(mid):
+    with db() as c:
+        rows = c.execute(
+            "SELECT * FROM mayoristas_cobranza WHERE mayorista_id=? ORDER BY fecha_emision DESC",
+            (mid,)
+        ).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route('/api/mayoristas/<int:mid>/deuda', methods=['GET'])
+@login_required
+def api_may_cliente_deuda(mid):
+    with db() as c:
+        if not c.execute("SELECT id FROM mayoristas WHERE id=?", (mid,)).fetchone():
+            return jsonify({'error': 'No encontrado'}), 404
+        return jsonify(_deuda_mayorista(c, mid))
+
+
+@app.route('/api/mayoristas/<int:mid>/contactar', methods=['POST'])
+@login_required
+def api_may_cliente_contactar(mid):
+    d = request.json or {}
+    canal = d.get('canal', 'whatsapp')
+    mensaje = (d.get('mensaje') or '').strip()
+    if not mensaje:
+        return jsonify({'error': 'Mensaje requerido'}), 400
+    with db() as c:
+        m = c.execute("SELECT * FROM mayoristas WHERE id=?", (mid,)).fetchone()
+        if not m:
+            return jsonify({'error': 'No encontrado'}), 404
+        if canal == 'whatsapp':
+            tel = m['encargado_telefono'] or m['telefono']
+            if not tel:
+                return jsonify({'error': 'Sin teléfono registrado'}), 400
+            ok, err = _send_whatsapp_agent(tel, mensaje)
+            if not ok:
+                return jsonify({'error': err}), 500
+        if m['crm_lead_id']:
+            c.execute(
+                """INSERT INTO crm_interacciones (lead_id, tipo, direccion, asunto, contenido, resultado)
+                   VALUES (?,?,?,?,?,?)""",
+                (m['crm_lead_id'], canal, 'saliente', 'Contacto directo', mensaje, 'enviado')
+            )
+            c.execute(
+                "UPDATE crm_leads SET fecha_ultimo_contacto=? WHERE id=?",
+                (str(date.today()), m['crm_lead_id'])
+            )
+    return jsonify({'ok': True})
+
+
+# ── API: Mayoristas B2B — Pedidos ────────────────────────────────────────────
+
+@app.route('/api/mayoristas/pedidos', methods=['GET'])
+@login_required
+def api_may_pedidos_list():
+    estado   = request.args.get('estado', '')
+    mid      = request.args.get('mayorista_id', '')
+    desde    = request.args.get('desde', '')
+    hasta    = request.args.get('hasta', '')
+    with db() as c:
+        sql = "SELECT mp.*, m.nombre as mayorista_nombre FROM mayoristas_pedidos mp JOIN mayoristas m ON m.id=mp.mayorista_id WHERE 1=1"
+        params = []
+        if estado:
+            sql += " AND mp.estado=?"
+            params.append(estado)
+        if mid:
+            sql += " AND mp.mayorista_id=?"
+            params.append(int(mid))
+        if desde:
+            sql += " AND mp.fecha_entrega>=?"
+            params.append(desde)
+        if hasta:
+            sql += " AND mp.fecha_entrega<=?"
+            params.append(hasta)
+        sql += " ORDER BY mp.fecha_entrega DESC, mp.id DESC"
+        rows = c.execute(sql, params).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route('/api/mayoristas/pedidos', methods=['POST'])
+@login_required
+def api_may_pedidos_create():
+    d = request.json or {}
+    mid = d.get('mayorista_id')
+    if not mid:
+        return jsonify({'error': 'mayorista_id requerido'}), 400
+    items_in = d.get('items', [])
+    if not items_in:
+        return jsonify({'error': 'items requeridos'}), 400
+    with db() as c:
+        m = c.execute("SELECT * FROM mayoristas WHERE id=?", (mid,)).fetchone()
+        if not m:
+            return jsonify({'error': 'Mayorista no encontrado'}), 404
+        subtotal = 0.0
+        items_calc = []
+        for it in items_in:
+            pid = int(it['producto_id'])
+            cant = int(it.get('cantidad', 1))
+            precio = _precio_mayorista(c, mid, pid)
+            desc = float(it.get('descuento', 0))
+            sub = round(precio * cant * (1 - desc / 100), 0)
+            subtotal += sub
+            items_calc.append({'producto_id': pid, 'cantidad': cant, 'precio_unit': precio, 'descuento': desc, 'subtotal': sub})
+        descuento_global = float(d.get('descuento', 0))
+        total = round(subtotal * (1 - descuento_global / 100), 0)
+        cur = c.execute(
+            """INSERT INTO mayoristas_pedidos
+               (mayorista_id, fecha_pedido, fecha_entrega, dia_entrega, estado,
+                subtotal, descuento, total, condicion_pago, estado_pago, notas, notas_produccion, creado_por)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (mid, d.get('fecha_pedido', str(date.today())), d.get('fecha_entrega',''),
+             d.get('dia_entrega',''), 'PENDIENTE',
+             subtotal, descuento_global, total,
+             d.get('condicion_pago', m['condicion_pago']),
+             'PENDIENTE', d.get('notas',''), d.get('notas_produccion',''),
+             session.get('user_nombre', ''))
+        )
+        pid_new = cur.lastrowid
+        for it in items_calc:
+            c.execute(
+                "INSERT INTO mayoristas_pedido_items (pedido_id,producto_id,cantidad,precio_unit,descuento,subtotal) VALUES (?,?,?,?,?,?)",
+                (pid_new, it['producto_id'], it['cantidad'], it['precio_unit'], it['descuento'], it['subtotal'])
+            )
+        c.execute("UPDATE mayoristas SET fecha_ultimo_pedido=? WHERE id=?", (str(date.today()), mid))
+    print(f"[mayoristas] Pedido creado id={pid_new} mayorista={mid} total={total}")
+    return jsonify({'id': pid_new, 'total': total}), 201
+
+
+@app.route('/api/mayoristas/pedidos/<int:pid>', methods=['GET'])
+@login_required
+def api_may_pedido_get(pid):
+    with db() as c:
+        p = c.execute(
+            "SELECT mp.*, m.nombre as mayorista_nombre FROM mayoristas_pedidos mp JOIN mayoristas m ON m.id=mp.mayorista_id WHERE mp.id=?",
+            (pid,)
+        ).fetchone()
+        if not p:
+            return jsonify({'error': 'No encontrado'}), 404
+        items = c.execute(
+            """SELECT mpi.*, pr.nombre as producto_nombre
+               FROM mayoristas_pedido_items mpi
+               JOIN productos pr ON pr.id = mpi.producto_id
+               WHERE mpi.pedido_id=?""",
+            (pid,)
+        ).fetchall()
+        d = dict(p)
+        d['items'] = [dict(i) for i in items]
+    return jsonify(d)
+
+
+@app.route('/api/mayoristas/pedidos/<int:pid>', methods=['PUT'])
+@login_required
+def api_may_pedido_update(pid):
+    d = request.json or {}
+    allowed = ['estado', 'notas', 'notas_produccion', 'fecha_entrega', 'dia_entrega', 'estado_pago']
+    sets = [f"{k}=?" for k in allowed if k in d]
+    if not sets:
+        return jsonify({'error': 'Sin campos para actualizar'}), 400
+    vals = [d[k] for k in allowed if k in d]
+    vals.append(pid)
+    with db() as c:
+        if not c.execute("SELECT id FROM mayoristas_pedidos WHERE id=?", (pid,)).fetchone():
+            return jsonify({'error': 'No encontrado'}), 404
+        c.execute(f"UPDATE mayoristas_pedidos SET {', '.join(sets)} WHERE id=?", vals)
+    return jsonify({'ok': True})
+
+
+@app.route('/api/mayoristas/pedidos/<int:pid>/confirmar', methods=['POST'])
+@login_required
+def api_may_pedido_confirmar(pid):
+    with db() as c:
+        p = c.execute("SELECT * FROM mayoristas_pedidos WHERE id=?", (pid,)).fetchone()
+        if not p:
+            return jsonify({'error': 'No encontrado'}), 404
+        if p['estado'] != 'PENDIENTE':
+            return jsonify({'error': f"Estado actual es {p['estado']}, no PENDIENTE"}), 400
+        items = c.execute(
+            "SELECT mpi.*, pr.nombre as nombre FROM mayoristas_pedido_items mpi JOIN productos pr ON pr.id=mpi.producto_id WHERE mpi.pedido_id=?",
+            (pid,)
+        ).fetchall()
+        # Insertar en plan_produccion para el día anterior a la entrega
+        if p['fecha_entrega']:
+            try:
+                fecha_horn = str(date.fromisoformat(p['fecha_entrega']) - timedelta(days=1))
+            except Exception:
+                fecha_horn = p['fecha_entrega']
+        else:
+            fecha_horn = str(date.today() + timedelta(days=1))
+        batch_id = f"MAYORISTA-{pid}"
+        for it in items:
+            existente = c.execute(
+                "SELECT id FROM plan_produccion WHERE fecha=? AND batch_id=? AND nombre_producto=?",
+                (fecha_horn, batch_id, it['nombre'])
+            ).fetchone()
+            if not existente:
+                c.execute(
+                    """INSERT INTO plan_produccion (fecha, codigo_producto, nombre_producto, cantidad, estado, notas, producto_id, batch_id, fecha_horneado)
+                       VALUES (?,?,?,?,?,?,?,?,?)""",
+                    (fecha_horn, f"MAY{it['producto_id']}", it['nombre'], it['cantidad'],
+                     'pendiente', f"Mayorista pedido #{pid}", it['producto_id'], batch_id, fecha_horn)
+                )
+        c.execute("UPDATE mayoristas_pedidos SET estado='CONFIRMADO' WHERE id=?", (pid,))
+        # Crear doc cobranza si tiene factura
+        m = c.execute("SELECT * FROM mayoristas WHERE id=?", (p['mayorista_id'],)).fetchone()
+        if m and m['tiene_factura']:
+            condicion = p['condicion_pago'] or m['condicion_pago']
+            dias_map = {'contado': 0, '7dias': 7, '30dias': 30}
+            dias = dias_map.get(condicion, 0)
+            fv = str(date.today() + timedelta(days=dias))
+            c.execute(
+                """INSERT INTO mayoristas_cobranza (mayorista_id, pedido_id, tipo_doc, monto, fecha_vencimiento, estado)
+                   VALUES (?,?,?,?,?,?)""",
+                (p['mayorista_id'], pid, 'factura', p['total'], fv, 'PENDIENTE')
+            )
+        # WhatsApp al encargado
+        if m:
+            tel = m['encargado_telefono'] or m['telefono']
+            if tel:
+                items_txt = '\n'.join(f"  - {it['nombre']}: {it['cantidad']} uds" for it in items)
+                msg = f"Hola {m['encargado_nombre'] or m['nombre']}, confirmamos tu pedido Aurora Bakers:\n{items_txt}\nEntrega: {p['fecha_entrega']}. Total: ${p['total']:,.0f}"
+                _send_whatsapp_agent(tel, msg)
+    print(f"[mayoristas] Pedido {pid} CONFIRMADO -- plan_produccion fecha={fecha_horn}")
+    return jsonify({'ok': True, 'batch_id': batch_id})
+
+
+@app.route('/api/mayoristas/pedidos/<int:pid>/despachar', methods=['POST'])
+@login_required
+def api_may_pedido_despachar(pid):
+    with db() as c:
+        p = c.execute("SELECT * FROM mayoristas_pedidos WHERE id=?", (pid,)).fetchone()
+        if not p:
+            return jsonify({'error': 'No encontrado'}), 404
+        if p['estado'] not in ('CONFIRMADO', 'EN_PRODUCCION'):
+            return jsonify({'error': f"Estado actual es {p['estado']}"}), 400
+        c.execute("UPDATE mayoristas_pedidos SET estado='DESPACHADO' WHERE id=?", (pid,))
+        m = c.execute("SELECT * FROM mayoristas WHERE id=?", (p['mayorista_id'],)).fetchone()
+        if m and not m['tiene_factura']:
+            c.execute(
+                """INSERT INTO mayoristas_cobranza (mayorista_id, pedido_id, tipo_doc, monto, fecha_vencimiento, estado)
+                   VALUES (?,?,?,?,?,?)""",
+                (p['mayorista_id'], pid, 'boleta', p['total'], str(date.today()), 'PENDIENTE')
+            )
+    return jsonify({'ok': True})
+
+
+@app.route('/api/mayoristas/pedidos/<int:pid>/cancelar', methods=['POST'])
+@login_required
+def api_may_pedido_cancelar(pid):
+    d = request.json or {}
+    with db() as c:
+        if not c.execute("SELECT id FROM mayoristas_pedidos WHERE id=?", (pid,)).fetchone():
+            return jsonify({'error': 'No encontrado'}), 404
+        c.execute("UPDATE mayoristas_pedidos SET estado='CANCELADO', notas=notas||? WHERE id=?",
+                  (f"\n[CANCELADO: {d.get('motivo','')}]", pid))
+    return jsonify({'ok': True})
+
+
+@app.route('/api/mayoristas/pedidos/semana', methods=['GET'])
+@login_required
+def api_may_pedidos_semana():
+    """Pedidos de la semana actual agrupados por día de entrega."""
+    hoy = date.today()
+    lunes = hoy - timedelta(days=hoy.weekday())
+    domingo = lunes + timedelta(days=6)
+    with db() as c:
+        rows = c.execute(
+            """SELECT mp.*, m.nombre as mayorista_nombre
+               FROM mayoristas_pedidos mp
+               JOIN mayoristas m ON m.id = mp.mayorista_id
+               WHERE mp.fecha_entrega BETWEEN ? AND ?
+                 AND mp.estado NOT IN ('CANCELADO')
+               ORDER BY mp.fecha_entrega, mp.id""",
+            (str(lunes), str(domingo))
+        ).fetchall()
+        result = {}
+        for r in rows:
+            dia = r['fecha_entrega'] or str(hoy)
+            if dia not in result:
+                result[dia] = []
+            p = dict(r)
+            items = c.execute(
+                "SELECT mpi.*, pr.nombre as nombre FROM mayoristas_pedido_items mpi JOIN productos pr ON pr.id=mpi.producto_id WHERE mpi.pedido_id=?",
+                (r['id'],)
+            ).fetchall()
+            p['items'] = [dict(i) for i in items]
+            result[dia].append(p)
+    return jsonify(result)
+
+
+# ── API: Mayoristas B2B — Cobranza ───────────────────────────────────────────
+
+def _verificar_vencimientos_cobranza():
+    """Marca como VENCIDO documentos cuya fecha_vencimiento ya pasó."""
+    with db() as c:
+        c.execute("""UPDATE mayoristas_cobranza SET estado='VENCIDO'
+                     WHERE estado='PENDIENTE' AND fecha_vencimiento != ''
+                     AND fecha_vencimiento < date('now')""")
+
+
+@app.route('/api/mayoristas/cobranza', methods=['GET'])
+@login_required
+def api_may_cobranza_list():
+    estado   = request.args.get('estado', '')
+    mid      = request.args.get('mayorista_id', '')
+    vencida  = request.args.get('vencida', '')
+    with db() as c:
+        sql = "SELECT mc.*, m.nombre as mayorista_nombre FROM mayoristas_cobranza mc JOIN mayoristas m ON m.id=mc.mayorista_id WHERE 1=1"
+        params = []
+        if estado:
+            sql += " AND mc.estado=?"
+            params.append(estado)
+        if mid:
+            sql += " AND mc.mayorista_id=?"
+            params.append(int(mid))
+        if vencida == '1':
+            sql += " AND mc.estado='VENCIDO'"
+        sql += " ORDER BY mc.fecha_emision DESC"
+        rows = c.execute(sql, params).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route('/api/mayoristas/cobranza', methods=['POST'])
+@login_required
+def api_may_cobranza_create():
+    d = request.json or {}
+    mid = d.get('mayorista_id')
+    if not mid:
+        return jsonify({'error': 'mayorista_id requerido'}), 400
+    with db() as c:
+        if not c.execute("SELECT id FROM mayoristas WHERE id=?", (mid,)).fetchone():
+            return jsonify({'error': 'Mayorista no encontrado'}), 404
+        cur = c.execute(
+            """INSERT INTO mayoristas_cobranza
+               (mayorista_id, pedido_id, tipo_doc, numero_doc, monto,
+                fecha_emision, fecha_vencimiento, estado, notas)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            (mid, d.get('pedido_id'), d.get('tipo_doc','boleta'), d.get('numero_doc',''),
+             float(d.get('monto', 0)), d.get('fecha_emision', str(date.today())),
+             d.get('fecha_vencimiento',''), d.get('estado','PENDIENTE'), d.get('notas',''))
+        )
+    return jsonify({'id': cur.lastrowid}), 201
+
+
+@app.route('/api/mayoristas/cobranza/<int:cob_id>', methods=['PUT'])
+@login_required
+def api_may_cobranza_update(cob_id):
+    d = request.json or {}
+    allowed = ['estado', 'numero_doc', 'fecha_pago', 'medio_pago', 'notas', 'monto']
+    sets = [f"{k}=?" for k in allowed if k in d]
+    if not sets:
+        return jsonify({'error': 'Sin campos para actualizar'}), 400
+    vals = [d[k] for k in allowed if k in d]
+    vals.append(cob_id)
+    with db() as c:
+        c.execute(f"UPDATE mayoristas_cobranza SET {', '.join(sets)} WHERE id=?", vals)
+    return jsonify({'ok': True})
+
+
+@app.route('/api/mayoristas/cobranza/<int:cob_id>/pagar', methods=['POST'])
+@login_required
+def api_may_cobranza_pagar(cob_id):
+    d = request.json or {}
+    medio = d.get('medio_pago', '')
+    with db() as c:
+        cob = c.execute("SELECT * FROM mayoristas_cobranza WHERE id=?", (cob_id,)).fetchone()
+        if not cob:
+            return jsonify({'error': 'No encontrado'}), 404
+        c.execute(
+            "UPDATE mayoristas_cobranza SET estado='PAGADO', fecha_pago=?, medio_pago=? WHERE id=?",
+            (str(date.today()), medio, cob_id)
+        )
+        if cob['pedido_id']:
+            pendientes = c.execute(
+                "SELECT COUNT(*) FROM mayoristas_cobranza WHERE pedido_id=? AND estado IN ('PENDIENTE','VENCIDO')",
+                (cob['pedido_id'],)
+            ).fetchone()[0]
+            nuevo_estado_pago = 'PAGADO' if pendientes == 0 else 'PARCIAL'
+            c.execute("UPDATE mayoristas_pedidos SET estado_pago=? WHERE id=?",
+                      (nuevo_estado_pago, cob['pedido_id']))
+    return jsonify({'ok': True})
+
+
+@app.route('/api/mayoristas/cobranza/resumen', methods=['GET'])
+@login_required
+def api_may_cobranza_resumen():
+    _verificar_vencimientos_cobranza()
+    with db() as c:
+        totales = c.execute("""
+            SELECT estado, COUNT(*) as n, COALESCE(SUM(monto),0) as monto
+            FROM mayoristas_cobranza
+            GROUP BY estado
+        """).fetchall()
+        prox_7d = c.execute("""
+            SELECT COALESCE(SUM(monto),0) as monto
+            FROM mayoristas_cobranza
+            WHERE estado='PENDIENTE' AND fecha_vencimiento != ''
+              AND fecha_vencimiento <= date('now','+7 days')
+              AND fecha_vencimiento >= date('now')
+        """).fetchone()
+        vencida = c.execute(
+            "SELECT COALESCE(SUM(monto),0) FROM mayoristas_cobranza WHERE estado='VENCIDO'"
+        ).fetchone()[0]
+    return jsonify({
+        'por_estado': {r['estado']: {'n': r['n'], 'monto': r['monto']} for r in totales},
+        'vencida':     float(vencida),
+        'proximos_7d': float(prox_7d['monto']),
+    })
+
+
+# ── API: Mayoristas B2B — Precios ─────────────────────────────────────────────
+
+@app.route('/api/mayoristas/precios', methods=['GET'])
+@login_required
+def api_may_precios_list():
+    with db() as c:
+        rows = c.execute(
+            """SELECT mp.*, m.nombre as mayorista_nombre, pr.nombre as producto_nombre
+               FROM mayoristas_precios mp
+               JOIN mayoristas m ON m.id=mp.mayorista_id
+               JOIN productos pr ON pr.id=mp.producto_id
+               WHERE mp.activo=1
+               ORDER BY m.nombre, pr.nombre"""
+        ).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route('/api/mayoristas/<int:mid>/precios', methods=['GET'])
+@login_required
+def api_may_precios_cliente(mid):
+    with db() as c:
+        rows = c.execute(
+            """SELECT mp.*, pr.nombre as producto_nombre, pr.precio as precio_base, pr.precio_mayorista
+               FROM mayoristas_precios mp
+               JOIN productos pr ON pr.id=mp.producto_id
+               WHERE mp.mayorista_id=? AND mp.activo=1""",
+            (mid,)
+        ).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route('/api/mayoristas/<int:mid>/precios', methods=['POST'])
+@login_required
+def api_may_precios_upsert(mid):
+    d = request.json or {}
+    producto_id = d.get('producto_id')
+    precio = d.get('precio')
+    if not producto_id or precio is None:
+        return jsonify({'error': 'producto_id y precio requeridos'}), 400
+    with db() as c:
+        c.execute(
+            """INSERT INTO mayoristas_precios (mayorista_id, producto_id, precio, descuento_pct, min_unidades, activo)
+               VALUES (?,?,?,?,?,1)
+               ON CONFLICT(mayorista_id, producto_id)
+               DO UPDATE SET precio=excluded.precio, descuento_pct=excluded.descuento_pct,
+                             min_unidades=excluded.min_unidades, activo=1""",
+            (mid, int(producto_id), float(precio), float(d.get('descuento_pct',0)), int(d.get('min_unidades',1)))
+        )
+    return jsonify({'ok': True}), 201
+
+
+@app.route('/api/mayoristas/precios/<int:precio_id>', methods=['DELETE'])
+@login_required
+def api_may_precios_delete(precio_id):
+    with db() as c:
+        c.execute("UPDATE mayoristas_precios SET activo=0 WHERE id=?", (precio_id,))
+    return jsonify({'ok': True})
+
+
+@app.route('/api/mayoristas/precios/lista', methods=['GET'])
+@login_required
+def api_may_precios_lista_completa():
+    """Lista de todos los productos con precio general y excepciones por cliente."""
+    with db() as c:
+        prods = c.execute("SELECT id, nombre, precio, precio_mayorista FROM productos WHERE activo=1 ORDER BY nombre").fetchall()
+        excepciones = c.execute(
+            """SELECT mp.producto_id, mp.mayorista_id, mp.precio, m.nombre as mayorista_nombre
+               FROM mayoristas_precios mp JOIN mayoristas m ON m.id=mp.mayorista_id
+               WHERE mp.activo=1"""
+        ).fetchall()
+        exc_map = {}
+        for e in excepciones:
+            exc_map.setdefault(e['producto_id'], []).append({'mayorista_id': e['mayorista_id'], 'mayorista_nombre': e['mayorista_nombre'], 'precio': e['precio']})
+        result = []
+        for p in prods:
+            result.append({
+                'producto_id': p['id'], 'nombre': p['nombre'],
+                'precio_base': p['precio'], 'precio_mayorista': p['precio_mayorista'],
+                'excepciones': exc_map.get(p['id'], [])
+            })
+    return jsonify(result)
+
+
+# ── API: Mayoristas B2B — Ingresos ───────────────────────────────────────────
+
+@app.route('/api/mayoristas/ingresos', methods=['GET'])
+@login_required
+def api_may_ingresos():
+    periodo = request.args.get('periodo', 'mes')  # semana/mes/año
+    dias = {'semana': 7, 'mes': 30, 'año': 365}.get(periodo, 30)
+    desde = str(date.today() - timedelta(days=dias - 1))
+    with db() as c:
+        rows = c.execute(
+            """SELECT fecha_pago as fecha, COALESCE(SUM(monto),0) as total
+               FROM mayoristas_cobranza
+               WHERE estado='PAGADO' AND fecha_pago >= ?
+               GROUP BY fecha_pago ORDER BY fecha_pago""",
+            (desde,)
+        ).fetchall()
+        total = c.execute(
+            "SELECT COALESCE(SUM(monto),0) FROM mayoristas_cobranza WHERE estado='PAGADO' AND fecha_pago >= ?",
+            (desde,)
+        ).fetchone()[0]
+    return jsonify({'periodo': periodo, 'desde': desde, 'total': float(total), 'series': [dict(r) for r in rows]})
+
+
+@app.route('/api/mayoristas/ingresos/por-cliente', methods=['GET'])
+@login_required
+def api_may_ingresos_por_cliente():
+    periodo = request.args.get('periodo', 'mes')
+    dias = {'semana': 7, 'mes': 30, 'año': 365}.get(periodo, 30)
+    desde = str(date.today() - timedelta(days=dias - 1))
+    with db() as c:
+        rows = c.execute(
+            """SELECT m.id, m.nombre, COALESCE(SUM(mc.monto),0) as ingreso,
+                      COUNT(DISTINCT mp.id) as pedidos
+               FROM mayoristas m
+               LEFT JOIN mayoristas_pedidos mp ON mp.mayorista_id=m.id AND mp.fecha_entrega >= ?
+               LEFT JOIN mayoristas_cobranza mc ON mc.mayorista_id=m.id AND mc.estado='PAGADO' AND mc.fecha_pago >= ?
+               WHERE m.activo=1
+               GROUP BY m.id ORDER BY ingreso DESC LIMIT 20""",
+            (desde, desde)
+        ).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route('/api/mayoristas/ingresos/por-producto', methods=['GET'])
+@login_required
+def api_may_ingresos_por_producto():
+    periodo = request.args.get('periodo', 'mes')
+    dias = {'semana': 7, 'mes': 30, 'año': 365}.get(periodo, 30)
+    desde = str(date.today() - timedelta(days=dias - 1))
+    with db() as c:
+        rows = c.execute(
+            """SELECT pr.id, pr.nombre,
+                      COALESCE(SUM(mpi.cantidad),0) as unidades,
+                      COALESCE(SUM(mpi.subtotal),0) as ingreso
+               FROM mayoristas_pedido_items mpi
+               JOIN productos pr ON pr.id = mpi.producto_id
+               JOIN mayoristas_pedidos mp ON mp.id = mpi.pedido_id
+               WHERE mp.fecha_entrega >= ? AND mp.estado NOT IN ('CANCELADO')
+               GROUP BY pr.id ORDER BY ingreso DESC LIMIT 20""",
+            (desde,)
+        ).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route('/api/mayoristas/ingresos/flujo', methods=['GET'])
+@login_required
+def api_may_ingresos_flujo():
+    """Flujo mensual de ingresos de los últimos 12 meses."""
+    with db() as c:
+        rows = c.execute(
+            """SELECT strftime('%Y-%m', fecha_pago) as mes,
+                      COALESCE(SUM(monto),0) as total,
+                      COUNT(*) as documentos
+               FROM mayoristas_cobranza
+               WHERE estado='PAGADO'
+                 AND fecha_pago >= date('now', '-12 months')
+               GROUP BY mes ORDER BY mes"""
+        ).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+# ── API: Mayoristas B2B — KPIs ────────────────────────────────────────────────
+
+@app.route('/api/mayoristas/kpis', methods=['GET'])
+@login_required
+def api_may_kpis():
+    _verificar_vencimientos_cobranza()
+    hoy = date.today()
+    lunes = hoy - timedelta(days=hoy.weekday())
+    domingo = lunes + timedelta(days=6)
+    with db() as c:
+        clientes_activos = c.execute("SELECT COUNT(*) FROM mayoristas WHERE activo=1").fetchone()[0]
+        vol_semanal = c.execute("SELECT COALESCE(SUM(volumen_semanal_panes),0) FROM mayoristas WHERE activo=1").fetchone()[0]
+        pedidos_semana = c.execute(
+            "SELECT COUNT(*) FROM mayoristas_pedidos WHERE fecha_entrega BETWEEN ? AND ? AND estado NOT IN ('CANCELADO')",
+            (str(lunes), str(domingo))
+        ).fetchone()[0]
+        fact_mes = c.execute(
+            "SELECT COALESCE(SUM(monto),0) FROM mayoristas_cobranza WHERE estado='PAGADO' AND strftime('%Y-%m',fecha_pago)=strftime('%Y-%m','now')"
+        ).fetchone()[0]
+        por_cobrar = c.execute(
+            "SELECT COALESCE(SUM(monto),0) FROM mayoristas_cobranza WHERE estado IN ('PENDIENTE','VENCIDO')"
+        ).fetchone()[0]
+        deuda_vencida = c.execute(
+            "SELECT COALESCE(SUM(monto),0) FROM mayoristas_cobranza WHERE estado='VENCIDO'"
+        ).fetchone()[0]
+        # Tasa conversion CRM B2B
+        total_leads = c.execute("SELECT COUNT(*) FROM crm_leads WHERE modulo='B2B'").fetchone()[0]
+        convertidos = c.execute("SELECT COUNT(*) FROM crm_leads WHERE modulo='B2B' AND convertido=1").fetchone()[0]
+        tasa = round(convertidos / total_leads * 100, 1) if total_leads > 0 else 0.0
+        # Pipeline B2B
+        pipeline_rows = c.execute(
+            "SELECT etapa, COUNT(*) as n FROM crm_leads WHERE modulo='B2B' AND convertido=0 GROUP BY etapa"
+        ).fetchall()
+        pipeline = {r['etapa']: r['n'] for r in pipeline_rows}
+        # Top clientes
+        top = c.execute(
+            """SELECT m.id, m.nombre, m.volumen_semanal_panes as volumen,
+                      COALESCE(SUM(mc.monto),0) as ltv
+               FROM mayoristas m
+               LEFT JOIN mayoristas_cobranza mc ON mc.mayorista_id=m.id AND mc.estado='PAGADO'
+               WHERE m.activo=1
+               GROUP BY m.id ORDER BY ltv DESC LIMIT 5"""
+        ).fetchall()
+        # Alertas: deuda vencida por cliente
+        alertas_rows = c.execute(
+            """SELECT m.nombre, COALESCE(SUM(mc.monto),0) as deuda
+               FROM mayoristas_cobranza mc
+               JOIN mayoristas m ON m.id=mc.mayorista_id
+               WHERE mc.estado='VENCIDO'
+               GROUP BY mc.mayorista_id
+               HAVING deuda > 0
+               ORDER BY deuda DESC LIMIT 10"""
+        ).fetchall()
+        alertas = [f"deuda vencida: {r['nombre']} ${r['deuda']:,.0f}" for r in alertas_rows]
+    return jsonify({
+        'clientes_activos':            clientes_activos,
+        'volumen_semanal_comprometido': float(vol_semanal),
+        'pedidos_semana':              pedidos_semana,
+        'facturacion_mes':             float(fact_mes),
+        'por_cobrar':                  float(por_cobrar),
+        'deuda_vencida':               float(deuda_vencida),
+        'tasa_conversion_crm':         tasa,
+        'pipeline_b2b':                pipeline,
+        'top_clientes':                [dict(t) for t in top],
+        'alertas':                     alertas,
+    })
+
+
+# ── API: Mayoristas B2B — CRM Pipeline ──────────────────────────────────────
+
+PIPELINE_B2B_MAY = ['DESCUBIERTO','CONTACTADO','DEGUSTACION','NEGOCIANDO','CLIENTE','PAUSADO','PERDIDO']
+
+_REGLAS_PIPELINE_MAY = [
+    # (etapa, dias_sin_actividad, titulo_tarea, cambio_etapa_si_aplica)
+    ('CONTACTADO',  3, '2do intento WA + email', ''),
+    ('CONTACTADO',  7, 'Reintento en 2 semanas', 'PAUSADO'),
+    ('DEGUSTACION', 2, 'Confirmar recepcion + pedir feedback', ''),
+    ('DEGUSTACION', 5, 'Llamar para seguimiento degustacion', ''),
+    ('NEGOCIANDO',  4, 'Revisar propuesta pendiente', ''),
+    ('CLIENTE',    30, 'Check-in mensual + oportunidad upsell', ''),
+    ('PAUSADO',    45, 'Reactivacion', ''),
+]
+
+
+@app.route('/api/mayoristas/crm/prospectar', methods=['POST'])
+@login_required
+def api_may_crm_prospectar():
+    if not GOOGLE_PLACES_API_KEY:
+        return jsonify({'error': 'GOOGLE_PLACES_API_KEY no configurada'}), 400
+    d = request.json or {}
+    comunas = d.get('comunas', []) or COMUNAS_DESPACHO[:3]
+    tipos   = d.get('tipos', ['restaurante','cafetería','café','hotel'])
+    max_r   = int(d.get('max', 5))
+    creados = 0
+    omitidos = 0
+    with db() as c:
+        for tipo in tipos:
+            for zona in comunas:
+                results = _buscar_google_places(tipo, zona)
+                for r in results:
+                    if creados >= max_r:
+                        break
+                    score = _calcular_score_fit(r.get('tipo_negocio',''), r.get('zona',''), '')
+                    if score < 3:
+                        omitidos += 1
+                        continue
+                    tel = r.get('telefono','')
+                    nom = r.get('nombre','')
+                    dup = None
+                    if tel:
+                        dup = c.execute("SELECT id FROM crm_leads WHERE telefono=? LIMIT 1", (tel,)).fetchone()
+                    if not dup:
+                        dup = c.execute("SELECT id FROM crm_leads WHERE nombre=? AND zona=? LIMIT 1", (nom, zona)).fetchone()
+                    if dup:
+                        omitidos += 1
+                        continue
+                    c.execute(
+                        """INSERT INTO crm_leads
+                           (modulo, nombre, empresa, telefono, email, zona, direccion,
+                            canal_origen, etapa, temperatura, tipo_negocio, score_fit, notas)
+                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        ('B2B', nom, nom, tel, r.get('email',''), zona,
+                         r.get('direccion',''), 'google_places', 'DESCUBIERTO', 'COLD',
+                         r.get('tipo_negocio',''), score, '')
+                    )
+                    creados += 1
+    return jsonify({'creados': creados, 'omitidos': omitidos})
+
+
+@app.route('/api/mayoristas/crm/primer-contacto', methods=['POST'])
+@login_required
+def api_may_crm_primer_contacto():
+    d = request.json or {}
+    max_c = int(d.get('max', 5))
+    cutoff = str(date.today() - timedelta(days=3))
+    contactados = 0
+    errores = []
+    with db() as c:
+        leads = c.execute(
+            """SELECT * FROM crm_leads
+               WHERE modulo='B2B' AND etapa='DESCUBIERTO'
+                 AND (fecha_ultimo_contacto='' OR fecha_ultimo_contacto < ?)
+               LIMIT ?""",
+            (cutoff, max_c)
+        ).fetchall()
+        for lead in leads:
+            tel = lead['telefono']
+            if not tel:
+                errores.append(f"{lead['nombre']}: sin teléfono")
+                continue
+            dias = []
+            zona = lead['zona'] or 'Santiago'
+            nombre_enc = lead['nombre']
+            msj = (
+                f"Hola {nombre_enc}, soy Nicolás de Aurora Bakers 🍞\n\n"
+                f"Hacemos pan de masa madre artesanal en Recoleta y repartimos a {zona}.\n\n"
+                f"¿Les gustaría probar una muestra gratis esta semana? "
+                f"Solo necesito dirección y día preferido."
+            )
+            ok, err = _send_whatsapp_agent(tel, msj)
+            hoy = str(date.today())
+            c.execute(
+                "UPDATE crm_leads SET etapa='CONTACTADO', fecha_ultimo_contacto=? WHERE id=?",
+                (hoy, lead['id'])
+            )
+            c.execute(
+                """INSERT INTO crm_interacciones (lead_id, tipo, direccion, asunto, contenido, resultado)
+                   VALUES (?,?,?,?,?,?)""",
+                (lead['id'], 'whatsapp', 'saliente', 'Primer contacto', msj, 'enviado' if ok else 'error')
+            )
+            venc_tarea = str(date.today() + timedelta(days=3))
+            c.execute(
+                """INSERT INTO crm_tareas (lead_id, titulo, tipo, prioridad, fecha_vencimiento)
+                   VALUES (?,?,?,?,?)""",
+                (lead['id'], 'Seguimiento primer contacto', 'seguimiento', 'alta', venc_tarea)
+            )
+            if ok:
+                contactados += 1
+            else:
+                errores.append(f"{lead['nombre']}: {err}")
+    return jsonify({'contactados': contactados, 'errores': errores})
+
+
+@app.route('/api/mayoristas/crm/evaluar-pipeline', methods=['POST'])
+@login_required
+def api_may_crm_evaluar():
+    hoy = date.today()
+    creadas = 0
+    movidos = 0
+    with db() as c:
+        for etapa, dias, titulo, nueva_etapa in _REGLAS_PIPELINE_MAY:
+            cutoff = str(hoy - timedelta(days=dias))
+            leads = c.execute(
+                """SELECT * FROM crm_leads
+                   WHERE modulo='B2B' AND etapa=? AND convertido=0
+                     AND (fecha_ultimo_contacto='' OR fecha_ultimo_contacto <= ?)""",
+                (etapa, cutoff)
+            ).fetchall()
+            for lead in leads:
+                existe_tarea = c.execute(
+                    "SELECT id FROM crm_tareas WHERE lead_id=? AND titulo=? AND completada=0",
+                    (lead['id'], titulo)
+                ).fetchone()
+                if not existe_tarea:
+                    venc = str(hoy + timedelta(days=2))
+                    c.execute(
+                        "INSERT INTO crm_tareas (lead_id, titulo, tipo, prioridad, fecha_vencimiento) VALUES (?,?,?,?,?)",
+                        (lead['id'], titulo, 'seguimiento', 'alta', venc)
+                    )
+                    creadas += 1
+                if nueva_etapa:
+                    c.execute("UPDATE crm_leads SET etapa=? WHERE id=?", (nueva_etapa, lead['id']))
+                    movidos += 1
+    return jsonify({'tareas_creadas': creadas, 'leads_movidos': movidos})
+
+
+@app.route('/api/mayoristas/crm/reporte', methods=['GET'])
+@login_required
+def api_may_crm_reporte():
+    with db() as c:
+        pipeline = {e: 0 for e in PIPELINE_B2B_MAY}
+        for r in c.execute("SELECT etapa, COUNT(*) as n FROM crm_leads WHERE modulo='B2B' AND convertido=0 GROUP BY etapa").fetchall():
+            pipeline[r['etapa']] = r['n']
+        nuevos_semana = c.execute(
+            "SELECT COUNT(*) FROM crm_leads WHERE modulo='B2B' AND fecha_creacion >= date('now','-7 days')"
+        ).fetchone()[0]
+        convertidos_mes = c.execute(
+            "SELECT COUNT(*) FROM crm_leads WHERE modulo='B2B' AND convertido=1 AND fecha_ultimo_contacto >= date('now','-30 days')"
+        ).fetchone()[0]
+        tareas_pend = c.execute(
+            "SELECT COUNT(*) FROM crm_tareas ct JOIN crm_leads cl ON cl.id=ct.lead_id WHERE cl.modulo='B2B' AND ct.completada=0"
+        ).fetchone()[0]
+    return jsonify({
+        'pipeline':        pipeline,
+        'nuevos_semana':   nuevos_semana,
+        'convertidos_mes': convertidos_mes,
+        'tareas_pendientes': tareas_pend,
+    })
+
+
+@app.route('/api/mayoristas/crm/convertir/<int:lid>', methods=['POST'])
+@login_required
+def api_may_crm_convertir(lid):
+    with db() as c:
+        lead = c.execute("SELECT * FROM crm_leads WHERE id=?", (lid,)).fetchone()
+        if not lead:
+            return jsonify({'error': 'Lead no encontrado'}), 404
+        if not lead['nombre']:
+            return jsonify({'error': 'Lead sin nombre'}), 400
+        cur = c.execute(
+            """INSERT INTO mayoristas
+               (nombre, tipo_negocio, telefono, email, direccion, zona, notas, crm_lead_id)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            (lead['nombre'], lead['tipo_negocio'] or '', lead['telefono'], lead['email'],
+             lead['direccion'] or '', lead['zona'], lead['notas'], lid)
+        )
+        mid = cur.lastrowid
+        c.execute("UPDATE crm_leads SET convertido=1, etapa='CLIENTE' WHERE id=?", (lid,))
+        c.execute(
+            """INSERT INTO crm_interacciones (lead_id, tipo, direccion, asunto, contenido, resultado)
+               VALUES (?,?,?,?,?,?)""",
+            (lid, 'sistema', 'interno', 'Conversion a cliente mayorista',
+             f'Mayorista ID: {mid}', 'completado')
+        )
+    print(f"[mayoristas] Lead {lid} convertido a mayorista {mid}")
+    return jsonify({'mayorista_id': mid, 'nombre': lead['nombre']})
+
+
+# ── API: Mayoristas B2B — Produccion Semanal ─────────────────────────────────
+
+@app.route('/api/mayoristas/produccion/semana', methods=['GET'])
+@login_required
+def api_may_produccion_semana():
+    hoy = date.today()
+    lunes = hoy - timedelta(days=hoy.weekday())
+    domingo = lunes + timedelta(days=6)
+    with db() as c:
+        rows = c.execute(
+            """SELECT mp.id as pedido_id, mp.fecha_entrega, mp.dia_entrega,
+                      mp.notas_produccion, mp.estado, m.nombre as mayorista_nombre,
+                      mpi.producto_id, mpi.cantidad, pr.nombre as producto_nombre
+               FROM mayoristas_pedidos mp
+               JOIN mayoristas m ON m.id = mp.mayorista_id
+               JOIN mayoristas_pedido_items mpi ON mpi.pedido_id = mp.id
+               JOIN productos pr ON pr.id = mpi.producto_id
+               WHERE mp.fecha_entrega BETWEEN ? AND ?
+                 AND mp.estado NOT IN ('CANCELADO')
+               ORDER BY mp.fecha_entrega, m.nombre""",
+            (str(lunes), str(domingo))
+        ).fetchall()
+        dias_data = {}
+        for r in rows:
+            dia = r['fecha_entrega'] or str(hoy)
+            if dia not in dias_data:
+                dias_data[dia] = {'total_panes': 0, 'por_producto': {}, 'pedidos': []}
+            dias_data[dia]['total_panes'] += r['cantidad']
+            prod_n = r['producto_nombre']
+            dias_data[dia]['por_producto'][prod_n] = dias_data[dia]['por_producto'].get(prod_n, 0) + r['cantidad']
+            pedido_existente = next((p for p in dias_data[dia]['pedidos'] if p['pedido_id'] == r['pedido_id']), None)
+            if pedido_existente:
+                pedido_existente['items'].append({'producto': prod_n, 'cantidad': r['cantidad']})
+            else:
+                dias_data[dia]['pedidos'].append({
+                    'pedido_id':  r['pedido_id'],
+                    'mayorista':  r['mayorista_nombre'],
+                    'notas':      r['notas_produccion'],
+                    'estado':     r['estado'],
+                    'items':      [{'producto': prod_n, 'cantidad': r['cantidad']}]
+                })
+    semana_str = lunes.strftime('%G-W%V')
+    return jsonify({'semana': semana_str, 'dias': dias_data})
+
+
+@app.route('/api/mayoristas/produccion/dia/<fecha>', methods=['GET'])
+@login_required
+def api_may_produccion_dia(fecha):
+    with db() as c:
+        rows = c.execute(
+            """SELECT pr.nombre as producto, COALESCE(SUM(mpi.cantidad),0) as cantidad,
+                      GROUP_CONCAT(m.nombre || ':' || mpi.cantidad, ' | ') as detalle
+               FROM mayoristas_pedidos mp
+               JOIN mayoristas_pedido_items mpi ON mpi.pedido_id = mp.id
+               JOIN productos pr ON pr.id = mpi.producto_id
+               JOIN mayoristas m ON m.id = mp.mayorista_id
+               WHERE mp.fecha_entrega=? AND mp.estado NOT IN ('CANCELADO')
+               GROUP BY pr.id ORDER BY cantidad DESC""",
+            (fecha,)
+        ).fetchall()
+    return jsonify({'fecha': fecha, 'productos': [dict(r) for r in rows]})
+
+
+@app.route('/api/mayoristas/produccion/generar', methods=['POST'])
+@login_required
+def api_may_produccion_generar():
+    """Genera entradas en plan_produccion para pedidos CONFIRMADOS sin plan."""
+    generados = 0
+    with db() as c:
+        pedidos = c.execute(
+            "SELECT * FROM mayoristas_pedidos WHERE estado='CONFIRMADO' AND fecha_entrega!=''"
+        ).fetchall()
+        for p in pedidos:
+            batch_id = f"MAYORISTA-{p['id']}"
+            ya_existe = c.execute(
+                "SELECT COUNT(*) FROM plan_produccion WHERE batch_id=?", (batch_id,)
+            ).fetchone()[0]
+            if ya_existe:
+                continue
+            try:
+                fecha_horn = str(date.fromisoformat(p['fecha_entrega']) - timedelta(days=1))
+            except Exception:
+                fecha_horn = p['fecha_entrega']
+            items = c.execute(
+                "SELECT mpi.*, pr.nombre FROM mayoristas_pedido_items mpi JOIN productos pr ON pr.id=mpi.producto_id WHERE mpi.pedido_id=?",
+                (p['id'],)
+            ).fetchall()
+            for it in items:
+                c.execute(
+                    """INSERT INTO plan_produccion (fecha, codigo_producto, nombre_producto, cantidad, estado, notas, producto_id, batch_id, fecha_horneado)
+                       VALUES (?,?,?,?,?,?,?,?,?)""",
+                    (fecha_horn, f"MAY{it['producto_id']}", it['nombre'], it['cantidad'],
+                     'pendiente', f"Mayorista pedido #{p['id']}", it['producto_id'], batch_id, fecha_horn)
+                )
+                generados += 1
+    return jsonify({'ok': True, 'items_generados': generados})
+
 
 # ── API: Reportes ─────────────────────────────────────────────────────────────
 
@@ -2676,13 +4172,8 @@ def api_agentes_resumen():
     """
     Endpoint consumido por el sistema multi-agente (aurora-bakers en Railway).
     Devuelve datos consolidados sin necesitar acceso a Google Sheets.
-    Protegido con API key simple via header X-Agent-Key o query ?key=
+    Auth: la valida _global_auth (X-Agent-Key / ?key= / sesión web).
     """
-    key = request.args.get('key') or request.headers.get('X-Agent-Key', '')
-    expected = os.environ.get('AGENT_API_KEY', 'aurora_agent_2024')
-    if key != expected:
-        return jsonify({'error': 'Unauthorized'}), 401
-
     today = date.today()
     w0    = today - timedelta(days=today.weekday())
     m0    = today.replace(day=1)
@@ -2775,12 +4266,8 @@ def api_agentes_resumen():
 
 @app.route('/api/agentes/despachos-hoy')
 def api_agentes_despachos():
-    """Lista de despachos pendientes para hoy — para el plan de producción."""
-    key = request.args.get('key') or request.headers.get('X-Agent-Key', '')
-    expected = os.environ.get('AGENT_API_KEY', 'aurora_agent_2024')
-    if key != expected:
-        return jsonify({'error': 'Unauthorized'}), 401
-
+    """Lista de despachos pendientes para hoy — para el plan de producción.
+    Auth: la valida _global_auth (X-Agent-Key / ?key= / sesión web)."""
     fecha = request.args.get('fecha', str(date.today()))
     with db() as c:
         rows = c.execute(
@@ -2916,12 +4403,12 @@ def _buscar_google_places(query: str, zona: str, direccion_local: str = '') -> l
             score   = min(100, int(rating / 5 * 100))
             types   = p.get('types', [])
             tipo    = _google_type_label(types)
-            nombre  = p.get('displayName', {}).get('text', '')
+            nombre  = _limpiar_texto(p.get('displayName', {}).get('text', ''))
             telefono= p.get('internationalPhoneNumber', '')
             results.append({
                 'nombre':       nombre,
                 'empresa':      nombre,
-                'direccion':    p.get('formattedAddress', ''),
+                'direccion':    _limpiar_texto(p.get('formattedAddress', '')),
                 'zona':         zona,
                 'telefono':     telefono,
                 'email':        '',
@@ -2994,6 +4481,9 @@ def _buscar_leads_ia(descripcion: str, modulo: str, zona: str) -> list:
         leads = json.loads(raw[start:end])
         for l in leads:
             l['canal_origen'] = 'ia_sugerido'
+            for campo in ('nombre', 'empresa', 'direccion', 'razon', 'cargo'):
+                if campo in l:
+                    l[campo] = _limpiar_texto(str(l[campo]))
         return leads
     except Exception as e:
         print(f"[ia_leads] Error: {e}")
@@ -3109,6 +4599,16 @@ def api_crm_leads():
 def api_crm_leads_create():
     d = request.json
     with db() as c:
+        tel   = d.get('telefono', '').strip()
+        email_val = d.get('email', '').strip()
+        dup = None
+        if tel:
+            dup = c.execute("SELECT id,nombre FROM crm_leads WHERE telefono=? LIMIT 1", (tel,)).fetchone()
+        if not dup and email_val:
+            dup = c.execute("SELECT id,nombre FROM crm_leads WHERE email=? LIMIT 1", (email_val,)).fetchone()
+        if dup and not d.get('force_create'):
+            return jsonify({'error': 'duplicado', 'lead_id': dup['id'], 'nombre': dup['nombre'],
+                            'mensaje': f"Ya existe lead con este contacto: {dup['nombre']}"}), 409
         cur = c.execute(
             """INSERT INTO crm_leads
                (modulo,nombre,email,telefono,empresa,cargo,rut,zona,direccion,canal_origen,
@@ -3161,7 +4661,28 @@ def api_crm_lead_update(lid):
             fields.append("propiedades_json=?"); params.append(json.dumps(d['propiedades']))
         if fields:
             params.append(lid)
+            if 'etapa' in d:
+                etapa_actual = c.execute("SELECT etapa FROM crm_leads WHERE id=?", (lid,)).fetchone()
+                etapa_prev = etapa_actual['etapa'] if etapa_actual else ''
+                if etapa_prev != d['etapa']:
+                    c.execute(
+                        "INSERT INTO crm_etapa_log (lead_id,etapa_from,etapa_to,usuario) VALUES (?,?,?,?)",
+                        (lid, etapa_prev, d['etapa'], d.get('usuario', 'sistema'))
+                    )
+            if d.get('etapa') == 'PERDIDO' and d.get('razon_perdida'):
+                fields.append("razon_perdida=?"); params.insert(-1, d['razon_perdida'])
             c.execute(f"UPDATE crm_leads SET {','.join(fields)} WHERE id=?", params)
+        if d.get('convertido') == 1:
+            lead_row = c.execute("SELECT * FROM crm_leads WHERE id=?", (lid,)).fetchone()
+            if lead_row and not lead_row['cliente_id']:
+                tel = lead_row['telefono']
+                cliente = c.execute("SELECT id FROM clientes WHERE telefono=? LIMIT 1", (tel,)).fetchone() if tel else None
+                if cliente:
+                    c.execute("UPDATE crm_leads SET cliente_id=? WHERE id=?", (cliente['id'], lid))
+                    ltv = c.execute(
+                        "SELECT COALESCE(SUM(total),0) FROM ventas WHERE cliente_id=?", (cliente['id'],)
+                    ).fetchone()[0]
+                    c.execute("UPDATE crm_leads SET valor_potencial=? WHERE id=? AND valor_potencial=0", (ltv, lid))
         return jsonify(_enrich_lead(c.execute("SELECT * FROM crm_leads WHERE id=?", (lid,)).fetchone()))
 
 
@@ -3289,14 +4810,17 @@ def api_crm_kpis():
     modulo = request.args.get('modulo', '')
     mes_actual = str(date.today())[:7]  # YYYY-MM
     with db() as c:
-        mod_filter = f" AND modulo='{modulo}'" if modulo else ''
-        total  = c.execute(f"SELECT COUNT(*) FROM crm_leads WHERE 1=1{mod_filter}").fetchone()[0]
-        conv   = c.execute(f"SELECT COUNT(*) FROM crm_leads WHERE convertido=1{mod_filter}").fetchone()[0]
-        hot    = c.execute(f"SELECT COUNT(*) FROM crm_leads WHERE temperatura='HOT' AND convertido=0{mod_filter}").fetchone()[0]
-        warm   = c.execute(f"SELECT COUNT(*) FROM crm_leads WHERE temperatura='WARM' AND convertido=0{mod_filter}").fetchone()[0]
-        cold   = c.execute(f"SELECT COUNT(*) FROM crm_leads WHERE temperatura='COLD' AND convertido=0{mod_filter}").fetchone()[0]
+        # Filtro parametrizado (nunca interpolar input del request en SQL)
+        mod_filter = " AND modulo=?" if modulo else ''
+        mod_params = [modulo] if modulo else []
+        total  = c.execute(f"SELECT COUNT(*) FROM crm_leads WHERE 1=1{mod_filter}", mod_params).fetchone()[0]
+        conv   = c.execute(f"SELECT COUNT(*) FROM crm_leads WHERE convertido=1{mod_filter}", mod_params).fetchone()[0]
+        hot    = c.execute(f"SELECT COUNT(*) FROM crm_leads WHERE temperatura='HOT' AND convertido=0{mod_filter}", mod_params).fetchone()[0]
+        warm   = c.execute(f"SELECT COUNT(*) FROM crm_leads WHERE temperatura='WARM' AND convertido=0{mod_filter}", mod_params).fetchone()[0]
+        cold   = c.execute(f"SELECT COUNT(*) FROM crm_leads WHERE temperatura='COLD' AND convertido=0{mod_filter}", mod_params).fetchone()[0]
         leads_mes = c.execute(
-            f"SELECT COUNT(*) FROM crm_leads WHERE strftime('%Y-%m', fecha_creacion)=?{mod_filter}", (mes_actual,)
+            f"SELECT COUNT(*) FROM crm_leads WHERE strftime('%Y-%m', fecha_creacion)=?{mod_filter}",
+            [mes_actual] + mod_params
         ).fetchone()[0]
         tareas_vencidas = c.execute(
             "SELECT COUNT(*) FROM crm_tareas WHERE completada=0 AND fecha_vencimiento!='' AND fecha_vencimiento < ?",
@@ -3332,6 +4856,83 @@ def api_crm_kpis():
 
 
 # ── CRM: Buscador de leads ────────────────────────────────────────────────────
+
+
+# -- CRM: Segmentos guardados -------------------------------------------------
+
+# -- CRM: Seguimiento automatico ---------------------------------------------
+@app.route('/api/crm/auto-followup', methods=['POST'])
+@login_required
+def api_crm_auto_followup():
+    REGLAS = [
+        {'etapa': 'CONTACTADO',  'dias': 3, 'titulo': 'Seguimiento pendiente'},
+        {'etapa': 'RESPONDIO',   'dias': 1, 'titulo': 'Responder cliente'},
+        {'etapa': 'INTERESADO',  'dias': 2, 'titulo': 'Enviar propuesta'},
+        {'etapa': 'PROPUESTA',   'dias': 4, 'titulo': 'Hacer seguimiento propuesta'},
+    ]
+    creadas = 0
+    with db() as c:
+        for regla in REGLAS:
+            leads = c.execute(
+                '''SELECT id,nombre FROM crm_leads
+                   WHERE etapa=? AND convertido=0
+                   AND (fecha_ultimo_contacto='' OR date(fecha_ultimo_contacto) <= date('now',?))
+                   AND id NOT IN (SELECT lead_id FROM crm_tareas WHERE completada=0 AND titulo=?)''',
+                (regla['etapa'], f"-{regla['dias']} days", regla['titulo'])
+            ).fetchall()
+            for lead in leads:
+                c.execute(
+                    "INSERT INTO crm_tareas (lead_id,titulo,tipo,prioridad,fecha_vencimiento) VALUES (?,?,'seguimiento','alta',date('now','+1 day'))",
+                    (lead['id'], regla['titulo'])
+                )
+                creadas += 1
+    return jsonify({'ok': True, 'tareas_creadas': creadas})
+
+@app.route('/api/crm/segmentos', methods=['GET'])
+@login_required
+def api_crm_segmentos_list():
+    with db() as c:
+        rows = c.execute("SELECT * FROM crm_segmentos ORDER BY nombre").fetchall()
+        return jsonify([dict(r) for r in rows])
+
+@app.route('/api/crm/segmentos', methods=['POST'])
+@login_required
+def api_crm_segmentos_create():
+    d = request.json
+    with db() as c:
+        cur = c.execute(
+            "INSERT INTO crm_segmentos (nombre,modulo,filtros_json) VALUES (?,?,?)",
+            (d['nombre'], d.get('modulo','B2B'), json.dumps(d.get('filtros',{})))
+        )
+        return jsonify({'id': cur.lastrowid, 'nombre': d['nombre']}), 201
+
+@app.route('/api/crm/segmentos/<int:sid>', methods=['DELETE'])
+@login_required
+def api_crm_segmentos_delete(sid):
+    with db() as c:
+        c.execute("DELETE FROM crm_segmentos WHERE id=?", (sid,))
+        return jsonify({'ok': True})
+
+@app.route('/api/crm/segmentos/<int:sid>/leads', methods=['GET'])
+@login_required
+def api_crm_segmentos_leads(sid):
+    with db() as c:
+        seg = c.execute("SELECT * FROM crm_segmentos WHERE id=?", (sid,)).fetchone()
+        if not seg: return jsonify({'error': 'No encontrado'}), 404
+        filtros = json.loads(seg['filtros_json'])
+        where, params = ["modulo=?"], [seg['modulo']]
+        for col in ['etapa','temperatura','zona','canal_origen','asignado_a']:
+            if filtros.get(col):
+                where.append(f"{col}=?"); params.append(filtros[col])
+        if filtros.get('sin_contacto_dias'):
+            dias = int(filtros['sin_contacto_dias'])
+            where.append("(fecha_ultimo_contacto='' OR date(fecha_ultimo_contacto) <= date('now',?))")
+            params.append(f'-{dias} days')
+        if filtros.get('convertido') is not None:
+            where.append("convertido=?"); params.append(int(filtros['convertido']))
+        sql = "SELECT * FROM crm_leads WHERE " + " AND ".join(where) + " ORDER BY fecha_creacion DESC"
+        rows = c.execute(sql, params).fetchall()
+        return jsonify([_enrich_lead(r) for r in rows])
 
 @app.route('/api/crm/buscar', methods=['POST'])
 def api_crm_buscar():
@@ -3579,6 +5180,720 @@ def api_crm_whatsapp_masivo():
         'detalle_sin_tel':  sin_tel,
         'detalle_links':    links,
     })
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ── CRM: AUTOMATIZACIÓN (jobs + scheduler + endpoints) ──────────────────────
+# ═══════════════════════════════════════════════════════════════════════════
+# Política de seguridad: NUNCA envía mensajes sin aprobación del owner.
+# Los jobs preparan borradores y crean tareas de alta prioridad. El owner
+# revisa y envía con un click desde /crm/lead/<id> o /crm/whatsapp-masivo.
+
+# Comunas RM priorizadas para prospección B2B (Aurora Bakers reparte en Santiago).
+COMUNAS_RM_B2B = [
+    'Providencia', 'Las Condes', 'Vitacura', 'Lo Barnechea', 'Ñuñoa',
+    'La Reina', 'Santiago Centro', 'Macul', 'Peñalolén', 'Huechuraba',
+    'La Florida', 'Maipú', 'San Miguel',
+]
+
+# Tipos de negocio rotados semanalmente (distinto de TIPOS_NEGOCIO_B2B, que es
+# la lista plana de tipos válidos definida arriba)
+TIPOS_NEGOCIO_B2B_ROTACION = [
+    ('restaurantes de especialidad',          'Restaurante'),
+    ('cafeterías de café de especialidad',    'Cafetería'),
+    ('hoteles boutique',                       'Hotel'),
+    ('almacenes gourmet y delicatessen',      'Almacén / Minimarket'),
+    ('catering corporativo',                   'Catering'),
+    ('casinos corporativos y de empresas',    'Casino'),
+    ('panaderías y pastelerías premium',      'Panadería'),
+]
+
+
+def _log_automatizacion(job: str, accion: str, lead_id=None, detalle: str = '', ok: bool = True):
+    """Registra una acción de automatización en crm_automatizacion_log."""
+    try:
+        with db() as c:
+            c.execute(
+                "INSERT INTO crm_automatizacion_log (job,accion,lead_id,detalle,ok) VALUES (?,?,?,?,?)",
+                (job, accion, lead_id, str(detalle)[:500], 1 if ok else 0)
+            )
+    except Exception as e:
+        print(f"[crm_auto] Error logging: {e}")
+
+
+def _asignar_responsable_auto() -> str:
+    """Devuelve el email del responsable al que asignar leads automáticos.
+    Por ahora: admin (único usuario). Si hay más usuarios con rol comercial,
+    usa round-robin balanceado por carga de leads activos."""
+    try:
+        with db() as c:
+            candidatos = c.execute(
+                "SELECT email FROM usuarios WHERE activo=1 AND rol IN ('admin','comercial') ORDER BY id"
+            ).fetchall()
+            if not candidatos:
+                return 'admin@aurorabakers.cl'
+            if len(candidatos) == 1:
+                return candidatos[0]['email']
+            # Round-robin por carga
+            mejor = None
+            mejor_carga = 10**9
+            for u in candidatos:
+                carga = c.execute(
+                    "SELECT COUNT(*) FROM crm_leads WHERE asignado_a=? AND convertido=0",
+                    (u['email'],)
+                ).fetchone()[0]
+                if carga < mejor_carga:
+                    mejor_carga = carga
+                    mejor = u['email']
+            return mejor or candidatos[0]['email']
+    except Exception:
+        return 'admin@aurorabakers.cl'
+
+
+def _normalizar_telefono(tel: str) -> str:
+    """Deja solo dígitos para comparación de duplicados."""
+    return ''.join(ch for ch in (tel or '') if ch.isdigit())
+
+
+def _lead_existe(c, nombre: str, telefono: str, email: str, empresa: str = '') -> bool:
+    """Verifica si ya existe un lead con mismo teléfono, email o nombre+empresa."""
+    tel_norm = _normalizar_telefono(telefono)
+    if tel_norm:
+        row = c.execute(
+            "SELECT id FROM crm_leads WHERE REPLACE(REPLACE(REPLACE(telefono,'+',''),' ',''),'-','') LIKE ? LIMIT 1",
+            (f'%{tel_norm[-8:]}%',)
+        ).fetchone()
+        if row:
+            return True
+    if email:
+        row = c.execute("SELECT id FROM crm_leads WHERE email=? LIMIT 1", (email,)).fetchone()
+        if row:
+            return True
+    if nombre and empresa:
+        row = c.execute(
+            "SELECT id FROM crm_leads WHERE LOWER(nombre)=? AND LOWER(empresa)=? LIMIT 1",
+            (nombre.lower(), empresa.lower())
+        ).fetchone()
+        if row:
+            return True
+    return False
+
+
+def _comuna_y_tipo_de_la_semana():
+    """Rota comuna y tipo de negocio según semana del año (determinístico)."""
+    iso_week = date.today().isocalendar()[1]
+    comuna = COMUNAS_RM_B2B[iso_week % len(COMUNAS_RM_B2B)]
+    tipo_desc, tipo_label = TIPOS_NEGOCIO_B2B_ROTACION[iso_week % len(TIPOS_NEGOCIO_B2B_ROTACION)]
+    return comuna, tipo_desc, tipo_label
+
+
+# ─── JOB 1: Búsqueda semanal de leads B2B ─────────────────────────────────────
+def _job_buscar_leads_b2b():
+    """Busca nuevos leads B2B en una comuna/tipo rotativo. Idempotente."""
+    job = 'buscar_leads_b2b'
+    try:
+        comuna, descripcion, tipo_label = _comuna_y_tipo_de_la_semana()
+        _log_automatizacion(job, 'inicio', detalle=f"Buscando {descripcion} en {comuna}")
+
+        resultados = []
+        # 1) Google Places (real, prioritario)
+        try:
+            resultados += _buscar_google_places(descripcion, comuna, '')
+        except Exception as e:
+            _log_automatizacion(job, 'google_error', detalle=str(e), ok=False)
+        # 2) IA Claude (complementa, sobre todo si Google trae poco)
+        try:
+            resultados += _buscar_leads_ia(descripcion, 'B2B', comuna)
+        except Exception as e:
+            _log_automatizacion(job, 'ia_error', detalle=str(e), ok=False)
+        # 3) Fallback keywords (siempre que las 2 anteriores fallen)
+        if not resultados:
+            resultados += _buscar_leads_keywords(descripcion, 'B2B', comuna)
+
+        # Ordenar por score, tomar top
+        resultados.sort(key=lambda x: x.get('score', 0), reverse=True)
+        resultados = resultados[:15]
+
+        creados, duplicados = 0, 0
+        responsable = _asignar_responsable_auto()
+        hoy = str(date.today())
+
+        with db() as c:
+            for r in resultados:
+                nombre   = (r.get('nombre') or '').strip()
+                empresa  = (r.get('empresa') or nombre).strip()
+                if not nombre:
+                    continue
+                tel      = (r.get('telefono') or '').strip()
+                email_v  = (r.get('email') or '').strip()
+                if _lead_existe(c, nombre, tel, email_v, empresa):
+                    duplicados += 1
+                    continue
+                # Tags según tipo de negocio
+                tipo_neg = r.get('tipo_negocio') or tipo_label
+                tags = [tipo_neg] if tipo_neg in TAGS_B2B else []
+                tags.append('auto_discovery')
+                # Insert
+                cur = c.execute("""
+                    INSERT INTO crm_leads
+                        (modulo, nombre, email, telefono, empresa, cargo, zona, direccion,
+                         canal_origen, canal_origen_detalle, etapa, temperatura, tags_json,
+                         notas, valor_potencial, asignado_a, fecha_creacion,
+                         auto_discovery, auto_contact_estado, auto_score)
+                    VALUES ('B2B',?,?,?,?,?,?,?,?,?,'PROSPECTO','COLD',?,?,0,?,?,1,'pendiente_borrador',?)
+                """, (
+                    nombre, email_v, tel, empresa, r.get('cargo', 'Encargado de compras'),
+                    r.get('zona', comuna), r.get('direccion', ''),
+                    r.get('canal_origen', 'auto_discovery'),
+                    f"Job {job} · semana {date.today().isocalendar()[1]}",
+                    json.dumps(tags, ensure_ascii=False),
+                    f"Razón: {r.get('razon','')}",
+                    responsable, hoy,
+                    int(r.get('score', 0) or 0),
+                ))
+                creados += 1
+                _log_automatizacion(job, 'lead_creado', lead_id=cur.lastrowid,
+                                    detalle=f"{empresa} ({tipo_neg}) — score {r.get('score',0)}")
+
+        _log_automatizacion(
+            job, 'fin',
+            detalle=f"Comuna={comuna} tipo={tipo_label} creados={creados} dup={duplicados}"
+        )
+        return {'ok': True, 'comuna': comuna, 'tipo': tipo_label,
+                'creados': creados, 'duplicados': duplicados, 'evaluados': len(resultados)}
+    except Exception as e:
+        _log_automatizacion(job, 'error_fatal', detalle=str(e), ok=False)
+        print(f"[job_buscar_leads_b2b] {e}")
+        return {'ok': False, 'error': str(e)}
+
+
+# ─── JOB 2: Primer contacto automático (borrador + tarea) ─────────────────────
+def _job_primer_contacto():
+    """Para cada lead PROSPECTO con auto_discovery=1 y sin borrador preparado:
+    arma el mensaje email/WhatsApp con la plantilla B2B activa, crea una tarea
+    de alta prioridad para que el owner apruebe y envíe."""
+    job = 'primer_contacto'
+    creadas = 0
+    try:
+        _log_automatizacion(job, 'inicio')
+        with db() as c:
+            leads = c.execute("""
+                SELECT * FROM crm_leads
+                WHERE auto_discovery=1
+                  AND auto_contact_estado='pendiente_borrador'
+                  AND etapa='PROSPECTO'
+                  AND convertido=0
+                ORDER BY auto_score DESC, fecha_creacion ASC
+                LIMIT 50
+            """).fetchall()
+
+            tpl_email = c.execute(
+                "SELECT * FROM crm_email_templates WHERE modulo IN ('B2B','ambos') AND activo=1 ORDER BY id LIMIT 1"
+            ).fetchone()
+            tpl_wa = c.execute(
+                "SELECT * FROM crm_whatsapp_templates WHERE modulo IN ('B2B','ambos') AND activo=1 ORDER BY id LIMIT 1"
+            ).fetchone()
+
+            for lead in leads:
+                lid = lead['id']
+                empresa = lead['empresa'] or lead['nombre']
+                # Construir descripción de la tarea con los borradores listos
+                partes = [f"📋 Aprobar primer contacto B2B con {empresa}", ""]
+                if lead['email'] and tpl_email:
+                    asunto = (tpl_email['asunto'] or '').replace('{nombre}', lead['nombre'] or '') \
+                                                       .replace('{empresa}', empresa)
+                    cuerpo = (tpl_email['cuerpo'] or '').replace('{nombre}', lead['nombre'] or '') \
+                                                       .replace('{empresa}', empresa)
+                    partes += [
+                        "── EMAIL (borrador) ──",
+                        f"Para: {lead['email']}",
+                        f"Asunto: {asunto}",
+                        "",
+                        cuerpo,
+                        "",
+                    ]
+                if lead['telefono'] and tpl_wa:
+                    wa_msg = (tpl_wa['cuerpo'] or '').replace('{nombre}', lead['nombre'] or '') \
+                                                    .replace('{empresa}', empresa)
+                    partes += [
+                        "── WHATSAPP (borrador) ──",
+                        f"Para: {lead['telefono']}",
+                        wa_msg,
+                        "",
+                    ]
+                if not lead['email'] and not lead['telefono']:
+                    partes += [
+                        "⚠️ Lead sin email ni teléfono. Investigar contacto antes de avanzar.",
+                    ]
+                descripcion = "\n".join(partes)
+
+                # Crear tarea de alta prioridad para hoy
+                c.execute("""
+                    INSERT INTO crm_tareas
+                        (lead_id, titulo, descripcion, tipo, prioridad, fecha_vencimiento)
+                    VALUES (?,?,?,?,?,?)
+                """, (
+                    lid,
+                    f"📞 Primer contacto B2B — {empresa}",
+                    descripcion,
+                    'primer_contacto_auto',
+                    'alta',
+                    str(date.today())
+                ))
+                # Marcar lead como borrador_listo
+                c.execute(
+                    "UPDATE crm_leads SET auto_contact_estado='borrador_listo' WHERE id=?",
+                    (lid,)
+                )
+                creadas += 1
+                _log_automatizacion(job, 'borrador_creado', lead_id=lid, detalle=empresa)
+
+        _log_automatizacion(job, 'fin', detalle=f"borradores_creados={creadas}")
+        return {'ok': True, 'borradores_creados': creadas}
+    except Exception as e:
+        _log_automatizacion(job, 'error_fatal', detalle=str(e), ok=False)
+        print(f"[job_primer_contacto] {e}")
+        return {'ok': False, 'error': str(e)}
+
+
+# ─── JOB 3: Motor de seguimiento por etapa y SLA ──────────────────────────────
+def _job_seguimiento_pipeline():
+    """Aplica reglas configuradas en crm_reglas_seguimiento: crea tareas,
+    cambia temperatura, marca como perdido, mueve etapa cuando corresponde."""
+    job = 'seguimiento_pipeline'
+    try:
+        _log_automatizacion(job, 'inicio')
+        acciones = {
+            'tareas_creadas': 0,
+            'temperatura_cambiada': 0,
+            'marcados_perdido': 0,
+            'etapa_cambiada': 0,
+        }
+        with db() as c:
+            reglas = c.execute(
+                "SELECT * FROM crm_reglas_seguimiento WHERE activa=1"
+            ).fetchall()
+
+            for r in reglas:
+                # Determinar fecha de referencia: usa fecha_ultimo_contacto si existe,
+                # si no, fecha_creacion. Calculamos en SQL con COALESCE.
+                leads = c.execute("""
+                    SELECT id, nombre, empresa, etapa, temperatura, fecha_ultimo_contacto, fecha_creacion
+                    FROM crm_leads
+                    WHERE modulo=? AND etapa=? AND convertido=0
+                      AND (
+                          (fecha_ultimo_contacto!='' AND date(fecha_ultimo_contacto) <= date('now',?))
+                          OR
+                          (fecha_ultimo_contacto='' AND date(fecha_creacion) <= date('now',?))
+                      )
+                """, (
+                    r['modulo'], r['etapa'],
+                    f"-{r['dias_sin_actividad']} days",
+                    f"-{r['dias_sin_actividad']} days",
+                )).fetchall()
+
+                for lead in leads:
+                    lid = lead['id']
+                    accion = r['accion']
+
+                    if accion == 'crear_tarea':
+                        # Evitar duplicar tarea abierta con el mismo título
+                        existe = c.execute(
+                            "SELECT id FROM crm_tareas WHERE lead_id=? AND completada=0 AND titulo=? LIMIT 1",
+                            (lid, r['titulo_tarea'])
+                        ).fetchone()
+                        if existe:
+                            continue
+                        c.execute("""
+                            INSERT INTO crm_tareas
+                                (lead_id, titulo, descripcion, tipo, prioridad, fecha_vencimiento)
+                            VALUES (?,?,?,?,?,date('now','+1 day'))
+                        """, (
+                            lid, r['titulo_tarea'],
+                            f"Auto-generada por regla #{r['id']} — etapa {r['etapa']} +{r['dias_sin_actividad']}d",
+                            'seguimiento_auto', r['prioridad'],
+                        ))
+                        acciones['tareas_creadas'] += 1
+                        _log_automatizacion(job, 'tarea_creada', lead_id=lid,
+                                            detalle=f"regla={r['id']} → {r['titulo_tarea']}")
+
+                    if r['cambio_temperatura'] and lead['temperatura'] != r['cambio_temperatura']:
+                        c.execute("UPDATE crm_leads SET temperatura=? WHERE id=?",
+                                  (r['cambio_temperatura'], lid))
+                        acciones['temperatura_cambiada'] += 1
+                        _log_automatizacion(job, 'temperatura', lead_id=lid,
+                                            detalle=f"{lead['temperatura']} → {r['cambio_temperatura']}")
+
+                    if accion == 'enfriar':
+                        # Ya manejado por cambio_temperatura arriba; sólo log
+                        pass
+
+                    if accion == 'marcar_perdido':
+                        c.execute(
+                            "UPDATE crm_leads SET etapa='PERDIDO', razon_perdida=? WHERE id=?",
+                            (f"Auto: sin actividad +{r['dias_sin_actividad']}d en {r['etapa']}", lid)
+                        )
+                        c.execute(
+                            "INSERT INTO crm_etapa_log (lead_id,etapa_from,etapa_to,usuario) VALUES (?,?,?,?)",
+                            (lid, lead['etapa'], 'PERDIDO', 'auto_seguimiento')
+                        )
+                        acciones['marcados_perdido'] += 1
+                        _log_automatizacion(job, 'marcado_perdido', lead_id=lid,
+                                            detalle=f"desde etapa {lead['etapa']}")
+
+                    if r['cambio_etapa'] and r['cambio_etapa'] != lead['etapa']:
+                        c.execute(
+                            "INSERT INTO crm_etapa_log (lead_id,etapa_from,etapa_to,usuario) VALUES (?,?,?,?)",
+                            (lid, lead['etapa'], r['cambio_etapa'], 'auto_seguimiento')
+                        )
+                        c.execute("UPDATE crm_leads SET etapa=? WHERE id=?",
+                                  (r['cambio_etapa'], lid))
+                        acciones['etapa_cambiada'] += 1
+                        _log_automatizacion(job, 'etapa_cambiada', lead_id=lid,
+                                            detalle=f"{lead['etapa']} → {r['cambio_etapa']}")
+
+        _log_automatizacion(job, 'fin', detalle=json.dumps(acciones, ensure_ascii=False))
+        return {'ok': True, **acciones}
+    except Exception as e:
+        _log_automatizacion(job, 'error_fatal', detalle=str(e), ok=False)
+        print(f"[job_seguimiento_pipeline] {e}")
+        return {'ok': False, 'error': str(e)}
+
+
+# Registry de jobs disponibles para ejecución manual via endpoint
+CRM_JOBS = {
+    'buscar_leads_b2b':    _job_buscar_leads_b2b,
+    'primer_contacto':     _job_primer_contacto,
+    'seguimiento_pipeline': _job_seguimiento_pipeline,
+}
+
+
+# ─── ENDPOINTS Automatización CRM ─────────────────────────────────────────────
+
+@app.route('/api/crm/automatizacion/estado')
+@login_required
+def api_crm_auto_estado():
+    """Estado general: último run de cada job + próximas ejecuciones."""
+    with db() as c:
+        ultimos = {}
+        for j in CRM_JOBS.keys():
+            row = c.execute(
+                "SELECT fecha,accion,detalle,ok FROM crm_automatizacion_log "
+                "WHERE job=? AND accion IN ('fin','error_fatal') ORDER BY id DESC LIMIT 1",
+                (j,)
+            ).fetchone()
+            ultimos[j] = dict(row) if row else None
+        # Borradores listos por revisar
+        pendientes = c.execute(
+            "SELECT COUNT(*) FROM crm_leads WHERE auto_contact_estado='borrador_listo'"
+        ).fetchone()[0]
+        # Próximas (calcula desde scheduler si está activo)
+        proximas = _scheduler_proximas_ejecuciones()
+        return jsonify({
+            'jobs':                ultimos,
+            'borradores_listos':   pendientes,
+            'proximas_ejecuciones': proximas,
+            'scheduler_activo':    bool(_SCHEDULER_INSTANCE),
+        })
+
+
+@app.route('/api/crm/automatizacion/log')
+@login_required
+def api_crm_auto_log():
+    job = request.args.get('job', '')
+    limit = min(int(request.args.get('limit', 100)), 500)
+    with db() as c:
+        sql = ("SELECT l.*, le.nombre AS lead_nombre, le.empresa "
+               "FROM crm_automatizacion_log l "
+               "LEFT JOIN crm_leads le ON le.id=l.lead_id WHERE 1=1")
+        params = []
+        if job:
+            sql += " AND l.job=?"
+            params.append(job)
+        sql += " ORDER BY l.id DESC LIMIT ?"
+        params.append(limit)
+        rows = c.execute(sql, params).fetchall()
+        return jsonify([dict(r) for r in rows])
+
+
+@app.route('/api/crm/automatizacion/ejecutar/<job_name>', methods=['POST'])
+@login_required
+def api_crm_auto_ejecutar(job_name):
+    """Dispara manualmente un job (testing o on-demand)."""
+    if job_name not in CRM_JOBS:
+        return jsonify({'error': f'Job desconocido. Disponibles: {list(CRM_JOBS.keys())}'}), 400
+    try:
+        resultado = CRM_JOBS[job_name]()
+        return jsonify({'ok': True, 'job': job_name, 'resultado': resultado})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@app.route('/api/crm/automatizacion/reglas', methods=['GET'])
+@login_required
+def api_crm_auto_reglas_list():
+    with db() as c:
+        rows = c.execute(
+            "SELECT * FROM crm_reglas_seguimiento ORDER BY modulo, etapa, dias_sin_actividad"
+        ).fetchall()
+        return jsonify([dict(r) for r in rows])
+
+
+@app.route('/api/crm/automatizacion/reglas', methods=['POST'])
+@login_required
+def api_crm_auto_reglas_create():
+    d = request.json
+    with db() as c:
+        cur = c.execute("""
+            INSERT INTO crm_reglas_seguimiento
+                (modulo,etapa,dias_sin_actividad,accion,titulo_tarea,prioridad,
+                 cambio_temperatura,cambio_etapa,activa)
+            VALUES (?,?,?,?,?,?,?,?,?)
+        """, (
+            d.get('modulo', 'B2B'),
+            d['etapa'],
+            int(d.get('dias_sin_actividad', 3)),
+            d.get('accion', 'crear_tarea'),
+            d.get('titulo_tarea', ''),
+            d.get('prioridad', 'media'),
+            d.get('cambio_temperatura', ''),
+            d.get('cambio_etapa', ''),
+            int(d.get('activa', 1)),
+        ))
+        return jsonify({'id': cur.lastrowid, 'ok': True}), 201
+
+
+@app.route('/api/crm/automatizacion/reglas/<int:rid>', methods=['PUT'])
+@login_required
+def api_crm_auto_reglas_update(rid):
+    d = request.json
+    campos_validos = ['modulo','etapa','dias_sin_actividad','accion','titulo_tarea',
+                      'prioridad','cambio_temperatura','cambio_etapa','activa']
+    sets, params = [], []
+    for c_name in campos_validos:
+        if c_name in d:
+            sets.append(f"{c_name}=?")
+            params.append(d[c_name])
+    if not sets:
+        return jsonify({'ok': True, 'sin_cambios': True})
+    params.append(rid)
+    with db() as c:
+        c.execute(f"UPDATE crm_reglas_seguimiento SET {','.join(sets)} WHERE id=?", params)
+        row = c.execute("SELECT * FROM crm_reglas_seguimiento WHERE id=?", (rid,)).fetchone()
+        return jsonify(dict(row) if row else {'ok': True})
+
+
+@app.route('/api/crm/automatizacion/reglas/<int:rid>', methods=['DELETE'])
+@login_required
+def api_crm_auto_reglas_delete(rid):
+    with db() as c:
+        c.execute("DELETE FROM crm_reglas_seguimiento WHERE id=?", (rid,))
+        return jsonify({'ok': True})
+
+
+@app.route('/api/crm/automatizacion/borradores')
+@login_required
+def api_crm_auto_borradores():
+    """Lista leads con borrador de primer contacto listo para aprobar."""
+    with db() as c:
+        rows = c.execute("""
+            SELECT l.id, l.nombre, l.empresa, l.telefono, l.email, l.etapa,
+                   l.fecha_creacion, l.auto_score,
+                   (SELECT t.titulo FROM crm_tareas t
+                    WHERE t.lead_id=l.id AND t.tipo='primer_contacto_auto'
+                      AND t.completada=0 ORDER BY t.id DESC LIMIT 1) AS tarea_titulo
+            FROM crm_leads l
+            WHERE l.auto_contact_estado='borrador_listo'
+            ORDER BY l.auto_score DESC, l.fecha_creacion ASC
+        """).fetchall()
+        return jsonify([dict(r) for r in rows])
+
+
+# ─── SCHEDULER (APScheduler) ──────────────────────────────────────────────────
+_SCHEDULER_INSTANCE = None
+_SCHEDULER_LOCK_FH = None  # file handle del lock (lo mantenemos abierto)
+
+
+def _try_acquire_scheduler_lock() -> bool:
+    """Solo un worker debe correr el scheduler. Usa flock en Linux (Railway).
+    En Windows / sin fcntl, retorna True (single-worker dev)."""
+    if os.environ.get('SCHEDULER_DISABLED', '').strip() in ('1', 'true', 'yes'):
+        return False
+    global _SCHEDULER_LOCK_FH
+    try:
+        import fcntl
+        lock_path = os.path.join(_DATA_DIR_EARLY, '.scheduler.lock')
+        fh = open(lock_path, 'w')
+        try:
+            fcntl.lockf(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            _SCHEDULER_LOCK_FH = fh  # mantener abierto
+            fh.write(str(os.getpid()))
+            fh.flush()
+            return True
+        except (BlockingIOError, OSError):
+            fh.close()
+            return False
+    except ImportError:
+        # Windows: no fcntl, asumir single-worker
+        return True
+
+
+def _scheduler_proximas_ejecuciones():
+    """Devuelve dict {job_id: next_run_iso}."""
+    if not _SCHEDULER_INSTANCE:
+        return {}
+    out = {}
+    for j in _SCHEDULER_INSTANCE.get_jobs():
+        out[j.id] = j.next_run_time.isoformat() if j.next_run_time else None
+    return out
+
+
+def _enviar_reporte_mayoristas_semanal():
+    """Envía resumen semanal de mayoristas por WhatsApp al dueño."""
+    owner = os.environ.get('OWNER_PHONE', '')
+    if not owner:
+        return
+    with db() as c:
+        nuevos  = c.execute("SELECT COUNT(*) FROM crm_leads WHERE modulo='B2B' AND strftime('%W-%Y', fecha_creacion)=strftime('%W-%Y','now')").fetchone()[0]
+        activos = c.execute("SELECT COUNT(*) FROM mayoristas WHERE activo=1").fetchone()[0]
+        deuda   = c.execute("SELECT COALESCE(SUM(monto),0) FROM mayoristas_cobranza WHERE estado IN ('PENDIENTE','VENCIDO')").fetchone()[0]
+        pedidos_semana = c.execute(
+            "SELECT COUNT(*) FROM mayoristas_pedidos WHERE strftime('%W-%Y', fecha_entrega)=strftime('%W-%Y','now')"
+        ).fetchone()[0]
+    msg = (
+        f"Mayoristas — Resumen semanal\n\n"
+        f"Clientes activos: {activos}\n"
+        f"Pedidos esta semana: {pedidos_semana}\n"
+        f"Leads nuevos: {nuevos}\n"
+        f"Por cobrar: ${float(deuda):,.0f}\n\n"
+        f"Buen lunes"
+    )
+    _send_whatsapp_agent(owner, msg)
+
+
+def _job_mayoristas_semanal():
+    """Job semanal: vencimientos, evaluar pipeline B2B, prospección, primer contacto, reporte."""
+    with app.app_context():
+        print("[mayoristas_job] Iniciando job semanal")
+        _verificar_vencimientos_cobranza()
+        # Evaluar pipeline interno
+        hoy = date.today()
+        with db() as c:
+            for etapa, dias, titulo, nueva_etapa in _REGLAS_PIPELINE_MAY:
+                cutoff = str(hoy - timedelta(days=dias))
+                leads = c.execute(
+                    """SELECT * FROM crm_leads WHERE modulo='B2B' AND etapa=? AND convertido=0
+                       AND (fecha_ultimo_contacto='' OR fecha_ultimo_contacto <= ?)""",
+                    (etapa, cutoff)
+                ).fetchall()
+                for lead in leads:
+                    existe = c.execute(
+                        "SELECT id FROM crm_tareas WHERE lead_id=? AND titulo=? AND completada=0",
+                        (lead['id'], titulo)
+                    ).fetchone()
+                    if not existe:
+                        venc = str(hoy + timedelta(days=2))
+                        c.execute(
+                            "INSERT INTO crm_tareas (lead_id, titulo, tipo, prioridad, fecha_vencimiento) VALUES (?,?,?,?,?)",
+                            (lead['id'], titulo, 'seguimiento', 'alta', venc)
+                        )
+                    if nueva_etapa:
+                        c.execute("UPDATE crm_leads SET etapa=? WHERE id=?", (nueva_etapa, lead['id']))
+        # Prospección si hay API key
+        if GOOGLE_PLACES_API_KEY:
+            with db() as c:
+                for tipo in ['restaurante', 'café', 'hotel']:
+                    for zona in COMUNAS_DESPACHO[:3]:
+                        if True:
+                            results = _buscar_google_places(tipo, zona)
+                            for r in results[:3]:
+                                score = _calcular_score_fit(r.get('tipo_negocio',''), r.get('zona',''), '')
+                                if score < 3:
+                                    continue
+                                tel = r.get('telefono','')
+                                nom = r.get('nombre','')
+                                dup = c.execute("SELECT id FROM crm_leads WHERE telefono=? OR nombre=?", (tel, nom)).fetchone()
+                                if dup:
+                                    continue
+                                c.execute(
+                                    """INSERT INTO crm_leads (modulo, nombre, empresa, telefono, zona, direccion, canal_origen, etapa, temperatura, tipo_negocio, score_fit)
+                                       VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                                    ('B2B', nom, nom, tel, zona, r.get('direccion',''),
+                                     'google_places', 'DESCUBIERTO', 'COLD', r.get('tipo_negocio',''), score)
+                                )
+        # Primer contacto: prepara borradores para aprobación del owner.
+        # Política CRM: los jobs nunca envían mensajes sin aprobación; el envío
+        # manual queda en /api/mayoristas/crm/primer-contacto.
+        cutoff_c = str(hoy - timedelta(days=3))
+        with db() as c:
+            leads_desc = c.execute(
+                "SELECT * FROM crm_leads WHERE modulo='B2B' AND etapa='DESCUBIERTO' AND (fecha_ultimo_contacto='' OR fecha_ultimo_contacto < ?) LIMIT 5",
+                (cutoff_c,)
+            ).fetchall()
+            for lead in leads_desc:
+                tel = lead['telefono']
+                if not tel:
+                    continue
+                existe = c.execute(
+                    "SELECT id FROM crm_tareas WHERE lead_id=? AND tipo='primer_contacto_auto' AND completada=0",
+                    (lead['id'],)
+                ).fetchone()
+                if existe:
+                    continue
+                msj = (
+                    f"Hola {lead['nombre']}, soy Nicolas de Aurora Bakers.\n"
+                    f"Hacemos pan de masa madre artesanal y repartimos en {lead['zona'] or 'Santiago'}.\n"
+                    f"Les gustaria probar una muestra gratis esta semana?"
+                )
+                c.execute(
+                    "INSERT INTO crm_tareas (lead_id, titulo, descripcion, tipo, prioridad, fecha_vencimiento) VALUES (?,?,?,?,?,?)",
+                    (lead['id'], f"Aprobar primer contacto — {lead['nombre']}",
+                     f"Borrador WhatsApp para {tel}:\n\n{msj}",
+                     'primer_contacto_auto', 'alta', str(hoy))
+                )
+        _enviar_reporte_mayoristas_semanal()
+        print("[mayoristas_job] Job semanal completado")
+
+
+def init_automatizacion_crm():
+    """Arranca APScheduler con los 3 jobs CRM. Idempotente — solo arranca 1 vez."""
+    global _SCHEDULER_INSTANCE
+    if _SCHEDULER_INSTANCE is not None:
+        return  # ya iniciado
+    if not _try_acquire_scheduler_lock():
+        print("[crm_auto] Scheduler omitido (otro worker tiene el lock o deshabilitado)")
+        return
+    try:
+        from apscheduler.schedulers.background import BackgroundScheduler
+        from apscheduler.triggers.cron import CronTrigger
+        sched = BackgroundScheduler(timezone='America/Santiago',
+                                    daemon=True,
+                                    job_defaults={'misfire_grace_time': 3600})
+        # Job 1: búsqueda semanal — lunes 09:00
+        sched.add_job(_job_buscar_leads_b2b,
+                      CronTrigger(day_of_week='mon', hour=9, minute=0),
+                      id='buscar_leads_b2b', replace_existing=True)
+        # Job 2: primer contacto — diario 10:00
+        sched.add_job(_job_primer_contacto,
+                      CronTrigger(hour=10, minute=0),
+                      id='primer_contacto', replace_existing=True)
+        # Job 3: seguimiento pipeline — diario 08:00
+        sched.add_job(_job_seguimiento_pipeline,
+                      CronTrigger(hour=8, minute=0),
+                      id='seguimiento_pipeline', replace_existing=True)
+        # Job 4: mayoristas — lunes 07:00
+        sched.add_job(_job_mayoristas_semanal,
+                      CronTrigger(day_of_week='mon', hour=7, minute=0),
+                      id='mayoristas_semanal', replace_existing=True)
+        # Job 5: verificar vencimientos cobranza — diario 08:30
+        sched.add_job(_verificar_vencimientos_cobranza,
+                      CronTrigger(hour=8, minute=30),
+                      id='vencimientos_cobranza', replace_existing=True)
+        sched.start()
+        _SCHEDULER_INSTANCE = sched
+        print(f"[crm_auto] APScheduler iniciado (pid={os.getpid()}) — 5 jobs registrados")
+    except Exception as e:
+        print(f"[crm_auto] No se pudo iniciar APScheduler: {e}")
 
 
 # ── Configuración CRM ────────────────────────────────────────────────────────
@@ -3895,11 +6210,23 @@ def api_inventario_create():
             )
             c.execute("UPDATE productos SET stock=? WHERE id=?", (stock, int(producto_id)))
         else:
+            # Upsert que conserva el id: INSERT OR REPLACE borraba la fila y
+            # creaba otra, dejando recetas.inventario_id en NULL (FK SET NULL).
             c.execute(
-                """INSERT OR REPLACE INTO inventario
+                """INSERT INTO inventario
                    (ingrediente, stock_kg, alerta_minimo_kg, proveedor, precio_kg,
                     ultima_actualizacion, bodega, unidad, categoria, subcategoria)
-                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                   VALUES (?,?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(ingrediente) DO UPDATE SET
+                     stock_kg=excluded.stock_kg,
+                     alerta_minimo_kg=excluded.alerta_minimo_kg,
+                     proveedor=excluded.proveedor,
+                     precio_kg=excluded.precio_kg,
+                     ultima_actualizacion=excluded.ultima_actualizacion,
+                     bodega=excluded.bodega,
+                     unidad=excluded.unidad,
+                     categoria=excluded.categoria,
+                     subcategoria=excluded.subcategoria""",
                 (d.get('ingrediente', ''), stock, float(d.get('alerta_minimo_kg', 1)),
                  d.get('proveedor', ''), float(d.get('precio_kg', 0)), date.today().isoformat(),
                  bodega, d.get('unidad', 'kg'),
@@ -3941,15 +6268,21 @@ def api_inventario_ajustar(iid):
     d = request.get_json(silent=True) or {}
     delta = float(d.get('delta', 0))
     with db() as c:
+        prev = c.execute("SELECT stock_kg FROM inventario WHERE id=?", (iid,)).fetchone()
+        if not prev:
+            return jsonify({'error': 'No encontrado'}), 404
+        # Clamp en 0 y sincronización con el delta efectivo (lo que realmente cambió)
+        nueva = max(0.0, prev['stock_kg'] + delta)
+        delta_efectivo = nueva - prev['stock_kg']
         c.execute(
-            "UPDATE inventario SET stock_kg = MAX(0, stock_kg + ?), ultima_actualizacion=? WHERE id=?",
-            (delta, date.today().isoformat(), iid)
+            "UPDATE inventario SET stock_kg=?, ultima_actualizacion=? WHERE id=?",
+            (nueva, date.today().isoformat(), iid)
         )
         row = c.execute("SELECT * FROM inventario WHERE id=?", (iid,)).fetchone()
         if row and row['bodega'] == 'productos_terminados' and row['producto_id']:
             c.execute(
-                "UPDATE productos SET stock=MAX(0, stock+?) WHERE id=?",
-                (delta, row['producto_id'])
+                "UPDATE productos SET stock=stock+? WHERE id=?",
+                (delta_efectivo, row['producto_id'])
             )
     return jsonify(dict(row) if row else {'ok': False})
 
@@ -4234,7 +6567,7 @@ def api_plan_confirmar(fecha):
                 ).fetchone()
 
             if prod:
-                # Sumar stock en inventario y en productos (ambos counters en sync)
+                # Sumar stock en inventario, productos y crear lote (3 counters en sync)
                 inv_id = _get_or_create_inv_terminado(c, prod['id'], nombre)
                 c.execute(
                     "UPDATE inventario SET stock_kg=stock_kg+?, ultima_actualizacion=date('now') WHERE id=?",
@@ -4243,6 +6576,11 @@ def api_plan_confirmar(fecha):
                 c.execute(
                     "UPDATE productos SET stock=stock+? WHERE id=?",
                     (cantidad, prod['id'])
+                )
+                c.execute(
+                    """INSERT INTO producto_lotes (producto_id, fecha_elaboracion, cantidad_inicial, cantidad_actual, notas)
+                       VALUES (?,?,?,?,?)""",
+                    (prod['id'], fecha, cantidad, cantidad, 'Producción confirmada')
                 )
                 stock_sumado.append({'nombre': nombre, 'cantidad': cantidad})
 
@@ -4667,6 +7005,12 @@ def api_produccion_batch_hornear(batch_id):
                 "UPDATE productos SET stock=stock+? WHERE id=?",
                 (cantidad, prod_id)
             )
+            c.execute(
+                """INSERT INTO producto_lotes (producto_id, fecha_elaboracion, cantidad_inicial, cantidad_actual, notas)
+                   VALUES (?,?,?,?,?)""",
+                (prod_id, fila['fecha_horneado'] or date.today().isoformat(),
+                 cantidad, cantidad, f'Batch {batch_id}')
+            )
             stock_sumado.append({'nombre': nombre, 'planificado': cantidad_plan, 'real': cantidad})
 
         rend_guardar = float(rendimiento_real) if rendimiento_real is not None else total_planificado
@@ -4700,11 +7044,11 @@ def api_produccion_manual():
         return jsonify({'error': 'producto_id y cantidad > 0 son obligatorios'}), 400
 
     with db() as c:
-        prod = c.execute("SELECT nombre, codigo FROM productos WHERE id=?", (producto_id,)).fetchone()
+        prod = c.execute("SELECT nombre FROM productos WHERE id=?", (producto_id,)).fetchone()
         if not prod:
             return jsonify({'error': 'Producto no encontrado'}), 404
         nombre  = prod['nombre']
-        codigo  = prod['codigo'] or ''
+        codigo  = 'P' + str(producto_id)
 
         inv_id = _get_or_create_inv_terminado(c, producto_id, nombre)
         c.execute(
@@ -4717,6 +7061,11 @@ def api_produccion_manual():
         )
 
         batch_id = f"manual-{uuid.uuid4().hex[:8]}"
+        c.execute(
+            """INSERT INTO producto_lotes (producto_id, fecha_elaboracion, cantidad_inicial, cantidad_actual, notas)
+               VALUES (?,?,?,?,?)""",
+            (producto_id, fecha, cantidad, cantidad, f'Batch {batch_id}')
+        )
         c.execute(
             """INSERT INTO plan_produccion
                (fecha, codigo_producto, nombre_producto, cantidad, estado, notas, producto_id,
@@ -5275,6 +7624,42 @@ def api_agentes_inventario_descontar():
 # ENDPOINTS AGENTES — CRM
 # ════════════════════════════════════════════════════════════════════════════
 
+
+# -- CRM: Captura desde WhatsApp (Sophie) ------------------------------------
+@app.route('/api/agentes/crm/whatsapp-lead', methods=['POST'])
+def api_crm_whatsapp_lead():
+    # Auth: la valida _global_auth (X-Agent-Key / sesión web)
+    d = request.json
+    telefono = (d.get('telefono') or '').strip()
+    nombre   = _limpiar_texto((d.get('nombre') or d.get('pushName') or 'Sin nombre').strip())
+    mensaje  = d.get('mensaje', '')
+    if not telefono:
+        return jsonify({'error': 'telefono requerido'}), 400
+    with db() as c:
+        lead = c.execute("SELECT * FROM crm_leads WHERE telefono=? LIMIT 1", (telefono,)).fetchone()
+        if lead:
+            c.execute("UPDATE crm_leads SET fecha_ultimo_contacto=? WHERE id=?", (str(date.today()), lead['id']))
+            if mensaje:
+                c.execute(
+                    "INSERT INTO crm_interacciones (lead_id,tipo,direccion,asunto,contenido,fecha) VALUES (?,?,?,?,?,?)",
+                    (lead['id'], 'whatsapp', 'entrante', 'Mensaje WhatsApp', mensaje[:500],
+                     datetime.now().strftime('%Y-%m-%d %H:%M'))
+                )
+            return jsonify({'action': 'updated', 'lead_id': lead['id'], 'nombre': lead['nombre']})
+        else:
+            cur = c.execute(
+                "INSERT INTO crm_leads (modulo,nombre,telefono,canal_origen,canal_origen_detalle,etapa,temperatura,fecha_ultimo_contacto) VALUES ('B2C',?,?,'whatsapp','Sophie','NUEVO','COLD',?)",
+                (nombre, telefono, str(date.today()))
+            )
+            lid = cur.lastrowid
+            if mensaje:
+                c.execute(
+                    "INSERT INTO crm_interacciones (lead_id,tipo,direccion,asunto,contenido,fecha) VALUES (?,?,?,?,?,?)",
+                    (lid, 'whatsapp', 'entrante', 'Primer contacto WhatsApp', mensaje[:500],
+                     datetime.now().strftime('%Y-%m-%d %H:%M'))
+                )
+            return jsonify({'action': 'created', 'lead_id': lid, 'nombre': nombre}), 201
+
 @app.route('/api/agentes/crm/leads', methods=['GET'])
 def api_agentes_crm_leads():
     """Lista leads con filtro opcional por etapa y módulo."""
@@ -5306,10 +7691,10 @@ def api_agentes_crm_leads_crear():
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (
             modulo,
-            d.get('nombre',''),
+            _limpiar_texto(d.get('nombre','')),
             d.get('email',''),
             d.get('telefono',''),
-            d.get('empresa',''),
+            _limpiar_texto(d.get('empresa','')),
             d.get('cargo',''),
             d.get('rut',''),
             d.get('zona',''),
@@ -5776,17 +8161,27 @@ def api_finanzas_pl():
         """, (f'-{meses}',)).fetchall()
         # Márgenes por producto (mes actual)
         mes_ini = hoy.replace(day=1).isoformat()
+        # Subquery: el filtro de fecha debe excluir las filas de venta_items,
+        # no solo dejar vn en NULL (si va en el ON del LEFT JOIN suma histórico).
         margenes = c.execute("""
             SELECT p.nombre, p.precio, p.costo,
                    CASE WHEN p.precio>0 THEN ROUND((p.precio-p.costo)*100.0/p.precio,1) ELSE 0 END as margen_pct,
-                   COUNT(vi.id) as ventas_cnt,
-                   COALESCE(SUM(vi.cantidad),0) as unidades,
-                   COALESCE(SUM(vi.cantidad*vi.precio_unitario),0) as facturado
+                   COALESCE(s.ventas_cnt, 0) as ventas_cnt,
+                   COALESCE(s.unidades, 0)   as unidades,
+                   COALESCE(s.facturado, 0)  as facturado
             FROM productos p
-            LEFT JOIN venta_items vi ON vi.producto_id=p.id
-            LEFT JOIN ventas vn ON vn.id=vi.venta_id AND vn.fecha>=?
+            LEFT JOIN (
+                SELECT vi.producto_id,
+                       COUNT(vi.id)                          as ventas_cnt,
+                       SUM(vi.cantidad)                      as unidades,
+                       SUM(vi.cantidad*vi.precio_unitario)   as facturado
+                FROM venta_items vi
+                JOIN ventas vn ON vn.id=vi.venta_id
+                WHERE vn.fecha>=?
+                GROUP BY vi.producto_id
+            ) s ON s.producto_id=p.id
             WHERE p.activo=1
-            GROUP BY p.id ORDER BY facturado DESC
+            ORDER BY facturado DESC
         """, (mes_ini,)).fetchall()
 
     # Merge por mes
@@ -5882,9 +8277,11 @@ app.register_blueprint(pos_bp)
 # Inicializar DB al importar (necesario para gunicorn, además de __main__)
 with app.app_context():
     init_db()
+    init_automatizacion_crm()
 
 if __name__ == '__main__':
     init_db()
+    init_automatizacion_crm()
     print()
     print("  Aurora Bakers -- Sistema de Ventas")
     print("  Abre:  http://127.0.0.1:5000")

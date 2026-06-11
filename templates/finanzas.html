@@ -16,10 +16,15 @@
 <!-- KPIs resumen -->
 <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:1rem;margin-bottom:1.5rem" id="kpi-row"></div>
 
+<!-- Aging de cobros -->
+<div id="aging-strip" style="display:none;margin-bottom:1.5rem">
+  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:.75rem" id="aging-cards"></div>
+</div>
+
 <!-- P&L Chart + tabla -->
 <div class="grid-2 mb-24">
   <div class="card">
-    <div class="card-header"><h3><i class="bi bi-graph-up-arrow"></i> Ingresos vs Gastos</h3></div>
+    <div class="card-header"><h3><i class="bi bi-graph-up-arrow"></i> Cobrado vs Gastos</h3></div>
     <div style="padding:1rem;position:relative;height:240px">
       <canvas id="chart-pl"></canvas>
     </div>
@@ -30,13 +35,49 @@
       <table class="table" style="margin:0">
         <thead><tr>
           <th>Mes</th>
-          <th class="right">Ingresos</th>
+          <th class="right">Facturado</th>
+          <th class="right">Cobrado</th>
           <th class="right">Gastos</th>
           <th class="right">Utilidad</th>
         </tr></thead>
         <tbody id="pl-tbody"></tbody>
       </table>
     </div>
+  </div>
+</div>
+
+<!-- Rentabilidad por canal -->
+<div class="card mb-24">
+  <div class="card-header"><h3><i class="bi bi-diagram-3"></i> Ventas por canal</h3></div>
+  <div style="overflow-x:auto">
+    <table class="table" style="margin:0">
+      <thead><tr>
+        <th>Canal</th>
+        <th class="right"># Ventas</th>
+        <th class="right">Facturado</th>
+        <th class="right">Cobrado</th>
+        <th class="right">% Cobro</th>
+      </tr></thead>
+      <tbody id="canal-tbody"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Flujo de caja proyectado -->
+<div class="card mb-24">
+  <div class="card-header"><h3><i class="bi bi-calendar-week"></i> Flujo de caja — próximas 4 semanas</h3></div>
+  <div style="overflow-x:auto">
+    <table class="table" style="margin:0">
+      <thead><tr>
+        <th>Semana</th>
+        <th class="right">Por cobrar (ventas)</th>
+        <th class="right">Suscripciones</th>
+        <th class="right">Ingresos est.</th>
+        <th class="right">Gastos fijos</th>
+        <th class="right">Flujo neto</th>
+      </tr></thead>
+      <tbody id="flujo-tbody"></tbody>
+    </table>
   </div>
 </div>
 
@@ -54,6 +95,7 @@
         <th>Notas</th>
         <th class="right">Monto</th>
         <th>F. Despacho</th>
+        <th>Días</th>
         <th>Acción</th>
       </tr></thead>
       <tbody id="pend-tbody"></tbody>
@@ -71,7 +113,7 @@
         <th class="right">Precio</th>
         <th class="right">Costo</th>
         <th class="right">Margen %</th>
-        <th class="right">Unidades vendidas</th>
+        <th class="right">Unidades</th>
         <th class="right">Facturado mes</th>
       </tr></thead>
       <tbody id="mg-tbody"></tbody>
@@ -91,7 +133,6 @@ function setMeses(btn, n) {
 }
 
 function mesLabel(s) {
-  // s = 'YYYY-MM'
   const [y, m] = s.split('-');
   const names = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
   return names[parseInt(m)-1] + ' ' + y.slice(2);
@@ -103,18 +144,24 @@ function margenColor(pct) {
   return 'var(--danger)';
 }
 
+function agingColor(bucket) {
+  if (bucket === '0-30 días') return '#16a34a';
+  if (bucket === '31-60 días') return '#d97706';
+  return '#dc2626';
+}
+
 async function load() {
   const data = await api('GET', `/api/finanzas/pl?meses=${meses}`);
-  const { pl, pendientes, margenes, resumen } = data;
+  const { pl, pendientes, canales, margenes, resumen } = data;
 
   // KPIs
   const ultMes = pl[pl.length-1] || {};
   const kpis = [
-    { label:'Ingresos último mes', val: clp(ultMes.ingresos||0), icon:'bi-arrow-up-circle', color:'#3fb950' },
-    { label:'Gastos último mes',   val: clp(ultMes.gastos||0),   icon:'bi-arrow-down-circle', color:'#f85149' },
-    { label:'Utilidad último mes', val: clp(ultMes.utilidad||0), icon:'bi-bank',             color: (ultMes.utilidad||0)>=0 ? '#3fb950' : '#f85149' },
-    { label:'Por cobrar',          val: clp(resumen.total_pendiente), icon:'bi-clock-history', color: resumen.total_pendiente > 0 ? '#f85149' : '#3fb950' },
-    { label:'Facturas pendientes', val: resumen.total_pendiente_count, icon:'bi-receipt',      color: resumen.total_pendiente_count > 0 ? '#e3b341' : '#3fb950' },
+    { label:'Cobrado último mes',   val: clp(ultMes.cobrado||0),   icon:'bi-arrow-up-circle',   color:'#3fb950' },
+    { label:'Facturado último mes', val: clp(ultMes.facturado||0), icon:'bi-receipt',            color:'#58a6ff' },
+    { label:'Gastos último mes',    val: clp(ultMes.gastos||0),    icon:'bi-arrow-down-circle',  color:'#f85149' },
+    { label:'Utilidad último mes',  val: clp(ultMes.utilidad||0),  icon:'bi-bank',               color:(ultMes.utilidad||0)>=0?'#3fb950':'#f85149' },
+    { label:'Por cobrar total',     val: clp(resumen.total_pendiente), icon:'bi-clock-history',  color:resumen.total_pendiente>0?'#f85149':'#3fb950' },
   ];
   document.getElementById('kpi-row').innerHTML = kpis.map(k => `
     <div class="card" style="padding:1rem;text-align:center">
@@ -122,6 +169,23 @@ async function load() {
       <div style="font-size:1.3rem;font-weight:700;margin:.25rem 0">${k.val}</div>
       <div style="font-size:.72rem;color:var(--muted)">${k.label}</div>
     </div>`).join('');
+
+  // Aging cards
+  const agingStrip = document.getElementById('aging-strip');
+  if (resumen.total_pendiente > 0) {
+    agingStrip.style.display = '';
+    document.getElementById('aging-cards').innerHTML = [
+      { label:'0–30 días', val: resumen.aging_30,  color:'#dcfce7', border:'#16a34a', text:'#15803d' },
+      { label:'31–60 días',val: resumen.aging_60,  color:'#fef9c3', border:'#ca8a04', text:'#92400e' },
+      { label:'+60 días',  val: resumen.aging_mas, color:'#fee2e2', border:'#ef4444', text:'#991b1b' },
+    ].map(a => `
+      <div style="background:${a.color};border:1px solid ${a.border};border-radius:.5rem;padding:.85rem;text-align:center">
+        <div style="font-size:1.1rem;font-weight:700;color:${a.text}">${clp(a.val)}</div>
+        <div style="font-size:.75rem;color:${a.text};font-weight:600">${a.label}</div>
+      </div>`).join('');
+  } else {
+    agingStrip.style.display = 'none';
+  }
 
   // Chart P&L
   if (chartPL) chartPL.destroy();
@@ -131,38 +195,17 @@ async function load() {
     data: {
       labels,
       datasets: [
-        {
-          label: 'Ingresos',
-          data: pl.map(r => r.ingresos),
-          backgroundColor: 'rgba(63,185,80,.6)',
-          borderColor: '#3fb950',
-          borderWidth: 1, borderRadius: 4,
-        },
-        {
-          label: 'Gastos',
-          data: pl.map(r => r.gastos),
-          backgroundColor: 'rgba(248,81,73,.5)',
-          borderColor: '#f85149',
-          borderWidth: 1, borderRadius: 4,
-        },
-        {
-          label: 'Utilidad',
-          data: pl.map(r => r.utilidad),
-          type: 'line',
-          borderColor: '#C8956B',
-          backgroundColor: 'rgba(200,149,107,.1)',
-          borderWidth: 2, pointRadius: 4,
-          fill: false, tension: 0.3,
-          yAxisID: 'y',
-        },
+        { label:'Cobrado',   data:pl.map(r=>r.cobrado),   backgroundColor:'rgba(63,185,80,.6)',  borderColor:'#3fb950', borderWidth:1, borderRadius:4 },
+        { label:'Gastos',    data:pl.map(r=>r.gastos),    backgroundColor:'rgba(248,81,73,.5)',  borderColor:'#f85149', borderWidth:1, borderRadius:4 },
+        { label:'Utilidad',  data:pl.map(r=>r.utilidad),  type:'line', borderColor:'#C8956B',
+          backgroundColor:'rgba(200,149,107,.1)', borderWidth:2, pointRadius:4, fill:false, tension:0.3 },
       ]
     },
     options: {
-      responsive: true, maintainAspectRatio: false,
+      responsive:true, maintainAspectRatio:false,
       plugins: {
-        legend: { display: true, position: 'bottom',
-          labels: { color:'#c9d1d9', font:{size:11}, padding:12, boxWidth:10 }},
-        tooltip: { callbacks: { label: ctx => ' '+clp(ctx.raw) }}
+        legend:  { display:true, position:'bottom', labels:{ color:'#c9d1d9', font:{size:11}, padding:12, boxWidth:10 }},
+        tooltip: { callbacks:{ label: ctx => ' '+clp(ctx.raw) }}
       },
       scales: {
         x: { grid:{ color:'rgba(48,54,61,.6)' }, ticks:{ color:'#8b949e', font:{size:11} } },
@@ -174,34 +217,47 @@ async function load() {
   // Tabla P&L
   document.getElementById('pl-tbody').innerHTML = [...pl].reverse().map(r => {
     const utilColor = r.utilidad >= 0 ? 'var(--success)' : 'var(--danger)';
+    const pendPct   = r.facturado > 0 ? Math.round((r.facturado - r.cobrado) / r.facturado * 100) : 0;
     return `<tr>
       <td>${mesLabel(r.mes)}</td>
-      <td class="right">${clp(r.ingresos)}</td>
+      <td class="right">${clp(r.facturado)}</td>
+      <td class="right">${clp(r.cobrado)}${pendPct>0?` <span style="font-size:.7rem;color:var(--warning)">(${pendPct}% pend.)</span>`:''}` +`</td>
       <td class="right">${clp(r.gastos)}</td>
       <td class="right" style="font-weight:700;color:${utilColor}">${clp(r.utilidad)}</td>
     </tr>`;
-  }).join('') || '<tr><td colspan="4"><div class="empty"><i class="bi bi-bar-chart"></i><p>Sin datos</p></div></td></tr>';
+  }).join('') || '<tr><td colspan="5"><div class="empty"><i class="bi bi-bar-chart"></i><p>Sin datos</p></div></td></tr>';
+
+  // Canal breakdown
+  document.getElementById('canal-tbody').innerHTML = (canales||[]).map(c => {
+    const pct = c.facturado > 0 ? Math.round(c.cobrado / c.facturado * 100) : 0;
+    const pctColor = pct >= 80 ? 'var(--success)' : pct >= 50 ? 'var(--warning)' : 'var(--danger)';
+    return `<tr>
+      <td><strong>${c.canal}</strong></td>
+      <td class="right">${c.num_ventas}</td>
+      <td class="right">${clp(c.facturado)}</td>
+      <td class="right">${clp(c.cobrado)}</td>
+      <td class="right"><span style="font-weight:700;color:${pctColor}">${pct}%</span></td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:1rem">Sin datos</td></tr>';
 
   // Cobros pendientes
   const pb = document.getElementById('pend-badge');
   if (pendientes.length) {
     pb.style.display = '';
     pb.textContent = pendientes.length + ' pendientes';
-  } else {
-    pb.style.display = 'none';
-  }
-  document.getElementById('pend-tbody').innerHTML = pendientes.map(p => `<tr>
-    <td style="white-space:nowrap">${p.fecha}</td>
-    <td>${p.cliente_nombre || '<span style="color:var(--muted)">Sin cliente</span>'}</td>
-    <td style="color:var(--muted);font-size:.8rem">${p.notas || '—'}</td>
-    <td class="right"><strong style="color:var(--danger)">${clp(p.total)}</strong></td>
-    <td style="color:var(--muted);font-size:.8rem">${p.fecha_despacho || '—'}</td>
-    <td>
-      <button class="btn btn-success btn-sm" onclick="marcarPagado(${p.id})">
-        <i class="bi bi-check-circle"></i> Cobrado
-      </button>
-    </td>
-  </tr>`).join('') || '<tr><td colspan="6"><div class="empty" style="padding:2rem"><i class="bi bi-check-all"></i><p>Sin cobros pendientes</p></div></td></tr>';
+  } else pb.style.display = 'none';
+  document.getElementById('pend-tbody').innerHTML = pendientes.map(p => {
+    const diasColor = p.dias_pendiente > 60 ? '#dc2626' : p.dias_pendiente > 30 ? '#d97706' : 'var(--muted)';
+    return `<tr>
+      <td style="white-space:nowrap">${p.fecha}</td>
+      <td>${p.cliente_nombre || '<span style="color:var(--muted)">Sin cliente</span>'}</td>
+      <td style="color:var(--muted);font-size:.8rem">${p.notas || '—'}</td>
+      <td class="right"><strong style="color:var(--danger)">${clp(p.total)}</strong></td>
+      <td style="color:var(--muted);font-size:.8rem">${p.fecha_despacho || '—'}</td>
+      <td style="font-size:.8rem;font-weight:600;color:${diasColor}">${p.dias_pendiente}d<br><span style="font-weight:400">${p.aging}</span></td>
+      <td><button class="btn btn-success btn-sm" onclick="marcarPagado(${p.id})"><i class="bi bi-check-circle"></i> Cobrado</button></td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="7"><div class="empty" style="padding:2rem"><i class="bi bi-check-all"></i><p>Sin cobros pendientes</p></div></td></tr>';
 
   // Márgenes
   document.getElementById('mg-tbody').innerHTML = margenes.map(p => {
@@ -215,6 +271,27 @@ async function load() {
       <td class="right">${clp(p.facturado)}</td>
     </tr>`;
   }).join('') || '<tr><td colspan="6"><div class="empty" style="padding:2rem"><i class="bi bi-basket"></i><p>Sin productos</p></div></td></tr>';
+
+  // Flujo de caja
+  loadFlujoCaja();
+}
+
+async function loadFlujoCaja() {
+  try {
+    const semanas = await api('GET', '/api/finanzas/flujo-caja');
+    document.getElementById('flujo-tbody').innerHTML = semanas.map((s, i) => {
+      const flujoColor = s.flujo_neto >= 0 ? 'var(--success)' : 'var(--danger)';
+      const label = i === 0 ? 'Esta semana' : `Semana ${s.semana}`;
+      return `<tr>
+        <td><strong>${label}</strong><br><span style="font-size:.75rem;color:var(--muted)">${s.desde} → ${s.hasta}</span></td>
+        <td class="right">${clp(s.ventas_cobro)}<br><span style="font-size:.72rem;color:var(--muted)">${s.ventas_cnt} ventas</span></td>
+        <td class="right">${clp(s.subs_cobro)}<br><span style="font-size:.72rem;color:var(--muted)">${s.subs_cnt} subs</span></td>
+        <td class="right"><strong>${clp(s.ingresos)}</strong></td>
+        <td class="right" style="color:var(--danger)">${clp(s.gastos_fijos)}</td>
+        <td class="right"><strong style="color:${flujoColor}">${clp(s.flujo_neto)}</strong></td>
+      </tr>`;
+    }).join('');
+  } catch(e) {}
 }
 
 async function marcarPagado(id) {

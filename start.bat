@@ -1,7 +1,7 @@
 @echo off
 cd /d "%~dp0"
 echo.
-echo   Aurora Bakers ^— Sistema de Ventas
+echo   Aurora Bakers — Sistema de Ventas
 echo   =====================================
 echo.
 
@@ -12,14 +12,13 @@ if not exist venv (
         echo.
         echo   ERROR: Python no encontrado.
         echo   Descargalo en https://python.org
+        echo   Asegurate de marcar "Add Python to PATH" al instalar.
         pause & exit /b 1
     )
-    venv\Scripts\pip install flask --quiet
+    venv\Scripts\pip install -r requirements.txt --quiet
     echo   Dependencias instaladas.
     echo.
 )
-
-set GOOGLE_PLACES_API_KEY=AIzaSyA7_nd5CxsV22JmJfyhPedvxhVWAGxiBis
 
 echo   Iniciando servidor...
 timeout /t 2 /nobreak >nul

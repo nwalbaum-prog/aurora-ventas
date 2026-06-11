@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% block title %}Cobranza Mayoristas{% endblock %}
+{% block page_title %}Mayoristas B2B{% endblock %}
+
+{% block content %}
+<div class="toolbar">
+  <div style="display:flex;gap:8px">
+    <a href="/mayoristas"          class="btn btn-secondary btn-sm">Dashboard</a>
+    <a href="/mayoristas/clientes" class="btn btn-secondary btn-sm">Clientes</a>
+    <a href="/mayoristas/pedidos"  class="btn btn-secondary btn-sm">Pedidos</a>
+    <a href="/mayoristas/cobranza" class="btn btn-primary  btn-sm">Cobranza</a>
+  </div>
+  <div class="toolbar-right">
+    <select id="sel-periodo" class="form-control form-control-sm" style="width:auto" onchange="cargar()">
+      <option value="30">Últimos 30 días</option>
+      <option value="60">Últimos 60 días</option>
+      <option value="90">Últimos 90 días</option>
+      <option value="365">Último año</option>
+    </select>
+  </div>
+</div>
+
+<div id="kpis" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:16px"></div>
+
+<div class="card">
+  <table class="table" id="tbl">
+    <thead>
+      <tr>
+        <th>Fecha</th>
+        <th>Cliente</th>
+        <th>Total</th>
+        <th>Estado pago</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+function fmtP(n){return'$'+Math.round(n||0).toLocaleString('es-CL');}
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function fmtFecha(s){return s?s.slice(0,10):'';}
+
+const PAGO_COLOR={PENDIENTE:'pausado',PAGADO:'activo',CANCELADO:'cancelado'};
+
+async function cargar(){
+  const dias=parseInt(document.getElementById('sel-periodo').value)||30;
+  const hasta=new Date(); const desde=new Date(); desde.setDate(desde.getDate()-dias);
+  const fmt=d=>d.toISOString().slice(0,10);
+
+  const ventas=await api('GET',`/api/ventas?canal=MAYORISTA&desde=${fmt(desde)}&hasta=${fmt(hasta)}`).catch(e=>{toast(e.message,'error');return [];});
+
+  // KPIs
+  const total=ventas.reduce((s,v)=>s+v.total,0);
+  const pendiente=ventas.filter(v=>v.estado_pago==='PENDIENTE').reduce((s,v)=>s+v.total,0);
+  const cobrado=ventas.filter(v=>v.estado_pago==='PAGADO').reduce((s,v)=>s+v.total,0);
+  document.getElementById('kpis').innerHTML=[
+    {l:'Total periodo',v:fmtP(total),i:'bi-cash-stack'},
+    {l:'Cobrado',v:fmtP(cobrado),i:'bi-check-circle',ok:true},
+    {l:'Pendiente',v:fmtP(pendiente),i:'bi-hourglass-split',danger:pendiente>0},
+    {l:'Ventas',v:ventas.length,i:'bi-receipt'},
+  ].map(k=>`<div class="kpi-card">
+    <div class="kpi-label"><i class="bi ${k.i}"></i> ${k.l}</div>
+    <div class="kpi-value" style="${k.danger?'color:var(--danger)':k.ok?'color:var(--success)':''}">${k.v}</div>
+  </div>`).join('');
+
+  const tbody=document.getElementById('tbody');
+  if(!ventas.length){
+    tbody.innerHTML='<tr><td colspan="5" class="empty">Sin ventas mayoristas en el periodo</td></tr>';
+    return;
+  }
+  tbody.innerHTML=ventas.map(v=>`<tr style="${v.estado_pago==='PENDIENTE'?'background:var(--warning-light,#fff8e1)':''}">
+    <td>${fmtFecha(v.fecha)}</td>
+    <td><strong>${esc(v.cliente_nombre||'—')}</strong></td>
+    <td>${fmtP(v.total)}</td>
+    <td><span class="badge badge-${PAGO_COLOR[v.estado_pago]||'pausado'}">${esc(v.estado_pago)}</span></td>
+    <td>
+      ${v.estado_pago==='PENDIENTE'
+        ?`<button class="btn btn-primary btn-sm" onclick="marcarPagado(${v.id},this)"><i class="bi bi-check-lg"></i> Marcar pagado</button>`
+        :''}
+    </td>
+  </tr>`).join('');
+}
+
+async function marcarPagado(vid, btn){
+  btn.disabled=true;
+  try{
+    await api('PUT',`/api/ventas/${vid}`,{estado_pago:'PAGADO'});
+    toast('Marcado como pagado','success');
+    cargar();
+  }catch(e){toast(e.message,'error');btn.disabled=false;}
+}
+
+cargar();
+</script>
+{% endblock %}

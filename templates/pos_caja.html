@@ -54,7 +54,7 @@
     <button class="btn btn-primary btn-sm" onclick="modalPromo()">+ Nueva promoción</button>
   </div>
   <table class="table" id="tabla-promos">
-    <thead><tr><th>Nombre</th><th>Tipo</th><th>Valor</th><th>Estado</th><th></th></tr></thead>
+    <thead><tr><th>Nombre</th><th>Tipo</th><th>Producto</th><th>Cant. mín.</th><th>Valor</th><th>Estado</th><th></th></tr></thead>
     <tbody></tbody>
   </table>
 </div>
@@ -65,15 +65,27 @@
     <div class="modal-header"><h4 id="modal-promo-title">Nueva promoción</h4><button onclick="cerrarModalPromo()">✕</button></div>
     <div class="modal-body">
       <input type="hidden" id="promo-id">
-      <label>Nombre</label><input id="promo-nombre" class="form-control" placeholder="Ej: Descuento de bienvenida">
+      <label>Nombre</label>
+      <input id="promo-nombre" class="form-control" placeholder="Ej: Descuento marraquetas">
       <label class="mt-2">Tipo</label>
-      <select id="promo-tipo" class="form-control">
-        <option value="porcentaje">Porcentaje (%)</option>
-        <option value="fijo">Monto fijo ($)</option>
+      <select id="promo-tipo" class="form-control" onchange="actualizarCamposPromo()">
+        <option value="porcentaje">Porcentaje (%) sobre el subtotal del producto</option>
+        <option value="precio_unidad">Precio por unidad ($) al comprar X o más</option>
+        <option value="fijo">Descuento fijo ($) al total</option>
         <option value="2x1">2x1</option>
       </select>
-      <label class="mt-2">Valor (% o $, ignorado en 2x1)</label>
-      <input id="promo-valor" class="form-control" type="number" min="0" placeholder="0">
+      <label class="mt-2">Producto (opcional — deja vacío para aplicar a toda la venta)</label>
+      <select id="promo-producto" class="form-control">
+        <option value="">— Toda la venta —</option>
+      </select>
+      <div id="campo-cant-min" class="mt-2">
+        <label>Cantidad mínima (0 = sin mínimo)</label>
+        <input id="promo-cant-min" class="form-control" type="number" min="0" placeholder="0">
+      </div>
+      <div id="campo-valor" class="mt-2">
+        <label id="label-valor">Valor</label>
+        <input id="promo-valor" class="form-control" type="number" min="0" placeholder="0">
+      </div>
       <label class="mt-2">Fecha inicio (opcional)</label>
       <input id="promo-inicio" class="form-control" type="date">
       <label class="mt-2">Fecha fin (opcional)</label>
@@ -132,58 +144,117 @@ async function cargarResumen() {
   };
 }
 
+let _productosCache = [];
+
+async function cargarProductosEnSelect() {
+  if (_productosCache.length) return;
+  const r = await fetch('/api/productos');
+  _productosCache = await r.json();
+  const sel = document.getElementById('promo-producto');
+  _productosCache.forEach(p => {
+    const opt = document.createElement('option');
+    opt.value = p.id;
+    opt.textContent = p.nombre;
+    sel.appendChild(opt);
+  });
+}
+
+function actualizarCamposPromo() {
+  const tipo = document.getElementById('promo-tipo').value;
+  const lv   = document.getElementById('label-valor');
+  const cv   = document.getElementById('campo-valor');
+  if (tipo === 'porcentaje') {
+    lv.textContent = 'Descuento (%)';
+    cv.style.display = '';
+  } else if (tipo === 'precio_unidad') {
+    lv.textContent = 'Precio nuevo por unidad ($)';
+    cv.style.display = '';
+  } else if (tipo === 'fijo') {
+    lv.textContent = 'Descuento fijo ($)';
+    cv.style.display = '';
+  } else if (tipo === '2x1') {
+    cv.style.display = 'none';
+  }
+}
+
+function _tipoLabel(tipo) {
+  return { porcentaje: 'Porcentaje', precio_unidad: 'Precio/unidad', fijo: 'Descuento fijo', '2x1': '2x1' }[tipo] || tipo;
+}
+
+function _valorLabel(p) {
+  if (p.tipo === '2x1') return '—';
+  if (p.tipo === 'porcentaje') return p.valor + '%';
+  return '$' + Number(p.valor).toLocaleString('es-CL');
+}
+
 async function cargarPromos() {
   const r = await fetch('/api/pos/promociones');
   const promos = await r.json();
   const tbody = document.querySelector('#tabla-promos tbody');
-  tbody.innerHTML = promos.map(p => `
+  tbody.innerHTML = promos.map(p => {
+    const prod = _productosCache.find(x => x.id === p.producto_id);
+    return `
     <tr>
       <td>${p.nombre}</td>
-      <td>${p.tipo}</td>
-      <td>${p.tipo === '2x1' ? '—' : p.tipo === 'porcentaje' ? p.valor + '%' : '$' + p.valor.toLocaleString('es-CL')}</td>
+      <td>${_tipoLabel(p.tipo)}</td>
+      <td>${prod ? prod.nombre : '<span style="color:var(--text-3)">Toda la venta</span>'}</td>
+      <td>${p.cantidad_minima ? p.cantidad_minima + '+' : '—'}</td>
+      <td>${_valorLabel(p)}</td>
       <td><span class="badge ${p.activa ? 'badge-success' : 'badge-secondary'}">${p.activa ? 'Activa' : 'Inactiva'}</span></td>
       <td>
         <button class="btn btn-sm btn-secondary" onclick="editarPromo(${p.id})">Editar</button>
         <button class="btn btn-sm btn-danger"    onclick="eliminarPromo(${p.id})">Eliminar</button>
       </td>
-    </tr>`).join('');
+    </tr>`;
+  }).join('');
 }
 
-function modalPromo() {
-  document.getElementById('promo-id').value     = '';
-  document.getElementById('promo-nombre').value = '';
-  document.getElementById('promo-tipo').value   = 'porcentaje';
-  document.getElementById('promo-valor').value  = '';
-  document.getElementById('promo-inicio').value = '';
-  document.getElementById('promo-fin').value    = '';
+async function modalPromo() {
+  await cargarProductosEnSelect();
+  document.getElementById('promo-id').value       = '';
+  document.getElementById('promo-nombre').value   = '';
+  document.getElementById('promo-tipo').value     = 'porcentaje';
+  document.getElementById('promo-producto').value = '';
+  document.getElementById('promo-cant-min').value = '0';
+  document.getElementById('promo-valor').value    = '';
+  document.getElementById('promo-inicio').value   = '';
+  document.getElementById('promo-fin').value      = '';
   document.getElementById('modal-promo-title').textContent = 'Nueva promoción';
+  actualizarCamposPromo();
   document.getElementById('modal-promo').style.display = 'flex';
 }
 function cerrarModalPromo() { document.getElementById('modal-promo').style.display = 'none'; }
 
 async function editarPromo(id) {
+  await cargarProductosEnSelect();
   const r = await fetch('/api/pos/promociones');
   const promos = await r.json();
   const p = promos.find(x => x.id === id);
   if (!p) return;
-  document.getElementById('promo-id').value     = p.id;
-  document.getElementById('promo-nombre').value = p.nombre;
-  document.getElementById('promo-tipo').value   = p.tipo;
-  document.getElementById('promo-valor').value  = p.valor;
-  document.getElementById('promo-inicio').value = p.fecha_inicio || '';
-  document.getElementById('promo-fin').value    = p.fecha_fin    || '';
+  document.getElementById('promo-id').value       = p.id;
+  document.getElementById('promo-nombre').value   = p.nombre;
+  document.getElementById('promo-tipo').value     = p.tipo;
+  document.getElementById('promo-producto').value = p.producto_id || '';
+  document.getElementById('promo-cant-min').value = p.cantidad_minima || 0;
+  document.getElementById('promo-valor').value    = p.valor;
+  document.getElementById('promo-inicio').value   = p.fecha_inicio || '';
+  document.getElementById('promo-fin').value      = p.fecha_fin    || '';
   document.getElementById('modal-promo-title').textContent = 'Editar promoción';
+  actualizarCamposPromo();
   document.getElementById('modal-promo').style.display = 'flex';
 }
 
 async function guardarPromo() {
-  const id     = document.getElementById('promo-id').value;
-  const body   = {
-    nombre: document.getElementById('promo-nombre').value.trim(),
-    tipo:   document.getElementById('promo-tipo').value,
-    valor:  parseFloat(document.getElementById('promo-valor').value) || 0,
-    fecha_inicio: document.getElementById('promo-inicio').value || null,
-    fecha_fin:    document.getElementById('promo-fin').value    || null,
+  const id   = document.getElementById('promo-id').value;
+  const tipo = document.getElementById('promo-tipo').value;
+  const body = {
+    nombre:         document.getElementById('promo-nombre').value.trim(),
+    tipo,
+    valor:          parseFloat(document.getElementById('promo-valor').value) || 0,
+    producto_id:    document.getElementById('promo-producto').value || null,
+    cantidad_minima:parseInt(document.getElementById('promo-cant-min').value) || 0,
+    fecha_inicio:   document.getElementById('promo-inicio').value || null,
+    fecha_fin:      document.getElementById('promo-fin').value    || null,
     activa: 1
   };
   const url    = id ? `/api/pos/promociones/${id}` : '/api/pos/promociones';
@@ -201,6 +272,6 @@ async function eliminarPromo(id) {
 }
 
 cargarResumen();
-cargarPromos();
+cargarProductosEnSelect().then(() => cargarPromos());
 </script>
 {% endblock %}

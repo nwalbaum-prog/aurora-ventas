@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block title %}Producción Mayoristas{% endblock %}
+{% block page_title %}Plan de Producción B2B{% endblock %}
+
+{% block content %}
+
+<div class="toolbar">
+  <div style="display:flex;align-items:center;gap:8px">
+    <a href="/mayoristas" class="btn btn-secondary btn-sm"><i class="bi bi-speedometer2"></i> Dashboard</a>
+    <span id="lbl-semana" style="font-size:.88rem;color:var(--muted)"></span>
+  </div>
+  <div class="toolbar-right">
+    <button class="btn btn-secondary btn-sm" id="btn-generar" onclick="generarPlan()"><i class="bi bi-fire"></i> Generar Plan</button>
+  </div>
+</div>
+
+<div id="contenido-wrap"></div>
+
+<script>
+async function api(m,u,b){const o={method:m,headers:{'Content-Type':'application/json'}};if(b)o.body=JSON.stringify(b);const r=await fetch(u,o);if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.error||`Error ${r.status}`);}return r.json();}
+const $id = id => document.getElementById(id);
+function escHtml(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function fmtFecha(s){if(!s)return'—';const[y,m,d]=s.split('-');return`${d}/${m}/${y}`;}
+
+const DIAS_ES = {lunes:'Lunes',martes:'Martes',miercoles:'Miércoles',jueves:'Jueves',viernes:'Viernes',sabado:'Sábado',domingo:'Domingo'};
+
+function renderDia(dia, datos) {
+  const productos = datos.productos || {};
+  const pedidos = datos.pedidos || [];
+  const totalPanes = Object.values(productos).reduce((s,v)=>s+(v||0),0);
+  const hasData = Object.keys(productos).length > 0;
+  return `
+    <div class="card" style="margin-bottom:16px">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 16px;background:var(--bg-hover);border-radius:var(--r) var(--r) 0 0;border-bottom:1px solid var(--border)">
+        <div style="display:flex;align-items:center;gap:10px">
+          <strong style="font-size:.95rem">${DIAS_ES[dia]||dia}</strong>
+          <span style="font-size:.78rem;color:var(--muted)">${fmtFecha(datos.fecha)}</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="font-size:.82rem;color:var(--muted)">${totalPanes.toLocaleString('es-CL')} unidades total</span>
+          <span class="badge badge-blue">${pedidos.length} pedido${pedidos.length!==1?'s':''}</span>
+        </div>
+      </div>
+      ${hasData ? `
+      <div style="padding:12px 16px">
+        <div class="table-wrap" style="margin-bottom:12px">
+          <table>
+            <thead><tr><th>Producto</th><th style="text-align:right">Cantidad</th></tr></thead>
+            <tbody>
+              ${Object.entries(productos).map(([prod,cant])=>`
+                <tr>
+                  <td style="font-size:.88rem">${escHtml(prod)}</td>
+                  <td style="text-align:right;font-weight:600;font-size:.88rem">${(cant||0).toLocaleString('es-CL')}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+        <div>
+          <div style="font-size:.78rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin-bottom:6px">Pedidos del día</div>
+          ${pedidos.map(p=>`
+            <details style="margin-bottom:4px;border:1px solid var(--border);border-radius:6px">
+              <summary style="padding:7px 12px;cursor:pointer;font-size:.85rem;font-weight:600;list-style:none;display:flex;justify-content:space-between;align-items:center">
+                <span>${escHtml(p.mayorista_nombre||'Cliente')}</span>
+                <span style="font-size:.78rem;color:var(--muted)">#${p.id}</span>
+              </summary>
+              <div style="padding:8px 12px;border-top:1px solid var(--border)">
+                ${(p.items||[]).map(i=>`
+                  <div style="display:flex;justify-content:space-between;font-size:.82rem;padding:2px 0">
+                    <span>${escHtml(i.producto_nombre||i.nombre||'—')}</span>
+                    <span style="font-weight:600">${(i.cantidad||0).toLocaleString('es-CL')}</span>
+                  </div>
+                `).join('')}
+                ${p.notas?`<div style="margin-top:6px;font-size:.78rem;color:var(--muted);font-style:italic">${escHtml(p.notas)}</div>`:''}
+              </div>
+            </details>
+          `).join('')}
+        </div>
+      </div>` : `<div class="empty" style="padding:24px">Sin pedidos este día</div>`}
+    </div>
+  `;
+}
+
+async function load() {
+  try {
+    const d = await api('GET', '/api/mayoristas/produccion/semana');
+    const semana = d.semana || d;
+    if(d.semana_label) $id('lbl-semana').textContent = d.semana_label;
+    const wrap = $id('contenido-wrap');
+    const dias = Object.keys(semana);
+    if(!dias.length) {
+      wrap.innerHTML = '<div class="card"><div class="empty" style="padding:32px">Sin pedidos esta semana. Usa "Generar Plan" para crear el resumen.</div></div>';
+      return;
+    }
+    wrap.innerHTML = dias.map(dia => renderDia(dia, semana[dia])).join('');
+  } catch(e){ toast('Error: '+e.message,'error'); }
+}
+
+async function generarPlan() {
+  const btn = $id('btn-generar');
+  btn.disabled = true;
+  btn.innerHTML = '<i class="bi bi-hourglass-split"></i> Generando...';
+  try {
+    await api('POST', '/api/mayoristas/produccion/generar', {});
+    toast('Plan generado','success');
+    await load();
+  } catch(e){ toast('Error: '+e.message,'error'); }
+  finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-fire"></i> Generar Plan';
+  }
+}
+
+(async function init(){await load();})();
+</script>
+{% endblock %}

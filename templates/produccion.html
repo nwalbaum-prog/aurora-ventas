@@ -15,11 +15,31 @@
     <button class="btn btn-secondary btn-sm" onclick="cambiarFecha(1)">Siguiente →</button>
   </div>
 
-  <!-- Botón generar plan -->
-  <div style="margin-bottom:1.5rem;text-align:right">
+  <!-- Botones de acción -->
+  <div style="margin-bottom:1.5rem;display:flex;gap:.5rem;justify-content:flex-end;flex-wrap:wrap">
+    <button class="btn btn-secondary" onclick="toggleVistaSemana()">
+      <i class="bi bi-calendar-week"></i> Vista semana
+    </button>
+    <button class="btn btn-secondary" onclick="abrirModalManual()">
+      <i class="bi bi-plus-circle"></i> Carga manual
+    </button>
     <button class="btn btn-primary" onclick="abrirModalGenerar()">
       <i class="bi bi-calendar-plus"></i> Generar plan desde ventas
     </button>
+  </div>
+
+  <!-- Vista semanal (oculta por defecto) -->
+  <div id="vista-semana" style="display:none;margin-bottom:2rem">
+    <div class="card">
+      <div class="card-header">
+        <h3 style="font-size:.9rem"><i class="bi bi-calendar-week"></i> Resumen semanal</h3>
+        <div style="display:flex;gap:.5rem">
+          <button class="btn btn-secondary btn-sm" onclick="navegarSemana(-7)">← Anterior</button>
+          <button class="btn btn-secondary btn-sm" onclick="navegarSemana(7)">Siguiente →</button>
+        </div>
+      </div>
+      <div id="semana-grid" style="display:grid;grid-template-columns:repeat(7,1fr);gap:.5rem;padding:1rem;overflow-x:auto"></div>
+    </div>
   </div>
 
   <!-- Sección HORNEAR HOY -->
@@ -61,6 +81,56 @@
 
 </div>
 
+<!-- Modal: Carga Manual -->
+<div id="modal-manual" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);
+     z-index:1000;align-items:center;justify-content:center">
+  <div style="background:var(--surface);border-radius:.75rem;padding:1.5rem;
+               width:min(95vw,460px);box-shadow:0 20px 60px rgba(0,0,0,.3)">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1.25rem">
+      <h3 style="margin:0;font-size:1rem;font-weight:700">Carga manual de producción</h3>
+      <button class="btn btn-secondary btn-sm" onclick="cerrarModalManual()">✕</button>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:.85rem">
+      <div>
+        <label style="font-size:.82rem;font-weight:600;color:var(--muted);display:block;margin-bottom:.3rem">Producto</label>
+        <select id="manual-producto" style="width:100%;padding:.45rem .65rem;border:1px solid var(--border);
+                border-radius:.4rem;background:var(--bg);color:var(--text);font-size:.9rem">
+          <option value="">Cargando productos...</option>
+        </select>
+      </div>
+      <div>
+        <label style="font-size:.82rem;font-weight:600;color:var(--muted);display:block;margin-bottom:.3rem">Cantidad (unidades)</label>
+        <input type="number" id="manual-cantidad" min="1" step="1" placeholder="ej: 20"
+               style="width:100%;padding:.45rem .65rem;border:1px solid var(--border);
+                      border-radius:.4rem;background:var(--bg);color:var(--text);font-size:.9rem">
+      </div>
+      <div>
+        <label style="font-size:.82rem;font-weight:600;color:var(--muted);display:block;margin-bottom:.3rem">Fecha</label>
+        <input type="date" id="manual-fecha"
+               style="width:100%;padding:.45rem .65rem;border:1px solid var(--border);
+                      border-radius:.4rem;background:var(--bg);color:var(--text);font-size:.9rem">
+      </div>
+      <div>
+        <label style="font-size:.82rem;font-weight:600;color:var(--muted);display:block;margin-bottom:.3rem">Notas (opcional)</label>
+        <input type="text" id="manual-notas" placeholder="ej: Producción venta calle miércoles"
+               style="width:100%;padding:.45rem .65rem;border:1px solid var(--border);
+                      border-radius:.4rem;background:var(--bg);color:var(--text);font-size:.9rem">
+      </div>
+    </div>
+
+    <div id="manual-error" style="display:none;margin-top:.85rem;padding:.6rem .85rem;
+         background:#fee2e2;border-radius:.4rem;font-size:.85rem;color:#991b1b"></div>
+
+    <div style="display:flex;gap:.75rem;margin-top:1.25rem;justify-content:flex-end">
+      <button class="btn btn-secondary" onclick="cerrarModalManual()">Cancelar</button>
+      <button class="btn btn-primary" id="btn-guardar-manual" onclick="guardarManual()">
+        Registrar producción
+      </button>
+    </div>
+  </div>
+</div>
+
 <!-- Modal: Generar Plan desde Ventas -->
 <div id="modal-generar" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);
      z-index:1000;align-items:center;justify-content:center">
@@ -81,6 +151,43 @@
     </div>
   </div>
 </div>
+<!-- Modal: Rendimiento real -->
+<div id="modal-rendimiento" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);
+     z-index:1000;align-items:center;justify-content:center">
+  <div style="background:var(--surface);border-radius:.75rem;padding:1.5rem;
+               width:min(95vw,400px);box-shadow:0 20px 60px rgba(0,0,0,.3)">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+      <h3 style="margin:0;font-size:1rem;font-weight:700">Confirmar horneado</h3>
+      <button class="btn btn-secondary btn-sm" onclick="document.getElementById('modal-rendimiento').style.display='none'">✕</button>
+    </div>
+    <input type="hidden" id="rend-batch-id">
+    <div style="display:flex;flex-direction:column;gap:.85rem">
+      <div style="background:var(--bg);border-radius:.4rem;padding:.6rem .85rem;font-size:.85rem">
+        Planificado: <strong><span id="rend-planificado">—</span> unidades</strong>
+      </div>
+      <div>
+        <label style="font-size:.82rem;font-weight:600;color:var(--muted);display:block;margin-bottom:.3rem">
+          Unidades reales producidas *
+        </label>
+        <input type="number" id="rend-real" min="1" step="1" placeholder="ej: 48"
+               style="width:100%;padding:.45rem .65rem;border:1px solid var(--border);
+                      border-radius:.4rem;background:var(--bg);color:var(--text);font-size:.9rem">
+        <div style="font-size:.75rem;color:var(--muted);margin-top:.2rem">
+          Si coincide con lo planificado, deja el mismo número.
+        </div>
+      </div>
+    </div>
+    <div id="rend-error" style="display:none;margin-top:.75rem;padding:.5rem .75rem;
+         background:#fee2e2;border-radius:.4rem;font-size:.83rem;color:#991b1b"></div>
+    <div style="display:flex;gap:.75rem;margin-top:1.25rem;justify-content:flex-end">
+      <button class="btn btn-secondary" onclick="document.getElementById('modal-rendimiento').style.display='none'">Cancelar</button>
+      <button class="btn btn-primary" id="btn-confirmar-hornear" onclick="confirmarHorneado()">
+        Confirmar horneado
+      </button>
+    </div>
+  </div>
+</div>
+
 {% endblock %}
 
 {% block scripts %}
@@ -172,6 +279,9 @@ async function cargarTimeline(fecha) {
     data = await r.json();
   } catch { alert('Error de conexión al cargar el plan'); return; }
 
+  // Guardar datos de batches para el modal de rendimiento
+  window._batchesData = [...(data.hornear_hoy||[]), ...(data.amasar_hoy||[]), ...(data.horneados||[])];
+
   const elH = document.getElementById('lista-hornear');
   if (data.hornear_hoy.length) {
     elH.innerHTML = data.hornear_hoy.map(b => cardBatch(b, 'hornear')).join('');
@@ -219,14 +329,42 @@ async function marcarAmasado(batchId) {
   } catch { alert('Error de conexión'); }
 }
 
-async function marcarHorneado(batchId) {
-  if (!confirm('¿Confirmar que este lote fue horneado y está listo?')) return;
+function marcarHorneado(batchId) {
+  // Buscar cantidad planificada para este batch
+  const batchData = window._batchesData?.find(b => b.batch_id === batchId);
+  const planTotal = batchData?.productos?.reduce((s, p) => s + p.cantidad, 0) || 0;
+  document.getElementById('rend-batch-id').value  = batchId;
+  document.getElementById('rend-planificado').textContent = planTotal;
+  document.getElementById('rend-real').value       = planTotal || '';
+  document.getElementById('rend-error').style.display = 'none';
+  document.getElementById('btn-confirmar-hornear').disabled = false;
+  document.getElementById('btn-confirmar-hornear').textContent = 'Confirmar horneado';
+  document.getElementById('modal-rendimiento').style.display = 'flex';
+}
+
+async function confirmarHorneado() {
+  const batchId = document.getElementById('rend-batch-id').value;
+  const rendReal = parseFloat(document.getElementById('rend-real').value);
+  const errEl = document.getElementById('rend-error');
+  if (isNaN(rendReal) || rendReal <= 0) {
+    errEl.textContent = 'Ingresa un rendimiento válido mayor a 0'; errEl.style.display = ''; return;
+  }
+  const btn = document.getElementById('btn-confirmar-hornear');
+  btn.disabled = true; btn.textContent = 'Guardando...';
   try {
-    const r = await fetch(`/api/produccion/batch/${batchId}/hornear`, {method:'POST'});
+    const r = await fetch(`/api/produccion/batch/${batchId}/hornear`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({rendimiento_real: rendReal})
+    });
     const data = await r.json();
-    if (!data.ok) { alert(data.error || 'Error'); return; }
+    if (!data.ok) { errEl.textContent = data.error || 'Error'; errEl.style.display = ''; btn.disabled = false; btn.textContent = 'Confirmar horneado'; return; }
+    document.getElementById('modal-rendimiento').style.display = 'none';
+    if (data.diferencia !== 0) {
+      const diff = data.diferencia > 0 ? `+${data.diferencia}` : `${data.diferencia}`;
+      toast(`Horneado registrado. Real: ${data.real} uds (${diff} vs plan)`, data.diferencia >= 0 ? 'success' : 'warning');
+    }
     cargarTimeline(fechaActual);
-  } catch { alert('Error de conexión'); }
+  } catch { errEl.textContent = 'Error de conexión'; errEl.style.display = ''; btn.disabled = false; btn.textContent = 'Confirmar horneado'; }
 }
 
 async function abrirModalGenerar() {
@@ -322,6 +460,132 @@ async function confirmarPlan() {
       alert(data.error || 'Error al guardar el plan');
     }
   } catch { cerrarModalGenerar(); alert('Error de conexión al guardar el plan'); }
+}
+
+// ── Vista Semanal ─────────────────────────────────────────────────────────
+let semanaDesde = hoy;
+let vistaSemanaVisible = false;
+
+function toggleVistaSemana() {
+  vistaSemanaVisible = !vistaSemanaVisible;
+  document.getElementById('vista-semana').style.display = vistaSemanaVisible ? '' : 'none';
+  if (vistaSemanaVisible) cargarSemana(semanaDesde);
+}
+
+function navegarSemana(delta) {
+  const d = new Date(semanaDesde + 'T12:00:00');
+  d.setDate(d.getDate() + delta);
+  semanaDesde = d.toISOString().slice(0,10);
+  cargarSemana(semanaDesde);
+}
+
+const DIAS_ES = {Mon:'Lun',Tue:'Mar',Wed:'Mié',Thu:'Jue',Fri:'Vie',Sat:'Sáb',Sun:'Dom'};
+
+async function cargarSemana(desde) {
+  const grid = document.getElementById('semana-grid');
+  grid.innerHTML = '<p style="color:var(--muted);font-size:.85rem;grid-column:1/-1">Cargando...</p>';
+  try {
+    const dias = await api('GET', `/api/plan-produccion/semana?desde=${desde}`);
+    grid.innerHTML = dias.map(d => {
+      const esHoy = d.fecha === hoy;
+      const bg    = esHoy ? 'var(--aurora-dim,rgba(200,149,107,.12))' : 'var(--surface)';
+      const border = esHoy ? '1.5px solid var(--aurora)' : '1px solid var(--border)';
+      const label = DIAS_ES[d.dia_semana] || d.dia_semana;
+      const dayNum = d.fecha.slice(8);
+      const itemsHtml = d.items.length
+        ? d.items.map(i => {
+            const c = i.estado === 'horneado' || i.estado === 'listo' ? '#16a34a' : i.estado === 'amasado' ? '#c2410c' : 'var(--text)';
+            return `<div style="font-size:.72rem;color:${c}">${i.nombre_producto} ×${i.cantidad}</div>`;
+          }).join('')
+        : '<div style="font-size:.72rem;color:var(--muted)">Sin plan</div>';
+      const totalBadge = d.total_unidades > 0
+        ? `<div style="font-size:.75rem;font-weight:700;color:var(--aurora);margin-top:.25rem">${d.total_unidades} uds</div>` : '';
+      return `
+        <div style="background:${bg};border:${border};border-radius:.5rem;padding:.6rem;
+                    cursor:pointer;min-width:100px" onclick="cargarTimeline('${d.fecha}')">
+          <div style="font-weight:700;font-size:.8rem">${label} ${dayNum}</div>
+          ${totalBadge}
+          <div style="margin-top:.35rem">${itemsHtml}</div>
+        </div>`;
+    }).join('');
+  } catch(e) { grid.innerHTML = '<p style="color:var(--danger);grid-column:1/-1">Error cargando semana</p>'; }
+}
+
+// ── Carga Manual ──────────────────────────────────────────────────────────
+let productosCache = [];
+
+async function abrirModalManual() {
+  document.getElementById('manual-fecha').value = fechaActual;
+  document.getElementById('manual-cantidad').value = '';
+  document.getElementById('manual-notas').value = '';
+  document.getElementById('manual-error').style.display = 'none';
+  document.getElementById('btn-guardar-manual').disabled = false;
+  document.getElementById('btn-guardar-manual').textContent = 'Registrar producción';
+
+  if (!productosCache.length) {
+    try {
+      const r = await fetch('/api/productos?activo=1&limit=200');
+      const data = await r.json();
+      productosCache = (data.productos || data || []).filter(p => p.activo !== false);
+    } catch { productosCache = []; }
+  }
+
+  const sel = document.getElementById('manual-producto');
+  if (productosCache.length) {
+    sel.innerHTML = productosCache.map(p =>
+      `<option value="${p.id}">${p.nombre}</option>`
+    ).join('');
+  } else {
+    sel.innerHTML = '<option value="">Error cargando productos</option>';
+  }
+
+  document.getElementById('modal-manual').style.display = 'flex';
+}
+
+function cerrarModalManual() {
+  document.getElementById('modal-manual').style.display = 'none';
+}
+
+async function guardarManual() {
+  const producto_id = parseInt(document.getElementById('manual-producto').value);
+  const cantidad    = parseFloat(document.getElementById('manual-cantidad').value);
+  const fecha       = document.getElementById('manual-fecha').value;
+  const notas       = document.getElementById('manual-notas').value.trim() || 'Carga manual';
+  const errEl       = document.getElementById('manual-error');
+
+  if (!producto_id || !(cantidad > 0) || !fecha) {
+    errEl.textContent = 'Completa producto, cantidad y fecha.';
+    errEl.style.display = '';
+    return;
+  }
+
+  const btn = document.getElementById('btn-guardar-manual');
+  btn.disabled = true;
+  btn.textContent = 'Guardando...';
+  errEl.style.display = 'none';
+
+  try {
+    const r = await fetch('/api/produccion/manual', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({producto_id, cantidad, fecha, notas}),
+    });
+    const data = await r.json();
+    if (data.ok) {
+      cerrarModalManual();
+      cargarTimeline(fechaActual);
+    } else {
+      errEl.textContent = data.error || 'Error al registrar';
+      errEl.style.display = '';
+      btn.disabled = false;
+      btn.textContent = 'Registrar producción';
+    }
+  } catch {
+    errEl.textContent = 'Error de conexión';
+    errEl.style.display = '';
+    btn.disabled = false;
+    btn.textContent = 'Registrar producción';
+  }
 }
 
 document.addEventListener('DOMContentLoaded', () => cargarTimeline(hoy));

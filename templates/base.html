@@ -13,6 +13,9 @@
   <link rel="icon" href="/static/img/icons/favicon-32.png" type="image/png">
   <link rel="apple-touch-icon" href="/static/img/icons/icon-192.png">
   <link rel="stylesheet" href="/static/css/style.css">
+  <script>
+    (function(){var t=localStorage.getItem('aurora-theme');if(t==='dark')document.documentElement.setAttribute('data-theme','dark');})();
+  </script>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
@@ -96,11 +99,14 @@
     <a href="/agenda"                class="nav-item {% if active=='agenda'       %}active{% endif %}"><i class="bi bi-calendar3"></i> Agenda</a>
     {% endif %}
   </nav>
-  <div class="sidebar-footer" id="sb-date">
+  <div class="sidebar-footer">
     {% if session.get('user_nombre') %}
-    <div style="font-size:.72rem;color:var(--text-3);padding:.5rem .75rem;border-top:1px solid var(--border);margin-top:.5rem">
-      <div style="font-weight:600;color:var(--text-2)"><i class="bi bi-person-circle"></i> {{ session.user_nombre }}</div>
-      <a href="/logout" style="color:var(--text-3);font-size:.68rem;text-decoration:none;display:inline-flex;align-items:center;gap:.3rem;margin-top:.25rem"><i class="bi bi-box-arrow-left"></i> Cerrar sesión</a>
+    <div class="sb-user">
+      <div class="sb-avatar">{{ session.user_nombre[:2]|upper }}</div>
+      <div style="min-width:0">
+        <div class="sb-user-name">{{ session.user_nombre }}</div>
+        <a href="/logout" class="sb-logout"><i class="bi bi-box-arrow-left"></i> Cerrar sesión</a>
+      </div>
     </div>
     {% endif %}
   </div>
@@ -108,8 +114,24 @@
 
 <main class="main">
   <header class="topbar">
-    <h1>{% block page_title %}{% endblock %}</h1>
-    <span class="topbar-meta" id="top-date"></span>
+    <div class="topbar-left">
+      <button class="topbar-toggle" onclick="toggleSidebar()" aria-label="Menú"><i class="bi bi-list"></i></button>
+      <h1>{% block page_title %}{% endblock %}</h1>
+    </div>
+    <div class="topbar-right">
+      <span class="topbar-date" id="top-date"></span>
+      <button class="topbar-search-btn" onclick="openCmdPalette()" title="Buscar (Ctrl+K)">
+        <i class="bi bi-search"></i><span>Buscar...</span><kbd>Ctrl K</kbd>
+      </button>
+      <button class="topbar-icon-btn" onclick="toggleTheme()" aria-label="Cambiar tema">
+        <i class="bi bi-moon-stars-fill" id="theme-icon"></i>
+      </button>
+      <button class="topbar-icon-btn" aria-label="Notificaciones" style="position:relative">
+        <i class="bi bi-bell-fill"></i>
+      </button>
+      <div class="topbar-sep"></div>
+      <a href="/ventas" class="btn btn-primary btn-sm"><i class="bi bi-plus-lg"></i> Nueva venta</a>
+    </div>
   </header>
   <div class="content">
     {% block content %}{% endblock %}
@@ -119,15 +141,93 @@
 <!-- Toast container -->
 <div id="toast-container"></div>
 
+<!-- Command palette -->
+<div class="modal-overlay cmd-palette-wrap" id="cmd-palette">
+  <div class="modal" style="max-width:500px;padding:16px">
+    <div class="cmd-searchbar">
+      <i class="bi bi-search"></i>
+      <input id="cmd-input" type="text" placeholder="Buscar páginas..." autocomplete="off">
+      <kbd>Esc</kbd>
+    </div>
+    <div class="cmd-results" id="cmd-results"></div>
+  </div>
+</div>
+
 <script>
 // ── Date display ──────────────────────────────────────────────────────────────
 (function(){
   const d = new Date();
   const opts = { weekday:'long', year:'numeric', month:'long', day:'numeric' };
   const str  = d.toLocaleDateString('es-CL', opts);
-  document.getElementById('top-date').textContent = str;
-  document.getElementById('sb-date').textContent  = str;
+  const td = document.getElementById('top-date');
+  if (td) td.textContent = str;
 })();
+
+// ── Theme ─────────────────────────────────────────────────────────────────────
+function toggleTheme() {
+  const root = document.documentElement;
+  const next = root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+  root.setAttribute('data-theme', next);
+  localStorage.setItem('aurora-theme', next);
+  const icon = document.getElementById('theme-icon');
+  if (icon) icon.className = next === 'dark' ? 'bi bi-sun-fill' : 'bi bi-moon-stars-fill';
+}
+(function(){
+  const icon = document.getElementById('theme-icon');
+  if (icon && document.documentElement.getAttribute('data-theme') === 'dark') {
+    icon.className = 'bi bi-sun-fill';
+  }
+})();
+
+// ── Sidebar toggle (mobile) ───────────────────────────────────────────────────
+function toggleSidebar() {
+  document.querySelector('.sidebar').classList.toggle('open');
+}
+
+// ── Command palette ───────────────────────────────────────────────────────────
+const CMD_PAGES = [
+  {l:'POS / Caja',          u:'/pos/caja',               i:'bi-cash-register'},
+  {l:'Ventas',              u:'/ventas',                  i:'bi-receipt'},
+  {l:'Clientes',            u:'/clientes',                i:'bi-people'},
+  {l:'Suscripciones',       u:'/suscripciones',           i:'bi-calendar-check'},
+  {l:'Mayoristas',          u:'/mayoristas',              i:'bi-shop'},
+  {l:'CRM',                 u:'/crm',                     i:'bi-diagram-3'},
+  {l:'Productos',           u:'/productos',               i:'bi-basket'},
+  {l:'Producción',          u:'/produccion',              i:'bi-fire'},
+  {l:'Despacho',            u:'/despacho',                i:'bi-truck'},
+  {l:'Inventario',          u:'/inventario',              i:'bi-boxes'},
+  {l:'Gastos',              u:'/gastos',                  i:'bi-cash-coin'},
+  {l:'Finanzas',            u:'/finanzas',                i:'bi-currency-dollar'},
+  {l:'Resumen',             u:'/reportes',                i:'bi-speedometer2'},
+  {l:'Reporte Ventas',      u:'/reporte-ventas',          i:'bi-table'},
+  {l:'Reporte Financiero',  u:'/reportes/financiero',     i:'bi-bar-chart-line'},
+  {l:'Reporte Producción',  u:'/reportes/produccion',     i:'bi-clipboard-data'},
+  {l:'Reporte Despacho',    u:'/reportes/despacho',       i:'bi-map'},
+  {l:'Agenda',              u:'/agenda',                  i:'bi-calendar3'},
+  {l:'Agentes',             u:'/agentes',                 i:'bi-robot'},
+  {l:'Configuración',       u:'/configuracion-negocio',   i:'bi-gear'},
+];
+function openCmdPalette() {
+  openModal('cmd-palette');
+  const inp = document.getElementById('cmd-input');
+  if (inp) { inp.value = ''; setTimeout(() => inp.focus(), 60); }
+  renderCmdResults('');
+}
+function renderCmdResults(q) {
+  const res = q ? CMD_PAGES.filter(p => p.l.toLowerCase().includes(q.toLowerCase())) : CMD_PAGES;
+  const el  = document.getElementById('cmd-results');
+  if (!el) return;
+  el.innerHTML = res.slice(0, 9).map(p =>
+    `<a href="${p.u}" class="cmd-item"><i class="bi ${p.i}"></i>${p.l}</a>`
+  ).join('') || '<div style="padding:1rem;text-align:center;color:var(--muted);font-size:13px">Sin resultados</div>';
+}
+document.addEventListener('DOMContentLoaded', () => {
+  const ci = document.getElementById('cmd-input');
+  if (ci) ci.addEventListener('input', e => renderCmdResults(e.target.value));
+  document.addEventListener('keydown', e => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); openCmdPalette(); }
+  });
+});
 
 // ── Toast ─────────────────────────────────────────────────────────────────────
 function toast(msg, type='success') {

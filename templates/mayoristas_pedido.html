@@ -1,0 +1,187 @@
+{% extends "base.html" %}
+{% block title %}Detalle Pedido{% endblock %}
+{% block page_title %}Detalle Pedido B2B{% endblock %}
+
+{% block content %}
+
+<div class="toolbar">
+  <div style="display:flex;align-items:center;gap:8px">
+    <a href="/mayoristas/pedidos" class="btn btn-secondary btn-sm"><i class="bi bi-arrow-left"></i> Pedidos</a>
+    <span style="color:var(--muted)">/</span>
+    <span id="lbl-titulo" style="font-weight:600;font-size:.95rem">Cargando...</span>
+    <span id="lbl-estado-badge"></span>
+  </div>
+  <div class="toolbar-right" id="acciones-wrap"></div>
+</div>
+
+<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px">
+  <div class="kpi-card">
+    <div class="kpi-label"><i class="bi bi-cash-stack"></i> Total</div>
+    <div class="kpi-value" id="kpi-total">—</div>
+    <div class="kpi-sub">importe pedido</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label"><i class="bi bi-credit-card"></i> Estado pago</div>
+    <div class="kpi-value" id="kpi-pago" style="font-size:1.2rem">—</div>
+    <div class="kpi-sub" id="kpi-condicion">—</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label"><i class="bi bi-calendar-check"></i> Fecha entrega</div>
+    <div class="kpi-value" id="kpi-entrega" style="font-size:1.3rem">—</div>
+    <div class="kpi-sub" id="kpi-dia">—</div>
+  </div>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 340px;gap:16px">
+  <!-- Items -->
+  <div class="card">
+    <div class="card-title"><i class="bi bi-list-ul"></i> Productos del pedido</div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Producto</th>
+            <th style="text-align:right">Cantidad</th>
+            <th style="text-align:right">Precio unit.</th>
+            <th style="text-align:right">Descuento</th>
+            <th style="text-align:right">Subtotal</th>
+          </tr>
+        </thead>
+        <tbody id="tbody-items"></tbody>
+        <tfoot>
+          <tr>
+            <td colspan="4" style="text-align:right;font-weight:700;padding:10px 12px">Total</td>
+            <td style="text-align:right;font-weight:700;padding:10px 12px;font-size:1rem" id="tfoot-total">—</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  </div>
+
+  <!-- Panel derecho -->
+  <div style="display:flex;flex-direction:column;gap:12px">
+    <div class="card">
+      <div class="card-title"><i class="bi bi-building"></i> Cliente</div>
+      <div id="panel-cliente" style="font-size:.88rem"></div>
+    </div>
+    <div class="card">
+      <div class="card-title"><i class="bi bi-pencil"></i> Notas</div>
+      <div class="form-group" style="margin-bottom:8px">
+        <label>Notas pedido</label>
+        <textarea id="f-notas" rows="3" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg-input);color:var(--text);resize:vertical"></textarea>
+      </div>
+      <div class="form-group">
+        <label>Notas producción</label>
+        <textarea id="f-notas-prod" rows="2" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg-input);color:var(--text);resize:vertical"></textarea>
+      </div>
+      <button class="btn btn-secondary btn-sm" onclick="guardarNotas()"><i class="bi bi-check-lg"></i> Guardar notas</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal confirmar cancelación -->
+<div class="modal-overlay" id="modal-cancelar" style="display:none" onclick="if(event.target===this)closeModal('modal-cancelar')">
+  <div class="modal" style="max-width:400px;width:100%">
+    <div class="modal-header">
+      <span style="color:var(--danger)"><i class="bi bi-exclamation-triangle"></i> Cancelar pedido</span>
+      <button class="btn btn-secondary btn-sm" onclick="closeModal('modal-cancelar')"><i class="bi bi-x-lg"></i></button>
+    </div>
+    <div style="padding:16px;font-size:.9rem">¿Confirmar cancelación del pedido? Esta acción no se puede deshacer.</div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-cancelar')">Volver</button>
+      <button class="btn btn-danger" onclick="ejecutarCancelar()"><i class="bi bi-x-lg"></i> Cancelar pedido</button>
+    </div>
+  </div>
+</div>
+
+<script>
+async function api(m,u,b){const o={method:m,headers:{'Content-Type':'application/json'}};if(b)o.body=JSON.stringify(b);const r=await fetch(u,o);if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.error||`Error ${r.status}`);}return r.json();}
+const $id = id => document.getElementById(id);
+function fmtPeso(n){return'$'+Math.round(n||0).toLocaleString('es-CL');}
+function fmtFecha(s){if(!s)return'—';const[y,m,d]=s.split('-');return`${d}/${m}/${y}`;}
+function escHtml(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+const PID = {{ pedido_id }};
+
+const ESTADO_BADGE = {
+  PENDIENTE:'badge-gray',CONFIRMADO:'badge-blue',EN_PRODUCCION:'badge-yellow',
+  DESPACHADO:'badge-yellow',ENTREGADO:'badge-green',CANCELADO:'badge-gray'
+};
+const PAGO_BADGE = {PENDIENTE:'badge-yellow',PAGADO:'badge-green',VENCIDO:'badge-gray'};
+
+let estadoActual = '';
+
+function renderAcciones(estado) {
+  const btns = [];
+  if(estado === 'PENDIENTE') {
+    btns.push(`<button class="btn btn-primary btn-sm" onclick="confirmar()"><i class="bi bi-check-lg"></i> Confirmar</button>`);
+  }
+  if(['CONFIRMADO','EN_PRODUCCION'].includes(estado)) {
+    btns.push(`<button class="btn btn-secondary btn-sm" onclick="despachar()"><i class="bi bi-truck"></i> Despachar</button>`);
+  }
+  if(!['CANCELADO','ENTREGADO'].includes(estado)) {
+    btns.push(`<button class="btn btn-danger btn-sm" onclick="openModal('modal-cancelar')"><i class="bi bi-x-lg"></i> Cancelar</button>`);
+  }
+  $id('acciones-wrap').innerHTML = btns.join('');
+}
+
+async function load() {
+  try {
+    const d = await api('GET', `/api/mayoristas/pedidos/${PID}`);
+    const p = d.pedido || d;
+    estadoActual = p.estado;
+    $id('lbl-titulo').textContent = `#${p.id} — ${p.mayorista_nombre||'—'}`;
+    $id('lbl-estado-badge').innerHTML = `<span class="badge ${ESTADO_BADGE[p.estado]||'badge-gray'}">${escHtml(p.estado)}</span>`;
+    $id('kpi-total').textContent = fmtPeso(p.total);
+    $id('kpi-pago').innerHTML = `<span class="badge ${PAGO_BADGE[p.estado_pago]||'badge-gray'}">${escHtml(p.estado_pago||'—')}</span>`;
+    $id('kpi-condicion').textContent = p.condicion_pago||'—';
+    $id('kpi-entrega').textContent = fmtFecha(p.fecha_entrega);
+    $id('kpi-dia').textContent = p.dia_entrega ? `Día: ${p.dia_entrega}` : 'Sin día fijo';
+    $id('f-notas').value = p.notas||'';
+    $id('f-notas-prod').value = p.notas_produccion||'';
+    $id('panel-cliente').innerHTML = p.mayorista_nombre ? `
+      <div style="font-weight:600;margin-bottom:4px">${escHtml(p.mayorista_nombre)}</div>
+      ${p.encargado_nombre?`<div style="color:var(--muted)">${escHtml(p.encargado_nombre)}</div>`:''}
+      ${p.encargado_telefono?`<div style="color:var(--muted)">${escHtml(p.encargado_telefono)}</div>`:''}
+      <a href="/mayoristas/clientes/${p.mayorista_id}" class="btn btn-secondary btn-sm" style="margin-top:8px"><i class="bi bi-eye"></i> Ver ficha</a>
+    ` : '<div class="empty">Sin datos de cliente</div>';
+    const items = p.items || [];
+    let total = 0;
+    $id('tbody-items').innerHTML = items.map(i => {
+      const sub = (i.precio_unitario||0) * (i.cantidad||0) * (1 - (i.descuento_pct||0)/100);
+      total += sub;
+      return `<tr>
+        <td style="font-size:.88rem">${escHtml(i.producto_nombre||i.nombre||'—')}</td>
+        <td style="text-align:right;font-size:.88rem">${(i.cantidad||0).toLocaleString('es-CL')}</td>
+        <td style="text-align:right;font-size:.88rem">${fmtPeso(i.precio_unitario)}</td>
+        <td style="text-align:right;font-size:.88rem">${i.descuento_pct?i.descuento_pct+'%':'—'}</td>
+        <td style="text-align:right;font-size:.88rem;font-weight:600">${fmtPeso(sub)}</td>
+      </tr>`;
+    }).join('');
+    $id('tfoot-total').textContent = fmtPeso(total);
+    renderAcciones(p.estado);
+  } catch(e){ toast('Error: '+e.message,'error'); }
+}
+
+async function confirmar() {
+  try { await api('POST',`/api/mayoristas/pedidos/${PID}/confirmar`,{}); toast('Pedido confirmado','success'); load(); }
+  catch(e){toast('Error: '+e.message,'error');}
+}
+async function despachar() {
+  try { await api('POST',`/api/mayoristas/pedidos/${PID}/despachar`,{}); toast('Pedido despachado','success'); load(); }
+  catch(e){toast('Error: '+e.message,'error');}
+}
+async function ejecutarCancelar() {
+  try { await api('POST',`/api/mayoristas/pedidos/${PID}/cancelar`,{}); closeModal('modal-cancelar'); toast('Pedido cancelado','success'); load(); }
+  catch(e){toast('Error: '+e.message,'error');}
+}
+async function guardarNotas() {
+  try {
+    await api('PUT',`/api/mayoristas/pedidos/${PID}`,{notas:$id('f-notas').value,notas_produccion:$id('f-notas-prod').value});
+    toast('Notas guardadas','success');
+  } catch(e){toast('Error: '+e.message,'error');}
+}
+
+(async function init(){await load();})();
+</script>
+{% endblock %}

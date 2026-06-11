@@ -1,0 +1,225 @@
+{% extends "base.html" %}
+{% block title %}Ficha Cliente{% endblock %}
+{% block page_title %}Ficha Cliente B2B{% endblock %}
+
+{% block content %}
+
+<div class="toolbar">
+  <div style="display:flex;align-items:center;gap:8px">
+    <a href="/mayoristas/clientes" class="btn btn-secondary btn-sm"><i class="bi bi-arrow-left"></i> Clientes</a>
+    <span style="color:var(--muted)">/</span>
+    <span id="lbl-nombre" style="font-weight:600;font-size:.95rem">Cargando...</span>
+  </div>
+  <div class="toolbar-right">
+    <button class="btn btn-secondary btn-sm" id="btn-wa" onclick="contactarWA()" style="display:none"><i class="bi bi-whatsapp"></i> WhatsApp</button>
+    <button class="btn btn-primary btn-sm" onclick="guardar()"><i class="bi bi-check-lg"></i> Guardar</button>
+  </div>
+</div>
+
+<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px">
+  <div class="kpi-card">
+    <div class="kpi-label"><i class="bi bi-hourglass-split"></i> Deuda total</div>
+    <div class="kpi-value" id="kpi-deuda-total">—</div>
+    <div class="kpi-sub">pendiente de cobro</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label"><i class="bi bi-exclamation-triangle"></i> Deuda vencida</div>
+    <div class="kpi-value" id="kpi-deuda-vencida" style="color:var(--danger)">—</div>
+    <div class="kpi-sub">mora</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label"><i class="bi bi-cart3"></i> Último pedido</div>
+    <div class="kpi-value" id="kpi-ultimo">—</div>
+    <div class="kpi-sub">fecha</div>
+  </div>
+</div>
+
+<div class="page-tabs" style="margin-bottom:16px">
+  <button class="page-tab active" id="ptab-info" onclick="showTab('info')"><i class="bi bi-info-circle"></i> Info</button>
+  <button class="page-tab" id="ptab-pedidos" onclick="showTab('pedidos')"><i class="bi bi-cart3"></i> Pedidos</button>
+  <button class="page-tab" id="ptab-historial" onclick="showTab('historial')"><i class="bi bi-chat-dots"></i> Historial contacto</button>
+</div>
+
+<!-- TAB INFO -->
+<div id="tab-info" class="card">
+  <div class="card-title"><i class="bi bi-pencil"></i> Datos del cliente</div>
+  <div class="form-row fr-2">
+    <div class="form-group"><label>Nombre comercial *</label><input id="f-nombre" type="text"></div>
+    <div class="form-group"><label>Razón social</label><input id="f-razon" type="text"></div>
+  </div>
+  <div class="form-row fr-2">
+    <div class="form-group"><label>RUT</label><input id="f-rut" type="text"></div>
+    <div class="form-group">
+      <label>Tipo de negocio</label>
+      <select id="f-tipo">
+        <option value="">— Seleccionar —</option>
+        <option value="cafeteria">Cafetería</option>
+        <option value="restaurante">Restaurante</option>
+        <option value="hotel">Hotel</option>
+        <option value="supermercado">Supermercado</option>
+        <option value="tienda">Tienda</option>
+        <option value="otro">Otro</option>
+      </select>
+    </div>
+  </div>
+  <div class="form-row fr-2">
+    <div class="form-group"><label>Encargado</label><input id="f-encargado" type="text"></div>
+    <div class="form-group"><label>Teléfono encargado</label><input id="f-tel-enc" type="tel"></div>
+  </div>
+  <div class="form-row fr-2">
+    <div class="form-group"><label>Teléfono negocio</label><input id="f-telefono" type="tel"></div>
+    <div class="form-group"><label>Email</label><input id="f-email" type="email"></div>
+  </div>
+  <div class="form-group"><label>Dirección</label><input id="f-dir" type="text"></div>
+  <div class="form-row fr-2">
+    <div class="form-group">
+      <label>Zona / Comuna</label>
+      <select id="f-zona">
+        <option value="">— Seleccionar —</option>
+        <option>Providencia</option><option>Las Condes</option><option>Vitacura</option>
+        <option>Ñuñoa</option><option>Santiago</option><option>Recoleta</option>
+        <option>Independencia</option><option>La Reina</option><option>Peñalolén</option>
+        <option>Macul</option><option>San Miguel</option><option>La Florida</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Condición de pago</label>
+      <select id="f-condicion">
+        <option value="contado">Contado</option>
+        <option value="7dias">7 días</option>
+        <option value="30dias">30 días</option>
+      </select>
+    </div>
+  </div>
+  <div class="form-group"><label>Notas internas</label><textarea id="f-notas" rows="3" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg-input);color:var(--text);resize:vertical"></textarea></div>
+</div>
+
+<!-- TAB PEDIDOS -->
+<div id="tab-pedidos" style="display:none">
+  <div class="card">
+    <div class="card-title"><i class="bi bi-cart3"></i> Pedidos recientes</div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>#</th><th>Fecha pedido</th><th>Entrega</th><th>Estado</th><th>Pago</th><th>Total</th><th></th></tr></thead>
+        <tbody id="tbody-pedidos"></tbody>
+      </table>
+    </div>
+    <div id="empty-pedidos" class="empty" style="display:none">Sin pedidos registrados</div>
+  </div>
+</div>
+
+<!-- TAB HISTORIAL -->
+<div id="tab-historial" style="display:none">
+  <div class="card">
+    <div class="card-title"><i class="bi bi-chat-dots"></i> Historial de contacto</div>
+    <div id="historial-list"></div>
+    <div id="empty-historial" class="empty" style="display:none">Sin interacciones registradas</div>
+  </div>
+</div>
+
+<script>
+async function api(m,u,b){const o={method:m,headers:{'Content-Type':'application/json'}};if(b)o.body=JSON.stringify(b);const r=await fetch(u,o);if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.error||`Error ${r.status}`);}return r.json();}
+const $id = id => document.getElementById(id);
+function fmtPeso(n){return'$'+Math.round(n||0).toLocaleString('es-CL');}
+function fmtFecha(s){if(!s)return'—';const[y,m,d]=s.split('-');return`${d}/${m}/${y}`;}
+function escHtml(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+const MID = {{ mayorista_id }};
+
+const ESTADO_BADGE = {
+  PENDIENTE:'badge-gray',CONFIRMADO:'badge-blue',EN_PRODUCCION:'badge-yellow',
+  DESPACHADO:'badge-yellow',ENTREGADO:'badge-green',CANCELADO:'badge-gray'
+};
+const PAGO_BADGE = {PENDIENTE:'badge-yellow',PAGADO:'badge-green',VENCIDO:'badge-gray'};
+
+function showTab(t) {
+  ['info','pedidos','historial'].forEach(x => {
+    $id('tab-'+x).style.display = x===t?'':'none';
+    $id('ptab-'+x).classList.toggle('active', x===t);
+  });
+}
+
+function setVal(id, val) { const el = $id(id); if(el) el.value = val||''; }
+
+async function load() {
+  try {
+    const d = await api('GET', `/api/mayoristas/${MID}`);
+    const c = d.mayorista || d;
+    $id('lbl-nombre').textContent = c.nombre || 'Cliente';
+    setVal('f-nombre', c.nombre); setVal('f-razon', c.razon_social);
+    setVal('f-rut', c.rut); setVal('f-tipo', c.tipo_negocio);
+    setVal('f-encargado', c.encargado_nombre); setVal('f-tel-enc', c.encargado_telefono);
+    setVal('f-telefono', c.telefono); setVal('f-email', c.email);
+    setVal('f-dir', c.direccion); setVal('f-zona', c.zona);
+    setVal('f-condicion', c.condicion_pago); setVal('f-notas', c.notas);
+    if(c.encargado_telefono || c.telefono) $id('btn-wa').style.display = '';
+    // KPI último pedido
+    const pedidos = d.pedidos_recientes || [];
+    if(pedidos.length) $id('kpi-ultimo').textContent = fmtFecha(pedidos[0].fecha_pedido);
+    // Tabla pedidos
+    $id('empty-pedidos').style.display = pedidos.length ? 'none' : '';
+    $id('tbody-pedidos').innerHTML = pedidos.map(p => `
+      <tr>
+        <td style="font-size:.82rem;color:var(--muted)">#${p.id}</td>
+        <td style="font-size:.85rem">${fmtFecha(p.fecha_pedido)}</td>
+        <td style="font-size:.85rem">${fmtFecha(p.fecha_entrega)}</td>
+        <td><span class="badge ${ESTADO_BADGE[p.estado]||'badge-gray'}">${escHtml(p.estado)}</span></td>
+        <td><span class="badge ${PAGO_BADGE[p.estado_pago]||'badge-gray'}">${escHtml(p.estado_pago||'—')}</span></td>
+        <td style="font-size:.85rem;font-weight:600">${fmtPeso(p.total)}</td>
+        <td><a href="/mayoristas/pedidos/${p.id}" class="btn btn-secondary btn-sm"><i class="bi bi-eye"></i></a></td>
+      </tr>
+    `).join('');
+    // Historial
+    const inter = d.interacciones || [];
+    $id('empty-historial').style.display = inter.length ? 'none' : '';
+    $id('historial-list').innerHTML = inter.map(i => `
+      <div style="padding:10px 0;border-bottom:1px solid var(--border)">
+        <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+          <span style="font-size:.8rem;font-weight:600;color:var(--accent)">${escHtml(i.tipo||'Contacto')}</span>
+          <span style="font-size:.78rem;color:var(--muted)">${fmtFecha(i.fecha)}</span>
+        </div>
+        <div style="font-size:.85rem">${escHtml(i.descripcion||i.nota||'')}</div>
+        ${i.usuario?`<div style="font-size:.75rem;color:var(--muted);margin-top:2px">por ${escHtml(i.usuario)}</div>`:''}
+      </div>
+    `).join('');
+  } catch(e){ toast('Error: '+e.message,'error'); }
+}
+
+async function loadDeuda() {
+  try {
+    const d = await api('GET', `/api/mayoristas/${MID}/deuda`);
+    $id('kpi-deuda-total').textContent = fmtPeso(d.total||0);
+    const venc = d.vencida||0;
+    $id('kpi-deuda-vencida').textContent = fmtPeso(venc);
+    if(!venc) $id('kpi-deuda-vencida').style.color = 'var(--muted)';
+  } catch(e){ /* silencioso */ }
+}
+
+async function guardar() {
+  const nombre = $id('f-nombre').value.trim();
+  if(!nombre){toast('Nombre obligatorio','error');return;}
+  try {
+    await api('PUT',`/api/mayoristas/${MID}`,{
+      nombre, razon_social:$id('f-razon').value,
+      rut:$id('f-rut').value, tipo_negocio:$id('f-tipo').value,
+      encargado_nombre:$id('f-encargado').value,
+      encargado_telefono:$id('f-tel-enc').value,
+      telefono:$id('f-telefono').value, email:$id('f-email').value,
+      direccion:$id('f-dir').value, zona:$id('f-zona').value,
+      condicion_pago:$id('f-condicion').value, notas:$id('f-notas').value
+    });
+    toast('Guardado','success');
+    $id('lbl-nombre').textContent = nombre;
+  } catch(e){toast('Error: '+e.message,'error');}
+}
+
+async function contactarWA() {
+  try {
+    await api('POST',`/api/mayoristas/${MID}/contactar`,{});
+    toast('Mensaje enviado por WhatsApp','success');
+  } catch(e){toast('Error: '+e.message,'error');}
+}
+
+(async function init(){await load();await loadDeuda();})();
+</script>
+{% endblock %}

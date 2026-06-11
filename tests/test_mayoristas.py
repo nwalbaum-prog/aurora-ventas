@@ -116,15 +116,9 @@ def test_get_mayoristas_vacio(admin):
 def test_get_mayoristas_lista(admin):
     tc, app_mod = admin
     with app_mod.db() as c:
-        cid = c.execute("SELECT id FROM clientes WHERE tipo='MAYORISTA'").fetchone()['id']
-        pid = c.execute("SELECT id FROM productos LIMIT 1").fetchone()['id']
-        ped_id = c.execute(
-            "INSERT INTO mayorista_pedidos (cliente_id, dia_despacho) VALUES (?,?)",
-            (cid, 'martes')
-        ).lastrowid
         c.execute(
-            "INSERT INTO mayorista_pedido_lineas (pedido_id, producto_id, cantidad) VALUES (?,?,?)",
-            (ped_id, pid, 5)
+            "INSERT INTO mayoristas (nombre, telefono, email, condicion_pago, activo) VALUES (?,?,?,?,1)",
+            ('Café Prueba', '+56912345678', 'cafe@prueba.cl', 'contado')
         )
     r = tc.get('/api/mayoristas')
     data = r.get_json()
@@ -152,7 +146,7 @@ def test_guardar_pedidos(admin):
             }
         ]
     }
-    r = tc.put(f'/api/mayoristas/{cid}/pedidos',
+    r = tc.put(f'/api/mayoristas/legacy/{cid}/pedidos',
                data=json.dumps(payload), content_type='application/json')
     assert r.status_code == 200
 

@@ -17,3 +17,5 @@ docker-compose.yml
 levantar-evolution.bat
 generar_manual_pdf.py
 *.pdf
+.fuse_hidden*
+*.bak

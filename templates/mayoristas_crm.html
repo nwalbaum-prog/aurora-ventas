@@ -1,0 +1,297 @@
+{% extends "base.html" %}
+{% block title %}CRM B2B Mayoristas{% endblock %}
+{% block page_title %}CRM B2B — Pipeline Mayoristas{% endblock %}
+
+{% block content %}
+
+<div class="toolbar">
+  <div></div>
+  <div class="toolbar-right">
+    <a href="/mayoristas" class="btn btn-secondary btn-sm"><i class="bi bi-speedometer2"></i> Dashboard</a>
+  </div>
+</div>
+
+<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px">
+  <div class="kpi-card">
+    <div class="kpi-label"><i class="bi bi-person-plus"></i> Nuevos esta semana</div>
+    <div class="kpi-value" id="kpi-nuevos">—</div>
+    <div class="kpi-sub">leads B2B</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label"><i class="bi bi-check-circle"></i> Convertidos este mes</div>
+    <div class="kpi-value" id="kpi-convertidos" style="color:var(--success)">—</div>
+    <div class="kpi-sub">leads → cliente</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label"><i class="bi bi-list-check"></i> Tareas pendientes</div>
+    <div class="kpi-value" id="kpi-tareas">—</div>
+    <div class="kpi-sub">seguimientos</div>
+  </div>
+</div>
+
+<div class="page-tabs" style="margin-bottom:16px">
+  <button class="page-tab active" id="ptab-pipeline" onclick="showTab('pipeline')"><i class="bi bi-diagram-3"></i> Pipeline</button>
+  <button class="page-tab" id="ptab-lista" onclick="showTab('lista')"><i class="bi bi-list-ul"></i> Lista leads</button>
+  <button class="page-tab" id="ptab-acciones" onclick="showTab('acciones')"><i class="bi bi-lightning"></i> Acciones</button>
+</div>
+
+<!-- TAB PIPELINE -->
+<div id="tab-pipeline">
+  <div class="card" style="overflow-x:auto">
+    <div id="kanban-wrap" style="display:flex;gap:12px;min-width:max-content;padding:4px 0 8px"></div>
+    <div id="kanban-empty" class="empty" style="display:none;padding:32px">Sin leads B2B</div>
+  </div>
+</div>
+
+<!-- TAB LISTA -->
+<div id="tab-lista" style="display:none">
+  <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+    <input id="q-lista" type="text" placeholder="Buscar lead..." style="padding:5px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-input);color:var(--text);font-size:.85rem;width:200px" oninput="debounceLoadLeads()">
+    <select id="sel-etapa" style="font-size:.82em;padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg-input);color:var(--text)" onchange="loadLeads()">
+      <option value="">Todas las etapas</option>
+      <option value="DESCUBIERTO">Descubierto</option>
+      <option value="CONTACTADO">Contactado</option>
+      <option value="DEGUSTACION">Degustación</option>
+      <option value="NEGOCIANDO">Negociando</option>
+      <option value="CLIENTE">Cliente</option>
+      <option value="PAUSADO">Pausado</option>
+      <option value="PERDIDO">Perdido</option>
+    </select>
+  </div>
+  <div class="card">
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Empresa</th>
+            <th>Etapa</th>
+            <th>Encargado</th>
+            <th>Zona</th>
+            <th>Temperatura</th>
+            <th>Próxima acción</th>
+            <th>Fecha</th>
+          </tr>
+        </thead>
+        <tbody id="tbody-leads"></tbody>
+      </table>
+    </div>
+    <div id="empty-leads" class="empty" style="display:none">Sin leads que coincidan</div>
+  </div>
+</div>
+
+<!-- TAB ACCIONES -->
+<div id="tab-acciones" style="display:none">
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+    <div class="card">
+      <div class="card-title"><i class="bi bi-search"></i> Prospectar</div>
+      <p style="font-size:.88rem;color:var(--muted);margin-bottom:12px">
+        Busca negocios B2B en Google Places (cafeterías, restaurantes, hoteles) cerca de Recoleta y zonas de despacho. Crea leads automáticamente en etapa DESCUBIERTO.
+      </p>
+      <button class="btn btn-primary" id="btn-prospectar" onclick="prospectar()">
+        <i class="bi bi-geo-alt"></i> Prospectar (Google Places)
+      </button>
+    </div>
+    <div class="card">
+      <div class="card-title"><i class="bi bi-send"></i> Primer contacto masivo</div>
+      <p style="font-size:.88rem;color:var(--muted);margin-bottom:12px">
+        Envía mensaje de primer contacto por WhatsApp a todos los leads en etapa DESCUBIERTO que aún no han sido contactados. Incluye presentación de Aurora Bakers y oferta de muestra.
+      </p>
+      <button class="btn btn-secondary" id="btn-contacto" onclick="primerContacto()">
+        <i class="bi bi-whatsapp"></i> Primer contacto masivo
+      </button>
+    </div>
+  </div>
+  <div class="card" style="margin-top:16px">
+    <div class="card-title"><i class="bi bi-info-circle"></i> Flujo de conversión B2B</div>
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 0">
+      <span class="badge badge-gray">DESCUBIERTO</span>
+      <i class="bi bi-arrow-right" style="color:var(--muted)"></i>
+      <span class="badge badge-blue">CONTACTADO</span>
+      <i class="bi bi-arrow-right" style="color:var(--muted)"></i>
+      <span class="badge badge-yellow">DEGUSTACIÓN</span>
+      <i class="bi bi-arrow-right" style="color:var(--muted)"></i>
+      <span class="badge badge-yellow">NEGOCIANDO</span>
+      <i class="bi bi-arrow-right" style="color:var(--muted)"></i>
+      <span class="badge badge-green">CLIENTE</span>
+    </div>
+    <p style="font-size:.83rem;color:var(--muted);margin-top:8px">
+      Al convertir un lead a CLIENTE, se crea automáticamente una ficha en el módulo de clientes mayoristas y queda listo para recibir pedidos.
+    </p>
+  </div>
+</div>
+
+<!-- Modal detalle lead -->
+<div class="modal-overlay" id="modal-lead" style="display:none" onclick="if(event.target===this)closeModal('modal-lead')">
+  <div class="modal" style="max-width:500px;width:100%">
+    <div class="modal-header">
+      <span id="modal-lead-titulo"><i class="bi bi-building"></i> Lead B2B</span>
+      <button class="btn btn-secondary btn-sm" onclick="closeModal('modal-lead')"><i class="bi bi-x-lg"></i></button>
+    </div>
+    <div id="modal-lead-body" style="padding:16px"></div>
+    <div class="modal-footer" id="modal-lead-footer"></div>
+  </div>
+</div>
+
+<script>
+async function api(m,u,b){const o={method:m,headers:{'Content-Type':'application/json'}};if(b)o.body=JSON.stringify(b);const r=await fetch(u,o);if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.error||`Error ${r.status}`);}return r.json();}
+const $id = id => document.getElementById(id);
+function fmtFecha(s){if(!s)return'—';const[y,m,d]=s.split('-');return`${d}/${m}/${y}`;}
+function escHtml(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+const STAGES = ['DESCUBIERTO','CONTACTADO','DEGUSTACION','NEGOCIANDO','CLIENTE','PAUSADO','PERDIDO'];
+const STAGE_COLORS = {
+  DESCUBIERTO:'#94a3b8',CONTACTADO:'#818cf8',DEGUSTACION:'#f59e0b',
+  NEGOCIANDO:'#fb923c',CLIENTE:'#22c55e',PAUSADO:'#6b7280',PERDIDO:'#ef4444'
+};
+const TEMP_BADGE = {HOT:'background:#fee2e2;color:#b91c1c',WARM:'background:#fef3c7;color:#92400e',COLD:'background:#dbeafe;color:#1e40af'};
+
+let _dt;function debounceLoadLeads(){clearTimeout(_dt);_dt=setTimeout(loadLeads,300);}
+
+function showTab(t) {
+  ['pipeline','lista','acciones'].forEach(x=>{
+    $id('tab-'+x).style.display=x===t?'':'none';
+    $id('ptab-'+x).classList.toggle('active',x===t);
+  });
+  if(t==='lista') loadLeads();
+}
+
+async function loadKpis() {
+  try {
+    const d = await api('GET','/api/mayoristas/crm/reporte');
+    $id('kpi-nuevos').textContent = d.nuevos_semana||0;
+    $id('kpi-convertidos').textContent = d.convertidos_mes||0;
+    $id('kpi-tareas').textContent = d.tareas_pendientes||0;
+  } catch(e){}
+}
+
+async function loadPipeline() {
+  try {
+    const d = await api('GET','/api/crm/leads?modulo=B2B');
+    const leads = d.leads||d||[];
+    if(!leads.length) {
+      $id('kanban-empty').style.display='';
+      $id('kanban-wrap').innerHTML='';
+      return;
+    }
+    $id('kanban-empty').style.display='none';
+    const byStage = {};
+    STAGES.forEach(s=>byStage[s]=[]);
+    leads.forEach(l=>{const s=l.etapa||'DESCUBIERTO';if(byStage[s])byStage[s].push(l);});
+    $id('kanban-wrap').innerHTML = STAGES.map(stage=>{
+      const color = STAGE_COLORS[stage];
+      const cards = byStage[stage];
+      return `<div style="width:190px;flex-shrink:0">
+        <div style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;padding:.35rem .6rem;border-radius:5px;margin-bottom:.5rem;background:${color}22;color:${color};border:1.5px solid ${color}44;display:flex;justify-content:space-between">
+          <span>${stage}</span><span>${cards.length}</span>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px;min-height:60px">
+          ${cards.length ? cards.map(l=>`
+            <div style="background:var(--bg);border:1px solid var(--border);border-radius:7px;padding:.6rem .75rem;cursor:pointer;transition:.15s" onclick="verLead(${l.id})" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+              <div style="font-size:.8rem;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(l.empresa||l.nombre||'—')}</div>
+              ${l.zona?`<div style="font-size:.7rem;color:var(--muted);margin-top:.1rem">${escHtml(l.zona)}</div>`:''}
+              ${l.temperatura?`<span style="display:inline-block;font-size:.65rem;font-weight:700;padding:.1rem .35rem;border-radius:4px;margin-top:.3rem;${TEMP_BADGE[l.temperatura]||''}">${l.temperatura}</span>`:''}
+            </div>
+          `).join('') : `<div style="font-size:.72rem;color:var(--muted);text-align:center;padding:.75rem 0">Vacío</div>`}
+        </div>
+      </div>`;
+    }).join('');
+  } catch(e){ toast('Error pipeline: '+e.message,'error'); }
+}
+
+async function loadLeads() {
+  const q = $id('q-lista').value;
+  const etapa = $id('sel-etapa').value;
+  try {
+    let url = '/api/crm/leads?modulo=B2B';
+    if(q) url += `&q=${encodeURIComponent(q)}`;
+    if(etapa) url += `&etapa=${encodeURIComponent(etapa)}`;
+    const d = await api('GET',url);
+    const leads = d.leads||d||[];
+    $id('empty-leads').style.display = leads.length?'none':'';
+    $id('tbody-leads').innerHTML = leads.map(l=>{
+      const color = STAGE_COLORS[l.etapa]||'#94a3b8';
+      return `<tr style="cursor:pointer" onclick="verLead(${l.id})">
+        <td style="font-weight:600;font-size:.88rem">${escHtml(l.empresa||l.nombre||'—')}</td>
+        <td><span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:.72rem;font-weight:700;background:${color}22;color:${color}">${escHtml(l.etapa||'—')}</span></td>
+        <td style="font-size:.82rem">${escHtml(l.encargado||l.contacto_nombre||'—')}</td>
+        <td style="font-size:.82rem">${escHtml(l.zona||'—')}</td>
+        <td style="font-size:.78rem">${l.temperatura?`<span style="padding:2px 7px;border-radius:4px;font-weight:700;${TEMP_BADGE[l.temperatura]||''}">${l.temperatura}</span>`:'—'}</td>
+        <td style="font-size:.82rem">${escHtml(l.proxima_accion||'—')}</td>
+        <td style="font-size:.82rem">${fmtFecha(l.fecha_proxima||l.fecha_seguimiento)}</td>
+      </tr>`;
+    }).join('');
+  } catch(e){ toast('Error: '+e.message,'error'); }
+}
+
+async function verLead(id) {
+  try {
+    const d = await api('GET',`/api/crm/leads/${id}`);
+    const l = d.lead||d;
+    $id('modal-lead-titulo').innerHTML = `<i class="bi bi-building"></i> ${escHtml(l.empresa||l.nombre||'Lead')}`;
+    $id('modal-lead-body').innerHTML = `
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
+        <div><div style="font-size:.72rem;color:var(--muted);font-weight:600;text-transform:uppercase">Etapa</div>
+          <div style="font-weight:600;margin-top:2px">${escHtml(l.etapa||'—')}</div></div>
+        <div><div style="font-size:.72rem;color:var(--muted);font-weight:600;text-transform:uppercase">Temperatura</div>
+          <div style="margin-top:2px">${l.temperatura?`<span style="padding:2px 8px;border-radius:4px;font-size:.8rem;font-weight:700;${TEMP_BADGE[l.temperatura]||''}">${l.temperatura}</span>`:'—'}</div></div>
+        <div><div style="font-size:.72rem;color:var(--muted);font-weight:600;text-transform:uppercase">Contacto</div>
+          <div style="font-size:.85rem;margin-top:2px">${escHtml(l.contacto_nombre||'—')}</div></div>
+        <div><div style="font-size:.72rem;color:var(--muted);font-weight:600;text-transform:uppercase">Teléfono</div>
+          <div style="font-size:.85rem;margin-top:2px">${escHtml(l.telefono||'—')}</div></div>
+        <div><div style="font-size:.72rem;color:var(--muted);font-weight:600;text-transform:uppercase">Zona</div>
+          <div style="font-size:.85rem;margin-top:2px">${escHtml(l.zona||'—')}</div></div>
+        <div><div style="font-size:.72rem;color:var(--muted);font-weight:600;text-transform:uppercase">Próxima acción</div>
+          <div style="font-size:.85rem;margin-top:2px">${escHtml(l.proxima_accion||'—')}</div></div>
+      </div>
+      ${l.notas?`<div style="padding:10px;background:var(--bg-hover);border-radius:6px;font-size:.83rem;color:var(--muted)">${escHtml(l.notas)}</div>`:''}
+    `;
+    const footer = $id('modal-lead-footer');
+    const btns = [`<button class="btn btn-secondary" onclick="closeModal('modal-lead')">Cerrar</button>`];
+    if(l.etapa !== 'CLIENTE' && l.etapa !== 'PERDIDO') {
+      btns.push(`<button class="btn btn-primary" onclick="convertir(${l.id})"><i class="bi bi-check-lg"></i> Convertir a cliente</button>`);
+    }
+    footer.innerHTML = btns.join('');
+    openModal('modal-lead');
+  } catch(e){ toast('Error: '+e.message,'error'); }
+}
+
+async function convertir(lid) {
+  if(!confirm('Convertir este lead a cliente mayorista?')) return;
+  try {
+    await api('POST',`/api/mayoristas/crm/convertir/${lid}`,{});
+    closeModal('modal-lead');
+    toast('Lead convertido a cliente','success');
+    await loadKpis();
+    await loadPipeline();
+  } catch(e){ toast('Error: '+e.message,'error'); }
+}
+
+async function prospectar() {
+  const btn = $id('btn-prospectar');
+  btn.disabled = true;
+  btn.innerHTML = '<i class="bi bi-hourglass-split"></i> Prospectando...';
+  try {
+    const d = await api('POST','/api/mayoristas/crm/prospectar',{});
+    toast(`${d.creados||0} leads nuevos creados`,'success');
+    await loadPipeline();
+    await loadKpis();
+  } catch(e){ toast('Error: '+e.message,'error'); }
+  finally { btn.disabled=false; btn.innerHTML='<i class="bi bi-geo-alt"></i> Prospectar (Google Places)'; }
+}
+
+async function primerContacto() {
+  const btn = $id('btn-contacto');
+  if(!confirm('Enviar mensaje de primer contacto a todos los leads en DESCUBIERTO?')) return;
+  btn.disabled = true;
+  btn.innerHTML = '<i class="bi bi-hourglass-split"></i> Enviando...';
+  try {
+    const d = await api('POST','/api/mayoristas/crm/primer-contacto',{});
+    toast(`${d.enviados||0} mensajes enviados`,'success');
+    await loadPipeline();
+  } catch(e){ toast('Error: '+e.message,'error'); }
+  finally { btn.disabled=false; btn.innerHTML='<i class="bi bi-whatsapp"></i> Primer contacto masivo'; }
+}
+
+(async function init(){await loadKpis();await loadPipeline();})();
+</script>
+{% endblock %}

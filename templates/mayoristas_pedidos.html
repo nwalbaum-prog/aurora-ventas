@@ -1,0 +1,378 @@
+{% extends "base.html" %}
+{% block title %}Pedidos Mayoristas{% endblock %}
+{% block page_title %}Mayoristas B2B{% endblock %}
+
+{% block content %}
+<div class="toolbar">
+  <div style="display:flex;gap:8px">
+    <a href="/mayoristas"          class="btn btn-secondary btn-sm">Dashboard</a>
+    <a href="/mayoristas/clientes" class="btn btn-secondary btn-sm">Clientes</a>
+    <a href="/mayoristas/pedidos"  class="btn btn-primary  btn-sm">Pedidos</a>
+    <a href="/mayoristas/cobranza" class="btn btn-secondary btn-sm">Cobranza</a>
+  </div>
+  <div class="toolbar-right">
+    <button id="btn-plantillas" class="btn btn-secondary btn-sm"><i class="bi bi-gear"></i> Plantillas</button>
+    <button id="btn-generar" class="btn btn-primary btn-sm"><i class="bi bi-play-fill"></i> Generar semana</button>
+  </div>
+</div>
+
+<!-- Navegación de semana -->
+<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
+  <button class="btn btn-secondary btn-sm" id="btn-prev"><i class="bi bi-chevron-left"></i></button>
+  <span id="lbl-semana" style="font-weight:700;font-size:1rem;min-width:120px;text-align:center"></span>
+  <button class="btn btn-secondary btn-sm" id="btn-next"><i class="bi bi-chevron-right"></i></button>
+  <span id="lbl-estado" class="badge badge-pausado" style="margin-left:4px"></span>
+</div>
+
+<!-- Paneles martes / jueves -->
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+  <div class="card">
+    <div class="card-title">Martes <span id="fecha-martes" style="font-weight:400;font-size:.8rem;color:var(--muted)"></span></div>
+    <div id="panel-martes"><div style="padding:20px;color:var(--muted);text-align:center">Cargando...</div></div>
+  </div>
+  <div class="card">
+    <div class="card-title">Jueves <span id="fecha-jueves" style="font-weight:400;font-size:.8rem;color:var(--muted)"></span></div>
+    <div id="panel-jueves"><div style="padding:20px;color:var(--muted);text-align:center">Cargando...</div></div>
+  </div>
+</div>
+
+<!-- Modal ajuste de cantidad -->
+<div class="modal-overlay" id="modal-ajuste">
+  <div class="modal" style="max-width:360px">
+    <div class="modal-header">
+      <h3 id="ajuste-titulo">Ajustar</h3>
+      <button onclick="closeModal('modal-ajuste')">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p id="ajuste-info" style="font-size:.85rem;color:var(--muted);margin-bottom:10px"></p>
+      <label class="form-label">Cantidad</label>
+      <input id="ajuste-qty" type="number" class="form-control" min="0" step="0.5">
+      <label class="form-label" style="margin-top:8px">Nota</label>
+      <input id="ajuste-nota" class="form-control" placeholder="Opcional">
+    </div>
+    <div class="modal-footer">
+      <button id="btn-cancelar-linea" class="btn btn-danger btn-sm">Cancelar pedido</button>
+      <button class="btn btn-secondary btn-sm" onclick="closeModal('modal-ajuste')">Cerrar</button>
+      <button class="btn btn-primary btn-sm" onclick="guardarAjuste()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal gestión de plantillas -->
+<div class="modal-overlay" id="modal-plantillas">
+  <div class="modal" style="max-width:700px">
+    <div class="modal-header">
+      <h3>Plantillas de pedido</h3>
+      <button onclick="closeModal('modal-plantillas')">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div style="display:flex;gap:8px;margin-bottom:14px;align-items:center">
+        <select id="sel-plt-cliente" class="form-control" style="max-width:280px">
+          <option value="">Seleccionar cliente...</option>
+        </select>
+        <button class="btn btn-secondary btn-sm" onclick="cargarPlantilla()">Cargar</button>
+      </div>
+      <div id="plt-wrap"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary btn-sm" onclick="closeModal('modal-plantillas')">Cerrar</button>
+      <button class="btn btn-primary btn-sm" onclick="guardarPlantilla()">Guardar plantilla</button>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+function fmtP(n){return'$'+Math.round(n||0).toLocaleString('es-CL');}
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+// ── Estado ────────────────────────────────────────────────────────────────────
+let semana = '';
+let lineasGuardadas = [];  // array global para referencias en onclick
+let ajusteIdx = -1;
+let pltClienteId = null;
+let pltLineas = {martes: [], jueves: []};
+let productosCache = [];
+
+// ── ISO week ──────────────────────────────────────────────────────────────────
+function isoWeek(d) {
+  const tmp = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  tmp.setUTCDate(tmp.getUTCDate() + 4 - (tmp.getUTCDay() || 7));
+  const ys = new Date(Date.UTC(tmp.getUTCFullYear(), 0, 1));
+  const w  = Math.ceil((((tmp - ys) / 86400000) + 1) / 7);
+  return `${tmp.getUTCFullYear()}-W${String(w).padStart(2, '0')}`;
+}
+
+function semanaActual() { return isoWeek(new Date()); }
+
+function moverSemana(delta) {
+  const [y, wStr] = semana.split('-W');
+  const w = parseInt(wStr);
+  const lunes = new Date(Date.UTC(parseInt(y), 0, 1 + (w - 1) * 7));
+  lunes.setUTCDate(lunes.getUTCDate() + delta * 7);
+  semana = isoWeek(new Date(lunes.getUTCFullYear(), lunes.getUTCMonth(), lunes.getUTCDate()));
+  cargarSemana();
+}
+
+// ── Carga semana ──────────────────────────────────────────────────────────────
+async function cargarSemana() {
+  document.getElementById('lbl-semana').textContent = semana;
+  document.getElementById('panel-martes').innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted)">Cargando...</div>';
+  document.getElementById('panel-jueves').innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted)">Cargando...</div>';
+
+  try {
+    const d = await api('GET', `/api/mayoristas/semana?semana=${semana}`);
+
+    document.getElementById('fecha-martes').textContent = d.fecha_martes || '';
+    document.getElementById('fecha-jueves').textContent = d.fecha_jueves || '';
+
+    const estadoMap = {sin_generar: 'Sin generar', borrador: 'Borrador', generado: 'Generado', confirmado: 'Confirmado'};
+    const lbl = document.getElementById('lbl-estado');
+    lbl.textContent = estadoMap[d.estado] || d.estado;
+    lbl.className   = 'badge badge-' + (d.estado === 'generado' ? 'activo' : d.estado === 'sin_generar' ? 'cancelado' : 'pausado');
+
+    lineasGuardadas = d.lineas || [];
+    renderPanel(lineasGuardadas.filter(l => l.dia === 'martes'), 'panel-martes');
+    renderPanel(lineasGuardadas.filter(l => l.dia === 'jueves'), 'panel-jueves');
+  } catch(e) {
+    const msg = `<div style="padding:16px;color:var(--danger)">Error: ${esc(e.message)}</div>`;
+    document.getElementById('panel-martes').innerHTML = msg;
+    document.getElementById('panel-jueves').innerHTML = msg;
+  }
+}
+
+// ── Render panel ──────────────────────────────────────────────────────────────
+function renderPanel(lineas, panelId) {
+  const el = document.getElementById(panelId);
+  if (!lineas.length) {
+    el.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted)">Sin pedidos para este día</div>';
+    return;
+  }
+
+  // Índices en lineasGuardadas para referencias onclick
+  const idxMap = {};
+  lineasGuardadas.forEach((l, i) => { idxMap[`${l.cliente_id}-${l.producto_id}-${l.dia}`] = i; });
+
+  const grupos = {};
+  lineas.forEach(l => {
+    if (!grupos[l.cliente_id]) grupos[l.cliente_id] = {nombre: l.cliente_nombre, lineas: []};
+    grupos[l.cliente_id].lineas.push(l);
+  });
+
+  el.innerHTML = Object.values(grupos).map(g => {
+    const subtotal = g.lineas.filter(l => !l.cancelado).reduce((s, l) => s + l.cantidad * l.precio_mayorista, 0);
+    return `
+      <div style="margin-bottom:14px;padding-bottom:10px;border-bottom:2px solid var(--border)">
+        <div style="font-weight:700;font-size:.875rem;color:var(--primary);margin-bottom:6px">${esc(g.nombre)}</div>
+        ${g.lineas.map(l => {
+          const idx = idxMap[`${l.cliente_id}-${l.producto_id}-${l.dia}`];
+          const cancelado = l.cancelado;
+          const modificado = l.modificado && !cancelado;
+          return `
+          <div style="display:flex;align-items:center;gap:8px;padding:3px 6px;border-radius:4px;margin-bottom:2px;
+            ${cancelado ? 'opacity:.4;text-decoration:line-through;' : ''}
+            ${modificado ? 'background:rgba(245,158,11,.1);' : ''}">
+            <span style="flex:1;font-size:.85rem">${esc(l.producto_nombre)}</span>
+            <span style="font-size:.75rem;color:var(--muted)">base:${l.cantidad_base}</span>
+            <span style="font-weight:700;font-size:.9rem;min-width:26px;text-align:right">${cancelado ? '✗' : l.cantidad}</span>
+            <span style="font-size:.75rem;color:var(--muted);min-width:56px;text-align:right">${cancelado ? '' : fmtP(l.cantidad * l.precio_mayorista)}</span>
+            <button class="btn btn-secondary btn-sm" style="padding:2px 8px;font-size:.75rem"
+              onclick="abrirAjuste(${idx})">${cancelado ? '<i class="bi bi-arrow-counterclockwise"></i>' : '<i class="bi bi-pencil"></i>'}</button>
+          </div>`;
+        }).join('')}
+        <div style="text-align:right;font-size:.8rem;font-weight:700;padding-top:4px;color:var(--muted)">Subtotal: ${fmtP(subtotal)}</div>
+      </div>`;
+  }).join('');
+}
+
+// ── Ajuste ────────────────────────────────────────────────────────────────────
+function abrirAjuste(idx) {
+  ajusteIdx = idx;
+  const l = lineasGuardadas[idx];
+  document.getElementById('ajuste-titulo').textContent = l.cancelado ? 'Restaurar pedido' : 'Ajustar cantidad';
+  document.getElementById('ajuste-info').textContent = `${l.cliente_nombre} — ${l.producto_nombre} (base: ${l.cantidad_base})`;
+  document.getElementById('ajuste-qty').value = l.cancelado ? l.cantidad_base : l.cantidad;
+  document.getElementById('ajuste-nota').value = l.nota || '';
+
+  const btnCancelar = document.getElementById('btn-cancelar-linea');
+  btnCancelar.textContent = l.cancelado ? 'Restaurar' : 'Cancelar pedido';
+  btnCancelar.className = l.cancelado ? 'btn btn-secondary btn-sm' : 'btn btn-danger btn-sm';
+  openModal('modal-ajuste');
+}
+
+async function guardarAjuste() {
+  const l = lineasGuardadas[ajusteIdx];
+  const qty = parseFloat(document.getElementById('ajuste-qty').value) || 0;
+  const nota = document.getElementById('ajuste-nota').value.trim();
+  try {
+    await api('POST', '/api/mayoristas/semana/ajuste', {
+      semana, cliente_id: l.cliente_id, producto_id: l.producto_id,
+      dia: l.dia, cantidad: qty, cancelado: false, nota,
+    });
+    closeModal('modal-ajuste');
+    cargarSemana();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+document.getElementById('btn-cancelar-linea').onclick = async function() {
+  const l = lineasGuardadas[ajusteIdx];
+  if (l.cancelado && l.ajuste_id) {
+    try {
+      await api('DELETE', `/api/mayoristas/semana/ajuste/${l.ajuste_id}`);
+      closeModal('modal-ajuste');
+      cargarSemana();
+    } catch(e) { toast(e.message, 'error'); }
+    return;
+  }
+  try {
+    await api('POST', '/api/mayoristas/semana/ajuste', {
+      semana, cliente_id: l.cliente_id, producto_id: l.producto_id,
+      dia: l.dia, cantidad: 0, cancelado: true,
+      nota: document.getElementById('ajuste-nota').value.trim(),
+    });
+    closeModal('modal-ajuste');
+    cargarSemana();
+  } catch(e) { toast(e.message, 'error'); }
+};
+
+// ── Generar semana ────────────────────────────────────────────────────────────
+document.getElementById('btn-generar').onclick = async function() {
+  if (!confirm('Generar ventas para todos los pedidos activos de esta semana?')) return;
+  this.disabled = true;
+  try {
+    const r = await api('POST', '/api/mayoristas/generar-semana');
+    toast(`${r.generadas} ventas generadas (${r.omitidas} ya existian)`, 'success');
+    cargarSemana();
+  } catch(e) { toast(e.message, 'error'); }
+  finally { this.disabled = false; }
+};
+
+// ── Plantillas ────────────────────────────────────────────────────────────────
+document.getElementById('btn-plantillas').onclick = async function() {
+  // Cargar clientes si el select está vacío
+  const sel = document.getElementById('sel-plt-cliente');
+  if (sel.options.length <= 1) {
+    try {
+      const cl = await api('GET', '/api/mayoristas/clientes');
+      (cl || []).forEach(c => {
+        const o = document.createElement('option');
+        o.value = c.id; o.textContent = c.nombre;
+        sel.appendChild(o);
+      });
+    } catch(e) { toast(e.message, 'error'); return; }
+  }
+  // Cargar productos si no están en caché
+  if (!productosCache.length) {
+    try {
+      const p = await api('GET', '/api/productos');
+      productosCache = (p || []).filter(x => x.activo && x.precio_mayorista > 0);
+    } catch(e) {}
+  }
+  openModal('modal-plantillas');
+};
+
+async function cargarPlantilla() {
+  const cid = parseInt(document.getElementById('sel-plt-cliente').value);
+  if (!cid) { toast('Selecciona un cliente', 'error'); return; }
+  pltClienteId = cid;
+  try {
+    const d = await api('GET', `/api/mayoristas/legacy/${cid}/pedidos`);
+    pltLineas = {martes: [], jueves: []};
+    (d.pedidos || []).forEach(p => {
+      pltLineas[p.dia_despacho] = p.lineas.map(l => ({
+        producto_id: l.producto_id,
+        nombre: l.producto_nombre,
+        cantidad: l.cantidad,
+      }));
+    });
+    renderPlantilla();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+function renderPlantilla() {
+  const wrap = document.getElementById('plt-wrap');
+  const prodOpts = productosCache.map(p => `<option value="${p.id}">${esc(p.nombre)} — ${fmtP(p.precio_mayorista)}</option>`).join('');
+
+  function renderDia(dia) {
+    const lineas = pltLineas[dia] || [];
+    return `
+      <div style="margin-bottom:16px">
+        <div style="font-weight:700;text-transform:capitalize;margin-bottom:8px">${dia}</div>
+        <table class="table" style="font-size:.85rem">
+          <thead><tr><th>Producto</th><th style="width:100px">Cantidad</th><th style="width:40px"></th></tr></thead>
+          <tbody id="plt-${dia}">
+            ${lineas.map((l, i) => `<tr>
+              <td><select class="form-control form-control-sm" data-dia="${dia}" data-i="${i}" data-field="producto_id">${prodOpts}</select></td>
+              <td><input type="number" class="form-control form-control-sm" min="0.5" step="0.5" value="${l.cantidad}" data-dia="${dia}" data-i="${i}" data-field="cantidad"></td>
+              <td><button class="btn btn-danger btn-sm" onclick="quitarPlt('${dia}',${i})"><i class="bi bi-trash"></i></button></td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+        <button class="btn btn-secondary btn-sm" onclick="agregarPlt('${dia}')"><i class="bi bi-plus-lg"></i> Agregar</button>
+      </div>`;
+  }
+
+  wrap.innerHTML = renderDia('martes') + renderDia('jueves');
+
+  // Restaurar valores de select
+  ['martes', 'jueves'].forEach(dia => {
+    (pltLineas[dia] || []).forEach((l, i) => {
+      const sel = wrap.querySelector(`[data-dia="${dia}"][data-i="${i}"][data-field="producto_id"]`);
+      if (sel) sel.value = l.producto_id;
+    });
+  });
+}
+
+function agregarPlt(dia) {
+  const primero = productosCache[0];
+  if (!primero) { toast('Sin productos con precio mayorista', 'error'); return; }
+  pltLineas[dia] = pltLineas[dia] || [];
+  pltLineas[dia].push({producto_id: primero.id, nombre: primero.nombre, cantidad: 1});
+  renderPlantilla();
+}
+
+function quitarPlt(dia, i) {
+  pltLineas[dia].splice(i, 1);
+  renderPlantilla();
+}
+
+function leerCamposPlt() {
+  ['martes', 'jueves'].forEach(dia => {
+    const tbody = document.getElementById(`plt-${dia}`);
+    if (!tbody) return;
+    (pltLineas[dia] || []).forEach((l, i) => {
+      const selProd = tbody.querySelector(`[data-dia="${dia}"][data-i="${i}"][data-field="producto_id"]`);
+      const inpQty  = tbody.querySelector(`[data-dia="${dia}"][data-i="${i}"][data-field="cantidad"]`);
+      if (selProd) l.producto_id = parseInt(selProd.value);
+      if (inpQty)  l.cantidad = parseFloat(inpQty.value) || 1;
+    });
+  });
+}
+
+async function guardarPlantilla() {
+  if (!pltClienteId) { toast('Selecciona un cliente', 'error'); return; }
+  leerCamposPlt();
+  const pedidos = ['martes', 'jueves'].map(dia => ({
+    dia_despacho: dia,
+    activo: true,
+    notas: '',
+    lineas: (pltLineas[dia] || []).map(l => ({producto_id: l.producto_id, cantidad: l.cantidad})),
+  }));
+  try {
+    await api('PUT', `/api/mayoristas/legacy/${pltClienteId}/pedidos`, {pedidos});
+    toast('Plantilla guardada', 'success');
+    closeModal('modal-plantillas');
+    cargarSemana();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+// ── Inicializar ───────────────────────────────────────────────────────────────
+document.getElementById('btn-prev').onclick = () => moverSemana(-1);
+document.getElementById('btn-next').onclick = () => moverSemana(1);
+
+semana = semanaActual();
+cargarSemana();
+</script>
+{% endblock %}

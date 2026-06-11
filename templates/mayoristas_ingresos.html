@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+{% block title %}Ingresos Mayoristas{% endblock %}
+{% block page_title %}Ingresos B2B{% endblock %}
+
+{% block content %}
+
+<div class="toolbar">
+  <div style="display:flex;gap:8px;align-items:center">
+    <select id="sel-periodo" style="font-size:.85em;padding:5px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-input);color:var(--text)" onchange="loadAll()">
+      <option value="semana">Esta semana</option>
+      <option value="mes" selected>Este mes</option>
+      <option value="año">Este año</option>
+    </select>
+  </div>
+  <div class="toolbar-right">
+    <a href="/mayoristas" class="btn btn-secondary btn-sm"><i class="bi bi-speedometer2"></i> Dashboard</a>
+  </div>
+</div>
+
+<div class="kpi-card" style="margin-bottom:16px;max-width:300px">
+  <div class="kpi-label"><i class="bi bi-cash-stack"></i> Total del período</div>
+  <div class="kpi-value" id="kpi-periodo-total">—</div>
+  <div class="kpi-sub" id="kpi-periodo-sub">—</div>
+</div>
+
+<div class="card" style="margin-bottom:16px">
+  <div class="card-title"><i class="bi bi-bar-chart"></i> Ingresos por día</div>
+  <div style="position:relative;height:260px">
+    <canvas id="chart-flujo"></canvas>
+  </div>
+  <div id="chart-empty" class="empty" style="display:none;padding:40px">Sin datos para el período</div>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+  <div class="card">
+    <div class="card-title"><i class="bi bi-trophy"></i> Top clientes</div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>#</th><th>Cliente</th><th style="text-align:right">Ingreso</th><th style="text-align:right">Pedidos</th></tr></thead>
+        <tbody id="tbody-clientes"></tbody>
+      </table>
+    </div>
+    <div id="empty-clientes" class="empty" style="display:none">Sin datos</div>
+  </div>
+  <div class="card">
+    <div class="card-title"><i class="bi bi-box-seam"></i> Top productos</div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>#</th><th>Producto</th><th style="text-align:right">Unidades</th><th style="text-align:right">Ingreso</th></tr></thead>
+        <tbody id="tbody-productos"></tbody>
+      </table>
+    </div>
+    <div id="empty-productos" class="empty" style="display:none">Sin datos</div>
+  </div>
+</div>
+
+<script>
+async function api(m,u,b){const o={method:m,headers:{'Content-Type':'application/json'}};if(b)o.body=JSON.stringify(b);const r=await fetch(u,o);if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.error||`Error ${r.status}`);}return r.json();}
+const $id = id => document.getElementById(id);
+function fmtPeso(n){return'$'+Math.round(n||0).toLocaleString('es-CL');}
+function fmtFecha(s){if(!s)return'—';const parts=s.split('-');return parts.length===3?`${parts[2]}/${parts[1]}`:s;}
+function escHtml(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+let chartFlujo = null;
+
+async function loadFlujo(periodo) {
+  try {
+    const d = await api('GET',`/api/mayoristas/ingresos?periodo=${periodo}`);
+    const datos = d.datos||d||[];
+    const total = datos.reduce((s,x)=>s+(x.ingreso||0),0);
+    $id('kpi-periodo-total').textContent = fmtPeso(total);
+    $id('kpi-periodo-sub').textContent = `${datos.length} días con ventas`;
+    const labels = datos.map(x=>fmtFecha(x.fecha||x.label||''));
+    const values = datos.map(x=>x.ingreso||0);
+    $id('chart-empty').style.display = datos.length ? 'none' : '';
+    $id('chart-flujo').style.display = datos.length ? '' : 'none';
+    if(chartFlujo) { chartFlujo.destroy(); chartFlujo = null; }
+    if(datos.length) {
+      chartFlujo = new Chart($id('chart-flujo'),{
+        type:'bar',
+        data:{
+          labels,
+          datasets:[{
+            label:'Ingresos',
+            data:values,
+            backgroundColor:'rgba(212,30,47,0.75)',
+            borderRadius:5,
+            borderSkipped:false
+          }]
+        },
+        options:{
+          responsive:true,
+          maintainAspectRatio:false,
+          plugins:{
+            legend:{display:false},
+            tooltip:{callbacks:{label:ctx=>fmtPeso(ctx.parsed.y)}}
+          },
+          scales:{
+            y:{ticks:{callback:v=>fmtPeso(v)},grid:{color:'rgba(0,0,0,.05)'}},
+            x:{grid:{display:false}}
+          }
+        }
+      });
+    }
+  } catch(e){ toast('Error flujo: '+e.message,'error'); }
+}
+
+async function loadClientes(periodo) {
+  try {
+    const d = await api('GET',`/api/mayoristas/ingresos/por-cliente?periodo=${periodo}`);
+    const rows = d.clientes||d||[];
+    $id('empty-clientes').style.display = rows.length ? 'none' : '';
+    $id('tbody-clientes').innerHTML = rows.map((c,i)=>`
+      <tr>
+        <td style="font-size:.78rem;color:var(--muted);font-weight:700;min-width:24px">${i+1}</td>
+        <td style="font-size:.85rem;font-weight:600">${escHtml(c.nombre)}</td>
+        <td style="text-align:right;font-size:.85rem">${fmtPeso(c.ingreso)}</td>
+        <td style="text-align:right;font-size:.82rem;color:var(--muted)">${c.pedidos||0}</td>
+      </tr>
+    `).join('');
+  } catch(e){}
+}
+
+async function loadProductos(periodo) {
+  try {
+    const d = await api('GET',`/api/mayoristas/ingresos/por-producto?periodo=${periodo}`);
+    const rows = d.productos||d||[];
+    $id('empty-productos').style.display = rows.length ? 'none' : '';
+    $id('tbody-productos').innerHTML = rows.map((p,i)=>`
+      <tr>
+        <td style="font-size:.78rem;color:var(--muted);font-weight:700;min-width:24px">${i+1}</td>
+        <td style="font-size:.85rem;font-weight:600">${escHtml(p.nombre)}</td>
+        <td style="text-align:right;font-size:.85rem">${(p.unidades||0).toLocaleString('es-CL')}</td>
+        <td style="text-align:right;font-size:.85rem">${fmtPeso(p.ingreso)}</td>
+      </tr>
+    `).join('');
+  } catch(e){}
+}
+
+async function loadAll() {
+  const periodo = $id('sel-periodo').value;
+  await Promise.all([loadFlujo(periodo), loadClientes(periodo), loadProductos(periodo)]);
+}
+
+(async function init(){await loadAll();})();
+</script>
+{% endblock %}

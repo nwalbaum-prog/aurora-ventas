@@ -1,0 +1,179 @@
+{% extends "base.html" %}
+{% block title %}Clientes Mayoristas{% endblock %}
+{% block page_title %}Mayoristas B2B{% endblock %}
+
+{% block content %}
+<div class="toolbar">
+  <div style="display:flex;gap:8px">
+    <a href="/mayoristas"          class="btn btn-secondary btn-sm">Dashboard</a>
+    <a href="/mayoristas/clientes" class="btn btn-primary  btn-sm">Clientes</a>
+    <a href="/mayoristas/pedidos"  class="btn btn-secondary btn-sm">Pedidos</a>
+    <a href="/mayoristas/cobranza" class="btn btn-secondary btn-sm">Cobranza</a>
+  </div>
+  <div class="toolbar-right">
+    <button class="btn btn-primary btn-sm" onclick="openModal('modal-nuevo')"><i class="bi bi-plus-lg"></i> Nuevo cliente</button>
+  </div>
+</div>
+
+<div class="card">
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Cliente</th>
+        <th>Contacto</th>
+        <th>Días despacho</th>
+        <th>Deuda total</th>
+        <th>Último pedido</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody id="tbody">
+      <tr><td colspan="6" style="text-align:center;padding:24px;color:var(--muted)">Cargando...</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- Modal nuevo cliente -->
+<div class="modal-overlay" id="modal-nuevo">
+  <div class="modal" style="max-width:500px">
+    <div class="modal-header">
+      <h3>Nuevo cliente mayorista</h3>
+      <button onclick="closeModal('modal-nuevo')">&times;</button>
+    </div>
+    <div class="modal-body" style="display:flex;flex-direction:column;gap:10px">
+      <div>
+        <label class="form-label">Nombre comercial <span style="color:var(--danger)">*</span></label>
+        <input id="inp-nombre" class="form-control" placeholder="Nombre del negocio">
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div>
+          <label class="form-label">Teléfono</label>
+          <input id="inp-tel" class="form-control" placeholder="+56 9...">
+        </div>
+        <div>
+          <label class="form-label">Email</label>
+          <input id="inp-email" class="form-control" type="email">
+        </div>
+      </div>
+      <div>
+        <label class="form-label">Dirección</label>
+        <input id="inp-dir" class="form-control">
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div>
+          <label class="form-label">Día despacho 1</label>
+          <select id="inp-dia1" class="form-control">
+            <option value="">—</option>
+            <option>lunes</option><option>martes</option><option>miércoles</option>
+            <option>jueves</option><option>viernes</option><option>sábado</option>
+          </select>
+        </div>
+        <div>
+          <label class="form-label">Día despacho 2</label>
+          <select id="inp-dia2" class="form-control">
+            <option value="">—</option>
+            <option>lunes</option><option>martes</option><option>miércoles</option>
+            <option>jueves</option><option>viernes</option><option>sábado</option>
+          </select>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div>
+          <label class="form-label">Condición de pago</label>
+          <select id="inp-cond" class="form-control">
+            <option value="contado">Contado</option>
+            <option value="7dias">7 días</option>
+            <option value="30dias">30 días</option>
+          </select>
+        </div>
+        <div>
+          <label class="form-label">Tipo de negocio</label>
+          <select id="inp-tipo" class="form-control">
+            <option value="">—</option>
+            <option value="cafeteria">Cafetería</option>
+            <option value="restaurante">Restaurante</option>
+            <option value="hotel">Hotel</option>
+            <option value="supermercado">Supermercado</option>
+            <option value="tienda">Tienda</option>
+            <option value="otro">Otro</option>
+          </select>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary btn-sm" onclick="closeModal('modal-nuevo')">Cancelar</button>
+      <button class="btn btn-primary btn-sm" onclick="guardar()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+function fmtP(n){return n>0?'$'+Math.round(n||0).toLocaleString('es-CL'):'—';}
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function fmtFecha(s){if(!s)return'—';const[y,m,d]=s.split('-');return`${d}/${m}/${y}`;}
+
+async function cargar() {
+  const tbody = document.getElementById('tbody');
+  try {
+    const lista = await api('GET', '/api/mayoristas');
+
+    if (!lista || !lista.length) {
+      tbody.innerHTML = '<tr><td colspan="6" class="empty">Sin clientes mayoristas registrados</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = lista.map(c => {
+      const tel = c.encargado_telefono || c.telefono || '—';
+      const dias = [c.dia_despacho_1, c.dia_despacho_2].filter(Boolean).map(d=>d[0].toUpperCase()+d.slice(1)).join(', ') || '—';
+      const deuda = c.deuda ? c.deuda.total : 0;
+      const deudaVencida = c.deuda ? c.deuda.vencida : 0;
+      const ultPed = c.ultimo_pedido ? fmtFecha(c.ultimo_pedido.fecha_pedido) : '—';
+      const deudaHtml = deuda > 0
+        ? `<span style="color:${deudaVencida>0?'var(--danger)':'inherit'}">${fmtP(deuda)}</span>`
+        : '—';
+      return `<tr>
+        <td>
+          <strong>${esc(c.nombre)}</strong>
+          ${c.tipo_negocio ? `<div style="font-size:.78rem;color:var(--muted)">${esc(c.tipo_negocio)}</div>` : ''}
+        </td>
+        <td style="font-size:.85rem">${esc(tel)}</td>
+        <td style="font-size:.85rem">${esc(dias)}</td>
+        <td style="font-size:.85rem">${deudaHtml}</td>
+        <td style="font-size:.85rem">${esc(ultPed)}</td>
+        <td style="white-space:nowrap">
+          <a href="/mayoristas/clientes/${c.id}" class="btn btn-secondary btn-sm"><i class="bi bi-person"></i> Ficha</a>
+        </td>
+      </tr>`;
+    }).join('');
+  } catch(e) {
+    tbody.innerHTML = `<tr><td colspan="6" style="color:var(--danger);padding:16px">Error: ${esc(e.message)}</td></tr>`;
+  }
+}
+
+async function guardar() {
+  const nombre = document.getElementById('inp-nombre').value.trim();
+  if (!nombre) { toast('Nombre requerido', 'error'); return; }
+  const body = {
+    nombre,
+    telefono:       document.getElementById('inp-tel').value.trim(),
+    email:          document.getElementById('inp-email').value.trim(),
+    direccion:      document.getElementById('inp-dir').value.trim(),
+    dia_despacho_1: document.getElementById('inp-dia1').value,
+    dia_despacho_2: document.getElementById('inp-dia2').value,
+    condicion_pago: document.getElementById('inp-cond').value,
+    tipo_negocio:   document.getElementById('inp-tipo').value,
+  };
+  try {
+    const r = await api('POST', '/api/mayoristas', body);
+    toast('Cliente creado', 'success');
+    closeModal('modal-nuevo');
+    window.location.href = `/mayoristas/clientes/${r.id}`;
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+cargar();
+</script>
+{% endblock %}

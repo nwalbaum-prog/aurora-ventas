@@ -1,0 +1,156 @@
+{% extends "base.html" %}
+{% block title %}Precios Mayoristas{% endblock %}
+{% block page_title %}Lista de Precios B2B{% endblock %}
+
+{% block content %}
+
+<div class="toolbar">
+  <div style="display:flex;gap:8px;align-items:center">
+    <input id="q" type="text" placeholder="Buscar producto..." style="padding:5px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-input);color:var(--text);font-size:.85rem;width:200px" oninput="filtrar()">
+  </div>
+  <div class="toolbar-right">
+    <a href="/mayoristas" class="btn btn-secondary btn-sm"><i class="bi bi-speedometer2"></i> Dashboard</a>
+    <button class="btn btn-primary btn-sm" onclick="openModal('modal-nuevo')"><i class="bi bi-plus-lg"></i> Precio especial</button>
+  </div>
+</div>
+
+<div class="card">
+  <div class="table-wrap">
+    <table id="tbl">
+      <thead>
+        <tr>
+          <th>Producto</th>
+          <th style="text-align:right">Precio base</th>
+          <th style="text-align:right">Precio mayorista</th>
+          <th>Excepciones por cliente</th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+  <div id="empty-state" class="empty" style="display:none">Sin productos</div>
+</div>
+
+<!-- Modal precio especial -->
+<div class="modal-overlay" id="modal-nuevo" style="display:none" onclick="if(event.target===this)closeModal('modal-nuevo')">
+  <div class="modal" style="max-width:460px;width:100%">
+    <div class="modal-header">
+      <span><i class="bi bi-tags"></i> Precio especial</span>
+      <button class="btn btn-secondary btn-sm" onclick="closeModal('modal-nuevo')"><i class="bi bi-x-lg"></i></button>
+    </div>
+    <div style="padding:16px">
+      <div class="form-group">
+        <label>Cliente *</label>
+        <select id="np-mayorista"><option value="">— Seleccionar —</option></select>
+      </div>
+      <div class="form-group">
+        <label>Producto *</label>
+        <select id="np-producto"><option value="">— Seleccionar —</option></select>
+      </div>
+      <div class="form-row fr-2">
+        <div class="form-group">
+          <label>Precio especial (CLP)</label>
+          <input id="np-precio" type="number" min="0" step="1" placeholder="Ej: 3500">
+        </div>
+        <div class="form-group">
+          <label>Descuento %</label>
+          <input id="np-dto" type="number" min="0" max="100" step="1" placeholder="Ej: 10">
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Mínimo de unidades</label>
+        <input id="np-min" type="number" min="0" step="1" placeholder="Ej: 5">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-nuevo')">Cancelar</button>
+      <button class="btn btn-primary" onclick="crearPrecio()"><i class="bi bi-check-lg"></i> Guardar</button>
+    </div>
+  </div>
+</div>
+
+<script>
+async function api(m,u,b){const o={method:m,headers:{'Content-Type':'application/json'}};if(b)o.body=JSON.stringify(b);const r=await fetch(u,o);if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.error||`Error ${r.status}`);}return r.json();}
+const $id = id => document.getElementById(id);
+function fmtPeso(n){return'$'+Math.round(n||0).toLocaleString('es-CL');}
+function escHtml(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+let allRows = [];
+
+function filtrar() {
+  const q = $id('q').value.toLowerCase();
+  const rows = q ? allRows.filter(r => r.nombre.toLowerCase().includes(q)) : allRows;
+  renderTabla(rows);
+}
+
+function renderTabla(rows) {
+  $id('empty-state').style.display = rows.length ? 'none' : '';
+  $id('tbody').innerHTML = rows.map(p => `
+    <tr>
+      <td style="font-weight:600;font-size:.88rem">${escHtml(p.nombre)}</td>
+      <td style="text-align:right;font-size:.88rem">${fmtPeso(p.precio_base)}</td>
+      <td style="text-align:right;font-size:.88rem;font-weight:600;color:var(--accent)">${p.precio_mayorista ? fmtPeso(p.precio_mayorista) : '<span style="color:var(--muted)">—</span>'}</td>
+      <td>
+        <div style="display:flex;gap:4px;flex-wrap:wrap">
+          ${(p.excepciones||[]).map(e=>`
+            <span class="badge badge-blue" style="cursor:default;font-size:.7rem" title="${escHtml(e.cliente_nombre)}: ${fmtPeso(e.precio)}">
+              ${escHtml(e.cliente_nombre)}: ${fmtPeso(e.precio)}
+              <button onclick="eliminarExcepcion(${e.id})" style="background:none;border:none;cursor:pointer;padding:0 0 0 4px;color:inherit;font-size:.75rem" title="Eliminar">&times;</button>
+            </span>
+          `).join('')}
+        </div>
+      </td>
+    </tr>
+  `).join('');
+}
+
+async function load() {
+  try {
+    const d = await api('GET','/api/mayoristas/precios/lista');
+    allRows = d.precios||d||[];
+    renderTabla(allRows);
+  } catch(e){ toast('Error: '+e.message,'error'); }
+}
+
+async function loadSelects() {
+  try {
+    const m = await api('GET','/api/mayoristas?activo=1');
+    const list = m.mayoristas||m||[];
+    $id('np-mayorista').innerHTML = '<option value="">— Seleccionar —</option>' +
+      list.map(x=>`<option value="${x.id}">${escHtml(x.nombre)}</option>`).join('');
+    const p = await api('GET','/api/productos');
+    const prods = p.productos||p||[];
+    $id('np-producto').innerHTML = '<option value="">— Seleccionar —</option>' +
+      prods.map(x=>`<option value="${x.id}">${escHtml(x.nombre)}</option>`).join('');
+  } catch(e){}
+}
+
+async function crearPrecio() {
+  const mid = $id('np-mayorista').value;
+  const pid = $id('np-producto').value;
+  if(!mid||!pid){toast('Selecciona cliente y producto','error');return;}
+  try {
+    await api('POST',`/api/mayoristas/${mid}/precios`,{
+      producto_id:parseInt(pid),
+      precio:parseFloat($id('np-precio').value||0)||null,
+      descuento_pct:parseFloat($id('np-dto').value||0)||null,
+      min_unidades:parseInt($id('np-min').value||0)||null
+    });
+    closeModal('modal-nuevo');
+    toast('Precio especial guardado','success');
+    load();
+  } catch(e){toast('Error: '+e.message,'error');}
+}
+
+async function eliminarExcepcion(id) {
+  if(!confirm('Eliminar este precio especial?')) return;
+  try {
+    await api('DELETE',`/api/mayoristas/precios/${id}`);
+    toast('Eliminado','success');
+    load();
+  } catch(e){toast('Error: '+e.message,'error');}
+}
+
+(async function init(){await loadSelects();await load();})();
+</script>
+{% endblock %}

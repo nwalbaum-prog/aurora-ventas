@@ -30,10 +30,11 @@
     <div>
       <label class="label">Período</label>
       <div class="filter-tabs" id="tabs-periodo">
-        <button class="filter-tab" onclick="setPeriodo(this,'semana')">Esta semana</button>
+        <button class="filter-tab" onclick="setPeriodo(this,'hoy')">Hoy</button>
+        <button class="filter-tab active" onclick="setPeriodo(this,'semana')">Esta semana</button>
         <button class="filter-tab" onclick="setPeriodo(this,'mes')">Mes actual</button>
         <button class="filter-tab" onclick="setPeriodo(this,'mes_anterior')">Mes anterior</button>
-        <button class="filter-tab active" onclick="setPeriodo(this,'anno')">Año actual</button>
+        <button class="filter-tab" onclick="setPeriodo(this,'anno')">Año actual</button>
         <button class="filter-tab" onclick="setPeriodo(this,'personalizado')">Personalizado</button>
       </div>
     </div>
@@ -109,9 +110,107 @@
         <th>Pago</th>
         <th>Despacho</th>
         <th>F. Despacho</th>
+        <th></th>
       </tr></thead>
       <tbody id="tbody"></tbody>
     </table>
+  </div>
+</div>
+
+<!-- ═══════════════ MODAL EDITAR VENTA ═══════════════ -->
+<div id="modal-editar" class="modal" style="display:none;align-items:flex-start;padding-top:3rem">
+  <div class="modal-dialog" style="max-width:680px;width:96%;max-height:88vh;display:flex;flex-direction:column">
+    <div class="modal-header" style="display:flex;align-items:center;justify-content:space-between">
+      <h4 style="margin:0;font-size:.95rem">Editar venta <span id="edit-id-label" style="color:var(--muted)"></span></h4>
+      <button onclick="cerrarEditModal()" style="background:none;border:none;font-size:1.2rem;cursor:pointer;color:var(--muted)">✕</button>
+    </div>
+
+    <div class="modal-body" style="overflow-y:auto;padding:1.25rem;flex:1">
+      <!-- Datos generales -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:.75rem;margin-bottom:1rem">
+        <div>
+          <label class="label">Fecha</label>
+          <input id="edit-fecha" type="date" class="input" style="width:100%">
+        </div>
+        <div>
+          <label class="label">Cliente</label>
+          <select id="edit-cliente" class="input" style="width:100%">
+            <option value="">Sin cliente</option>
+          </select>
+        </div>
+        <div>
+          <label class="label">Canal</label>
+          <select id="edit-canal" class="input" style="width:100%">
+            <option value="local">Local</option>
+            <option value="online">Online</option>
+            <option value="whatsapp">WhatsApp</option>
+            <option value="suscripcion">Suscripción</option>
+            <option value="delivery">Delivery</option>
+          </select>
+        </div>
+        <div>
+          <label class="label">Tipo cliente</label>
+          <select id="edit-tipo-cliente" class="input" style="width:100%">
+            <option value="CLIENTE">Cliente</option>
+            <option value="MAYORISTA">Mayorista</option>
+          </select>
+        </div>
+        <div>
+          <label class="label">Estado pago</label>
+          <select id="edit-estado-pago" class="input" style="width:100%">
+            <option value="PENDIENTE">Pendiente</option>
+            <option value="PAGADO">Pagado</option>
+          </select>
+        </div>
+        <div>
+          <label class="label">Estado despacho</label>
+          <select id="edit-estado-despacho" class="input" style="width:100%">
+            <option value="PENDIENTE">Pendiente</option>
+            <option value="EN PREPARACION">En preparación</option>
+            <option value="DESPACHADO">Despachado</option>
+            <option value="RETIRO EN TIENDA">Retiro en tienda</option>
+          </select>
+        </div>
+        <div>
+          <label class="label">Fecha despacho</label>
+          <input id="edit-fecha-despacho" type="date" class="input" style="width:100%">
+        </div>
+        <div>
+          <label class="label">Notas</label>
+          <input id="edit-notas" type="text" class="input" style="width:100%" placeholder="Observaciones…">
+        </div>
+      </div>
+
+      <!-- Items -->
+      <div style="border-top:1px solid var(--border);padding-top:.75rem">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.5rem">
+          <span style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)">Productos</span>
+          <span id="edit-total-label" style="font-size:.9rem;font-weight:700;color:var(--accent)"></span>
+        </div>
+
+        <div id="edit-items-list" style="display:flex;flex-direction:column;gap:.3rem;margin-bottom:.75rem"></div>
+
+        <!-- Agregar producto -->
+        <div style="display:flex;gap:.4rem;align-items:center;flex-wrap:wrap;padding:.5rem;background:var(--bg-2);border-radius:.4rem;border:1px dashed var(--border)">
+          <select id="edit-prod-sel" class="input" style="flex:1;min-width:160px">
+            <option value="">— Seleccionar producto —</option>
+          </select>
+          <input id="edit-prod-cant" type="number" class="input" min="0.1" step="0.1" value="1" style="width:70px" placeholder="Cant.">
+          <input id="edit-prod-precio" type="number" class="input" min="0" step="1" style="width:90px" placeholder="Precio">
+          <button class="btn btn-sm btn-secondary" onclick="addItemEditor()">+ Agregar</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-footer" style="display:flex;justify-content:space-between;align-items:center;padding:.75rem 1.25rem;border-top:1px solid var(--border)">
+      <button class="btn btn-sm" onclick="eliminarVenta()" style="background:rgba(239,68,68,.1);color:#ef4444;border:1px solid rgba(239,68,68,.2)">
+        🗑 Eliminar venta
+      </button>
+      <div style="display:flex;gap:.5rem">
+        <button class="btn btn-ghost btn-sm" onclick="cerrarEditModal()">Cancelar</button>
+        <button class="btn btn-primary btn-sm" onclick="guardarVenta()">Guardar cambios</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -149,7 +248,7 @@
 </style>
 
 <script>
-let periodo    = 'anno';
+let periodo    = 'semana';
 let clientes   = [];
 let allVentas  = [];   // todos los datos cargados (para resumen)
 let detalleVentas = []; // los que muestra el detalle (puede estar filtrado por semana)
@@ -369,6 +468,10 @@ function renderDetalle(ventas) {
       <td>${pagoBadge}</td>
       <td>${despBadge}</td>
       <td style="color:var(--muted);font-size:.78rem;white-space:nowrap">${v.fecha_despacho||'—'}</td>
+      <td style="white-space:nowrap">
+        <button class="btn btn-ghost btn-sm" style="padding:.25rem .5rem;font-size:.75rem"
+                onclick='abrirEditModal(${v.id})' title="Editar">✏️</button>
+      </td>
     </tr>`;
   }).join('') || `<tr><td colspan="9"><div class="empty" style="padding:2.5rem;text-align:center;color:var(--muted)">
     <i class="bi bi-receipt" style="font-size:2rem;display:block;margin-bottom:.5rem"></i>
@@ -403,6 +506,7 @@ function calcRango(p) {
   const y = hoy.getFullYear(), m = hoy.getMonth(), d = hoy.getDate();
   const pad = n => String(n).padStart(2,'0');
   const fmt2 = dt => `${dt.getFullYear()}-${pad(dt.getMonth()+1)}-${pad(dt.getDate())}`;
+  if (p === 'hoy')    return [fmt2(hoy), fmt2(hoy)];
   if (p === 'semana') {
     const lun = new Date(hoy); lun.setDate(d - (hoy.getDay()||7) + 1);
     return [fmt2(lun), fmt2(hoy)];
@@ -481,5 +585,161 @@ async function cargarClientes() {
 
 cargarClientes();
 load();
+
+// ── Edición de ventas ─────────────────────────────────────────────────────────
+let editVentaId  = null;
+let editItems    = [];   // [{producto_id, nombre, cantidad, precio_unitario}]
+let todosProds   = [];   // cache de productos para el selector
+
+async function cargarProductosEdit() {
+  if (todosProds.length) return;
+  todosProds = await api('GET', '/api/productos');
+  const sel = document.getElementById('edit-prod-sel');
+  sel.innerHTML = '<option value="">— Seleccionar producto —</option>' +
+    todosProds.map(p => `<option value="${p.id}" data-precio="${p.precio}">${p.nombre} — ${fmt(p.precio)}</option>`).join('');
+}
+
+async function abrirEditModal(vid) {
+  await cargarProductosEdit();
+  // Buscar la venta en los datos cargados
+  const v = allVentas.find(x => x.id === vid);
+  if (!v) { toast('Venta no encontrada', 'error'); return; }
+
+  editVentaId = vid;
+  editItems   = (v.items || []).map(i => ({
+    producto_id:    i.producto_id,
+    nombre:         i.nombre,
+    cantidad:       i.cantidad,
+    precio_unitario: i.precio_unitario
+  }));
+
+  // Poblar clientes en el select
+  const selCli = document.getElementById('edit-cliente');
+  selCli.innerHTML = '<option value="">Sin cliente</option>' +
+    clientes.map(c => `<option value="${c.id}">${c.nombre}</option>`).join('');
+
+  // Setear valores
+  document.getElementById('edit-id-label').textContent      = `#${vid}`;
+  document.getElementById('edit-fecha').value               = v.fecha || '';
+  document.getElementById('edit-cliente').value             = v.cliente_id || '';
+  document.getElementById('edit-canal').value               = v.canal || 'local';
+  document.getElementById('edit-tipo-cliente').value        = v.tipo_cliente || 'CLIENTE';
+  document.getElementById('edit-estado-pago').value         = v.estado_pago || 'PENDIENTE';
+  document.getElementById('edit-estado-despacho').value     = v.estado_despacho || 'PENDIENTE';
+  document.getElementById('edit-fecha-despacho').value      = v.fecha_despacho || '';
+  document.getElementById('edit-notas').value               = v.notas || '';
+  document.getElementById('edit-prod-cant').value           = 1;
+  document.getElementById('edit-prod-precio').value         = '';
+
+  renderItemsEditor();
+  document.getElementById('modal-editar').style.display = 'flex';
+}
+
+function cerrarEditModal() {
+  document.getElementById('modal-editar').style.display = 'none';
+  editVentaId = null;
+  editItems   = [];
+}
+
+function renderItemsEditor() {
+  const total = editItems.reduce((s, i) => s + i.cantidad * i.precio_unitario, 0);
+  document.getElementById('edit-total-label').textContent = `Total: ${fmt(total)}`;
+  document.getElementById('edit-items-list').innerHTML = editItems.length
+    ? editItems.map((i, idx) => `
+        <div style="display:grid;grid-template-columns:1fr 80px 100px 28px;gap:.3rem;align-items:center;
+                    background:var(--bg-2);border-radius:.35rem;padding:.35rem .5rem">
+          <span style="font-size:.83rem">${i.nombre}</span>
+          <input type="number" value="${i.cantidad}" min="0.1" step="0.1"
+                 class="input" style="width:100%;padding:.25rem .4rem;font-size:.8rem"
+                 onchange="editItems[${idx}].cantidad=parseFloat(this.value)||1;renderItemsEditor()">
+          <input type="number" value="${i.precio_unitario}" min="0" step="1"
+                 class="input" style="width:100%;padding:.25rem .4rem;font-size:.8rem"
+                 onchange="editItems[${idx}].precio_unitario=parseFloat(this.value)||0;renderItemsEditor()">
+          <button onclick="editItems.splice(${idx},1);renderItemsEditor()"
+                  style="background:rgba(239,68,68,.1);border:none;color:#ef4444;border-radius:.25rem;
+                         width:26px;height:26px;cursor:pointer;font-size:.8rem">✕</button>
+        </div>`)
+      .join('')
+    : '<p style="color:var(--muted);font-size:.8rem;padding:.25rem 0">Sin productos</p>';
+}
+
+function addItemEditor() {
+  const sel   = document.getElementById('edit-prod-sel');
+  const cant  = parseFloat(document.getElementById('edit-prod-cant').value) || 1;
+  const pid   = parseInt(sel.value);
+  if (!pid) { toast('Selecciona un producto', 'error'); return; }
+
+  const opt   = sel.options[sel.selectedIndex];
+  const precio= parseFloat(document.getElementById('edit-prod-precio').value)
+                || parseFloat(opt.dataset.precio) || 0;
+  const prod  = todosProds.find(p => p.id === pid);
+  const nombre= prod ? prod.nombre : opt.text.split(' — ')[0];
+
+  const existing = editItems.findIndex(i => i.producto_id === pid);
+  if (existing >= 0) {
+    editItems[existing].cantidad       += cant;
+    editItems[existing].precio_unitario = precio;
+  } else {
+    editItems.push({ producto_id: pid, nombre, cantidad: cant, precio_unitario: precio });
+  }
+
+  sel.value = '';
+  document.getElementById('edit-prod-cant').value   = 1;
+  document.getElementById('edit-prod-precio').value = '';
+  renderItemsEditor();
+}
+
+// Auto-rellenar precio al seleccionar producto
+document.getElementById('edit-prod-sel').addEventListener('change', function() {
+  const opt = this.options[this.selectedIndex];
+  if (opt && opt.dataset.precio) {
+    document.getElementById('edit-prod-precio').value = opt.dataset.precio;
+  }
+});
+
+async function guardarVenta() {
+  if (!editVentaId) return;
+  if (!editItems.length) { toast('Agrega al menos un producto', 'error'); return; }
+
+  const body = {
+    fecha:            document.getElementById('edit-fecha').value,
+    cliente_id:       document.getElementById('edit-cliente').value || null,
+    canal:            document.getElementById('edit-canal').value,
+    tipo_cliente:     document.getElementById('edit-tipo-cliente').value,
+    estado_pago:      document.getElementById('edit-estado-pago').value,
+    estado_despacho:  document.getElementById('edit-estado-despacho').value,
+    fecha_despacho:   document.getElementById('edit-fecha-despacho').value,
+    notas:            document.getElementById('edit-notas').value,
+    items:            editItems.map(i => ({
+      producto_id:    i.producto_id,
+      cantidad:       i.cantidad,
+      precio_unitario: i.precio_unitario
+    }))
+  };
+
+  const r = await fetch(`/api/ventas/${editVentaId}`, {
+    method: 'PUT',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(body)
+  });
+  const data = await r.json();
+  if (!r.ok) { toast(data.error || 'Error al guardar', 'error'); return; }
+
+  toast('Venta actualizada', 'success');
+  cerrarEditModal();
+  load();
+}
+
+async function eliminarVenta() {
+  if (!editVentaId) return;
+  if (!confirm(`¿Eliminar venta #${editVentaId}? Esta acción revertirá el stock de los productos.`)) return;
+
+  const r = await fetch(`/api/ventas/${editVentaId}`, { method: 'DELETE' });
+  if (!r.ok) { toast('Error al eliminar', 'error'); return; }
+
+  toast('Venta eliminada', 'success');
+  cerrarEditModal();
+  load();
+}
 </script>
 {% endblock %}

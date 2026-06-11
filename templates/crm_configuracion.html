@@ -236,6 +236,65 @@ code { background:var(--hover); padding:.1rem .35rem; border-radius:4px; font-si
   </div>
 
 </div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!-- Automatización CRM                                                       -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<div class="cfg-card" style="margin-top:1.25rem;">
+  <div class="cfg-head"><i class="bi bi-robot"></i> Automatización CRM</div>
+  <div style="font-size:.8rem;color:var(--text-2);margin-bottom:.85rem">
+    Los jobs corren automáticamente (búsqueda semanal lunes 09:00, primer contacto diario 10:00, seguimiento diario 08:00).
+    Aquí ves el último estado, puedes ejecutar manualmente y revisar borradores pendientes.
+  </div>
+
+  <div id="auto-estado" style="display:grid;grid-template-columns:repeat(3,1fr);gap:.75rem;margin-bottom:1rem;">
+    <div class="auto-job-card" data-job="buscar_leads_b2b">
+      <div class="auto-job-title"><i class="bi bi-search"></i> Búsqueda semanal</div>
+      <div class="auto-job-meta" id="meta-buscar_leads_b2b">—</div>
+      <button class="btn-auto" onclick="ejecutarJob('buscar_leads_b2b')">▶ Ejecutar ahora</button>
+    </div>
+    <div class="auto-job-card" data-job="primer_contacto">
+      <div class="auto-job-title"><i class="bi bi-chat-dots"></i> Primer contacto</div>
+      <div class="auto-job-meta" id="meta-primer_contacto">—</div>
+      <button class="btn-auto" onclick="ejecutarJob('primer_contacto')">▶ Ejecutar ahora</button>
+    </div>
+    <div class="auto-job-card" data-job="seguimiento_pipeline">
+      <div class="auto-job-title"><i class="bi bi-funnel"></i> Seguimiento pipeline</div>
+      <div class="auto-job-meta" id="meta-seguimiento_pipeline">—</div>
+      <button class="btn-auto" onclick="ejecutarJob('seguimiento_pipeline')">▶ Ejecutar ahora</button>
+    </div>
+  </div>
+
+  <div id="auto-borradores" style="margin-bottom:1rem;font-size:.85rem;color:var(--text-2)">—</div>
+
+  <div style="margin-top:1rem;">
+    <div style="font-size:.85rem;font-weight:700;margin-bottom:.5rem;">Reglas de seguimiento activas</div>
+    <div id="auto-reglas-list" style="max-height:280px;overflow:auto;border:1px solid var(--border);border-radius:8px;"></div>
+  </div>
+
+  <div style="margin-top:.85rem;">
+    <a href="#" onclick="verLog();return false;" style="font-size:.78rem;color:var(--accent)">Ver log completo →</a>
+    <pre id="auto-log" style="display:none;max-height:300px;overflow:auto;background:var(--hover);padding:.75rem;border-radius:8px;font-size:.7rem;margin-top:.5rem;"></pre>
+  </div>
+</div>
+
+<style>
+.auto-job-card { background:var(--hover); border:1px solid var(--border); border-radius:8px; padding:.75rem .85rem; }
+.auto-job-title { font-size:.82rem; font-weight:700; margin-bottom:.35rem; }
+.auto-job-meta { font-size:.72rem; color:var(--text-3); min-height:2.4em; margin-bottom:.5rem; }
+.btn-auto { background:var(--accent); color:#fff; border:0; border-radius:6px; padding:.35rem .75rem;
+            font-size:.75rem; font-weight:600; cursor:pointer; }
+.btn-auto:hover { opacity:.85; }
+.regla-row { display:grid; grid-template-columns:60px 130px 60px 1fr 70px 60px;
+             gap:.5rem; padding:.45rem .65rem; border-bottom:1px solid var(--border);
+             font-size:.74rem; align-items:center; }
+.regla-row:last-child { border-bottom:0; }
+.regla-row.head { font-weight:700; background:var(--hover); position:sticky; top:0; z-index:1; }
+.regla-pill { display:inline-block; padding:.1rem .45rem; border-radius:10px; font-size:.65rem;
+              font-weight:700; background:rgba(99,102,241,.15); color:#4f46e5; }
+.regla-pill.alta { background:#fee2e2; color:#991b1b; }
+.regla-pill.activa-no { background:#e5e7eb; color:#6b7280; }
+</style>
 {% endblock %}
 
 {% block scripts %}
@@ -426,5 +485,81 @@ async function guardarDTE() {
 }
 
 cargarConfigDTE();
+
+// ── Automatización CRM ───────────────────────────────────────────────────
+async function cargarEstadoAuto() {
+  try {
+    const r = await fetch('/api/crm/automatizacion/estado');
+    const d = await r.json();
+    for (const j of ['buscar_leads_b2b','primer_contacto','seguimiento_pipeline']) {
+      const meta = document.getElementById('meta-' + j);
+      const info = d.jobs[j];
+      const prox = d.proximas_ejecuciones[j];
+      let txt = info ? `Último: ${info.fecha} · ${info.ok ? '✅' : '❌'} ${(info.detalle||'').slice(0,60)}`
+                     : 'Aún no ejecutado';
+      if (prox) txt += `<br><span style="color:var(--accent)">Próximo: ${new Date(prox).toLocaleString('es-CL')}</span>`;
+      meta.innerHTML = txt;
+    }
+    const bb = document.getElementById('auto-borradores');
+    const sched = d.scheduler_activo ? '🟢 Scheduler activo' : '🔴 Scheduler inactivo';
+    bb.innerHTML = `${sched} · <strong>${d.borradores_listos}</strong> borradores de primer contacto pendientes de aprobación
+                    ${d.borradores_listos > 0 ? '· <a href="/crm?filtro=borradores" style="color:var(--accent)">Revisar →</a>' : ''}`;
+  } catch(e) { console.error(e); }
+}
+
+async function cargarReglas() {
+  const r = await fetch('/api/crm/automatizacion/reglas');
+  const reglas = await r.json();
+  const cont = document.getElementById('auto-reglas-list');
+  let html = `<div class="regla-row head"><div>Módulo</div><div>Etapa</div><div>Días</div><div>Acción</div><div>Prioridad</div><div>Activa</div></div>`;
+  for (const r of reglas) {
+    const prio = r.prioridad === 'alta' ? 'alta' : '';
+    const act  = r.activa ? '' : 'activa-no';
+    const accionTxt = r.accion + (r.cambio_temperatura ? ` → ${r.cambio_temperatura}` : '')
+                              + (r.cambio_etapa ? ` → ${r.cambio_etapa}` : '');
+    html += `<div class="regla-row">
+      <div>${r.modulo}</div>
+      <div>${r.etapa}</div>
+      <div>+${r.dias_sin_actividad}d</div>
+      <div>${r.titulo_tarea || accionTxt}</div>
+      <div><span class="regla-pill ${prio}">${r.prioridad}</span></div>
+      <div><span class="regla-pill ${act}">${r.activa ? 'sí' : 'no'}</span></div>
+    </div>`;
+  }
+  cont.innerHTML = html;
+}
+
+async function ejecutarJob(job) {
+  if (!confirm(`¿Ejecutar "${job}" ahora?`)) return;
+  const btn = event.target;
+  btn.disabled = true; btn.textContent = '⏳ Ejecutando...';
+  try {
+    const r = await fetch('/api/crm/automatizacion/ejecutar/' + job, {method:'POST'});
+    const d = await r.json();
+    alert(d.ok ? `✅ ${job} OK\n\n${JSON.stringify(d.resultado, null, 2)}`
+               : `❌ Error: ${d.error || 'desconocido'}`);
+    await cargarEstadoAuto();
+  } catch(e) {
+    alert('Error: ' + e.message);
+  } finally {
+    btn.disabled = false; btn.textContent = '▶ Ejecutar ahora';
+  }
+}
+
+async function verLog() {
+  const pre = document.getElementById('auto-log');
+  pre.style.display = pre.style.display === 'none' ? 'block' : 'none';
+  if (pre.style.display === 'block') {
+    const r = await fetch('/api/crm/automatizacion/log?limit=50');
+    const rows = await r.json();
+    pre.textContent = rows.map(r =>
+      `${r.fecha} [${r.job}] ${r.ok?'✓':'✗'} ${r.accion}${r.lead_nombre?' — '+r.lead_nombre:''}  ${r.detalle}`
+    ).join('\n');
+  }
+}
+
+cargarEstadoAuto();
+cargarReglas();
+setInterval(cargarEstadoAuto, 60000);  // refrescar cada minuto
 </script>
 {% endblock %}
