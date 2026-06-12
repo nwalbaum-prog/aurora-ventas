@@ -161,6 +161,20 @@ def test_usuario_sucursal_fija_forzada(client):
     assert v['sucursal_id'] == 2
 
 
+def test_resumen_filtra_por_sucursal(client):
+    tc, app_mod = client
+    _crear_stock(app_mod, 1, 1, 50)
+    _crear_stock(app_mod, 1, 2, 50)
+    tc.post('/api/ventas', json={'sucursal_id': 1, 'items': [{'producto_id': 1, 'cantidad': 1, 'precio_unitario': 1000}]})
+    tc.post('/api/ventas', json={'sucursal_id': 2, 'items': [{'producto_id': 1, 'cantidad': 1, 'precio_unitario': 3000}]})
+    total = tc.get('/api/reportes/resumen?periodo=hoy').get_json()
+    s1 = tc.get('/api/reportes/resumen?periodo=hoy&sucursal_id=1').get_json()
+    s2 = tc.get('/api/reportes/resumen?periodo=hoy&sucursal_id=2').get_json()
+    assert total['ventas_hoy'] == 4000
+    assert s1['ventas_hoy'] == 1000
+    assert s2['ventas_hoy'] == 3000
+
+
 def test_produccion_manual_suma_a_sucursal_1(client):
     tc, app_mod = client
     r = tc.post('/api/produccion/manual', json={'producto_id': 1, 'cantidad': 3})

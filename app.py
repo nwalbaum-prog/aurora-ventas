@@ -4041,10 +4041,11 @@ def api_rep_ventas():
     days  = _days_for(request.args.get('periodo','mes'))
     today = date.today()
     desde = today - timedelta(days=days-1)
+    sw, sp = _suc_filtro()
     with db() as c:
         rows = c.execute(
-            "SELECT fecha,COALESCE(SUM(total),0) AS total FROM ventas WHERE fecha>=? GROUP BY fecha ORDER BY fecha",
-            (str(desde),)).fetchall()
+            f"SELECT fecha,COALESCE(SUM(total),0) AS total FROM ventas WHERE fecha>=?{sw} GROUP BY fecha ORDER BY fecha",
+            [str(desde)] + sp).fetchall()
         data = {r['fecha']: r['total'] for r in rows}
         labels = [str(desde+timedelta(days=i)) for i in range(days)]
         values = [data.get(l,0) for l in labels]
@@ -4054,27 +4055,29 @@ def api_rep_ventas():
 def api_rep_productos():
     days  = _days_for(request.args.get('periodo','mes'))
     desde = str(date.today()-timedelta(days=days-1))
+    sw, sp = _suc_filtro('v.sucursal_id')
     with db() as c:
         rows = c.execute(
-            """SELECT p.nombre,
+            f"""SELECT p.nombre,
                       COALESCE(SUM(vi.cantidad),0)                      AS cantidad,
                       COALESCE(SUM(vi.cantidad*vi.precio_unitario),0)   AS total
                FROM venta_items vi
                JOIN productos p ON p.id=vi.producto_id
                JOIN ventas    v ON v.id=vi.venta_id
-               WHERE v.fecha>=?
+               WHERE v.fecha>=?{sw}
                GROUP BY p.id ORDER BY total DESC""",
-            (desde,)).fetchall()
+            [desde] + sp).fetchall()
         return jsonify([dict(r) for r in rows])
 
 @app.route('/api/reportes/canales')
 def api_rep_canales():
     days  = _days_for(request.args.get('periodo','mes'))
     desde = str(date.today()-timedelta(days=days-1))
+    sw, sp = _suc_filtro()
     with db() as c:
         rows = c.execute(
-            "SELECT canal,COALESCE(SUM(total),0) AS total,COUNT(*) AS count FROM ventas WHERE fecha>=? GROUP BY canal",
-            (desde,)).fetchall()
+            f"SELECT canal,COALESCE(SUM(total),0) AS total,COUNT(*) AS count FROM ventas WHERE fecha>=?{sw} GROUP BY canal",
+            [desde] + sp).fetchall()
         return jsonify([dict(r) for r in rows])
 
 @app.route('/api/reportes/kpis')
@@ -4083,10 +4086,11 @@ def api_rep_kpis():
     today = date.today()
     desde = today - timedelta(days=days-1)
     prev  = desde - timedelta(days=days)
+    sw, sp = _suc_filtro()
     with db() as c:
         def stats(d1, d2):
-            r = c.execute("SELECT COALESCE(SUM(total),0),COUNT(*) FROM ventas WHERE fecha BETWEEN ? AND ?",
-                          (str(d1),str(d2))).fetchone()
+            r = c.execute(f"SELECT COALESCE(SUM(total),0),COUNT(*) FROM ventas WHERE fecha BETWEEN ? AND ?{sw}",
+                          [str(d1), str(d2)] + sp).fetchone()
             return r[0], r[1]
         tot,  cnt  = stats(desde, today)
         ptot, pcnt = stats(prev,  desde-timedelta(days=1))
@@ -4097,8 +4101,8 @@ def api_rep_kpis():
         nuevos    = c.execute("SELECT COUNT(*) FROM clientes WHERE creado_en>=?", (str(desde),)).fetchone()[0]
 
         # Breakdown por tipo cliente
-        horeca  = c.execute("SELECT COALESCE(SUM(total),0),COUNT(*) FROM ventas WHERE fecha>=? AND tipo_cliente='HORECA'",   (str(desde),)).fetchone()
-        cliente = c.execute("SELECT COALESCE(SUM(total),0),COUNT(*) FROM ventas WHERE fecha>=? AND tipo_cliente='CLIENTE'", (str(desde),)).fetchone()
+        horeca  = c.execute(f"SELECT COALESCE(SUM(total),0),COUNT(*) FROM ventas WHERE fecha>=? AND tipo_cliente='HORECA'{sw}",  [str(desde)] + sp).fetchone()
+        cliente = c.execute(f"SELECT COALESCE(SUM(total),0),COUNT(*) FROM ventas WHERE fecha>=? AND tipo_cliente='CLIENTE'{sw}", [str(desde)] + sp).fetchone()
 
         return jsonify({
             'ventas_total': tot,   'ventas_count': cnt,
@@ -4136,30 +4140,31 @@ def api_reportes_resumen():
     prev_hasta = (d0 - timedelta(days=1)).isoformat()
     prev_desde = (d0 - timedelta(days=delta)).isoformat()
 
+    sw, sp = _suc_filtro()
     with db() as c:
         ventas_hoy = c.execute(
-            "SELECT COALESCE(SUM(total),0) FROM ventas WHERE fecha=?", (hoy.isoformat(),)
+            f"SELECT COALESCE(SUM(total),0) FROM ventas WHERE fecha=?{sw}", [hoy.isoformat()] + sp
         ).fetchone()[0]
         ventas_ayer = c.execute(
-            "SELECT COALESCE(SUM(total),0) FROM ventas WHERE fecha=?", (ayer,)
+            f"SELECT COALESCE(SUM(total),0) FROM ventas WHERE fecha=?{sw}", [ayer] + sp
         ).fetchone()[0]
         ventas_periodo = c.execute(
-            "SELECT COALESCE(SUM(total),0) FROM ventas WHERE fecha BETWEEN ? AND ?",
-            (desde, hasta)
+            f"SELECT COALESCE(SUM(total),0) FROM ventas WHERE fecha BETWEEN ? AND ?{sw}",
+            [desde, hasta] + sp
         ).fetchone()[0]
         ventas_prev = c.execute(
-            "SELECT COALESCE(SUM(total),0) FROM ventas WHERE fecha BETWEEN ? AND ?",
-            (prev_desde, prev_hasta)
+            f"SELECT COALESCE(SUM(total),0) FROM ventas WHERE fecha BETWEEN ? AND ?{sw}",
+            [prev_desde, prev_hasta] + sp
         ).fetchone()[0]
         count_periodo = c.execute(
-            "SELECT COUNT(*) FROM ventas WHERE fecha BETWEEN ? AND ?",
-            (desde, hasta)
+            f"SELECT COUNT(*) FROM ventas WHERE fecha BETWEEN ? AND ?{sw}",
+            [desde, hasta] + sp
         ).fetchone()[0]
         ticket = ventas_periodo / count_periodo if count_periodo else 0
         subs = c.execute(
             "SELECT COUNT(*) FROM suscripciones WHERE estado='activo'"
         ).fetchone()[0]
-        canal_rows = c.execute("""
+        canal_rows = c.execute(f"""
             SELECT
               CASE
                 WHEN tipo_cliente='MAYORISTA' THEN 'mayorista'
@@ -4170,33 +4175,41 @@ def api_reportes_resumen():
               COUNT(*) as count,
               COALESCE(SUM(total),0) as total
             FROM ventas
-            WHERE fecha BETWEEN ? AND ?
+            WHERE fecha BETWEEN ? AND ?{sw}
             GROUP BY segmento
-        """, (desde, hasta)).fetchall()
+        """, [desde, hasta] + sp).fetchall()
         ingresos = c.execute(
-            "SELECT COALESCE(SUM(total),0) FROM ventas WHERE fecha BETWEEN ? AND ? AND estado_pago='PAGADO'",
-            (desde, hasta)
+            f"SELECT COALESCE(SUM(total),0) FROM ventas WHERE fecha BETWEEN ? AND ? AND estado_pago='PAGADO'{sw}",
+            [desde, hasta] + sp
         ).fetchone()[0]
         gastos = c.execute(
-            "SELECT COALESCE(SUM(monto),0) FROM gastos WHERE fecha BETWEEN ? AND ?",
-            (desde, hasta)
+            f"SELECT COALESCE(SUM(monto),0) FROM gastos WHERE fecha BETWEEN ? AND ?{sw}",
+            [desde, hasta] + sp
         ).fetchone()[0]
         por_cobrar = c.execute(
-            "SELECT COALESCE(SUM(total),0) FROM ventas WHERE estado_pago='PENDIENTE'"
+            f"SELECT COALESCE(SUM(total),0) FROM ventas WHERE estado_pago='PENDIENTE'{sw}", sp
         ).fetchone()[0]
         prod_hoy = c.execute(
             "SELECT COALESCE(SUM(cantidad),0) FROM plan_produccion WHERE fecha=?",
             (hoy.isoformat(),)
         ).fetchone()[0]
         despachos_pendientes = c.execute(
-            """SELECT COUNT(*) FROM ventas
+            f"""SELECT COUNT(*) FROM ventas
                WHERE fecha_despacho=? AND con_despacho=1
-                 AND estado_despacho NOT IN ('DESPACHADO','RETIRO EN TIENDA')""",
-            (hoy.isoformat(),)
+                 AND estado_despacho NOT IN ('DESPACHADO','RETIRO EN TIENDA'){sw}""",
+            [hoy.isoformat()] + sp
         ).fetchone()[0]
-        stock_bajo = c.execute(
-            "SELECT nombre, stock FROM productos WHERE activo=1 AND stock <= 5 ORDER BY stock ASC LIMIT 10"
-        ).fetchall()
+        if _sucursal_lectura():
+            stock_bajo = c.execute(
+                """SELECT p.nombre, i.stock_kg AS stock FROM inventario i
+                   JOIN productos p ON p.id=i.producto_id
+                   WHERE i.bodega='productos_terminados' AND i.sucursal_id=? AND p.activo=1
+                     AND i.stock_kg <= 5 ORDER BY i.stock_kg ASC LIMIT 10""",
+                (_sucursal_lectura(),)).fetchall()
+        else:
+            stock_bajo = c.execute(
+                "SELECT nombre, stock FROM productos WHERE activo=1 AND stock <= 5 ORDER BY stock ASC LIMIT 10"
+            ).fetchall()
 
     return jsonify({
         'periodo': periodo, 'desde': desde, 'hasta': hasta,
@@ -7479,10 +7492,12 @@ def api_movil_stats():
     mes_ant    = (hoy.replace(day=1) - timedelta(days=1)).replace(day=1).isoformat()
     mes_ant_fin= (hoy.replace(day=1) - timedelta(days=1)).isoformat()
 
+    sw, sp = _suc_filtro()
+    swv, spv = _suc_filtro('v.sucursal_id')
     with db() as c:
         def vsum(desde, hasta):
-            r = c.execute("SELECT COALESCE(SUM(total),0), COUNT(*) FROM ventas WHERE fecha BETWEEN ? AND ?",
-                          (desde, hasta)).fetchone()
+            r = c.execute(f"SELECT COALESCE(SUM(total),0), COUNT(*) FROM ventas WHERE fecha BETWEEN ? AND ?{sw}",
+                          [desde, hasta] + sp).fetchone()
             return float(r[0]), int(r[1])
 
         v_hoy,  t_hoy    = vsum(hoy.isoformat(), hoy.isoformat())
@@ -7493,22 +7508,22 @@ def api_movil_stats():
         costo_mes = c.execute(
             "SELECT COALESCE(SUM(vi.cantidad * vi.precio_unitario * (p.costo / NULLIF(p.precio,0))),0) "
             "FROM venta_items vi JOIN ventas v ON v.id=vi.venta_id "
-            "JOIN productos p ON p.id=vi.producto_id WHERE v.fecha >= ?", (mes_ini,)
+            f"JOIN productos p ON p.id=vi.producto_id WHERE v.fecha >= ?{swv}", [mes_ini] + spv
         ).fetchone()[0]
         gasto_mes = c.execute(
-            "SELECT COALESCE(SUM(monto),0) FROM gastos WHERE fecha >= ?", (mes_ini,)
+            f"SELECT COALESCE(SUM(monto),0) FROM gastos WHERE fecha >= ?{sw}", [mes_ini] + sp
         ).fetchone()[0]
         margen = ((v_mes - costo_mes) / v_mes * 100) if v_mes > 0 else 0
 
         despachos_pendientes = c.execute(
-            "SELECT COUNT(*) FROM ventas WHERE estado_despacho='PENDIENTE' AND con_despacho=1"
+            f"SELECT COUNT(*) FROM ventas WHERE estado_despacho='PENDIENTE' AND con_despacho=1{sw}", sp
         ).fetchone()[0]
 
         top = c.execute(
-            """SELECT p.nombre, SUM(vi.cantidad) as qty, SUM(vi.cantidad * vi.precio_unitario) as total
+            f"""SELECT p.nombre, SUM(vi.cantidad) as qty, SUM(vi.cantidad * vi.precio_unitario) as total
                FROM venta_items vi JOIN ventas v ON v.id=vi.venta_id JOIN productos p ON p.id=vi.producto_id
-               WHERE v.fecha >= ? GROUP BY p.nombre ORDER BY total DESC LIMIT 5""",
-            (semana_ini,)
+               WHERE v.fecha >= ?{swv} GROUP BY p.nombre ORDER BY total DESC LIMIT 5""",
+            [semana_ini] + spv
         ).fetchall()
 
     return jsonify({
@@ -8407,52 +8422,55 @@ def api_finanzas_pl():
     """P&L mensual: ingresos vs gastos de los últimos N meses."""
     meses = int(request.args.get('meses', 6))
     hoy = date.today()
+    sw, sp = _suc_filtro()
+    swv, spv = _suc_filtro('v.sucursal_id')
     with db() as c:
         # Ingresos cobrados (PAGADO)
-        cobrado_rows = c.execute("""
+        cobrado_rows = c.execute(f"""
             SELECT strftime('%Y-%m', fecha) as mes, COALESCE(SUM(total),0) as total
             FROM ventas
-            WHERE fecha >= date('now', ? || ' months') AND estado_pago='PAGADO'
+            WHERE fecha >= date('now', ? || ' months') AND estado_pago='PAGADO'{sw}
             GROUP BY mes ORDER BY mes
-        """, (f'-{meses}',)).fetchall()
+        """, [f'-{meses}'] + sp).fetchall()
         # Facturado total (incluyendo pendientes)
-        facturado_rows = c.execute("""
+        facturado_rows = c.execute(f"""
             SELECT strftime('%Y-%m', fecha) as mes, COALESCE(SUM(total),0) as total
             FROM ventas
-            WHERE fecha >= date('now', ? || ' months')
+            WHERE fecha >= date('now', ? || ' months'){sw}
             GROUP BY mes ORDER BY mes
-        """, (f'-{meses}',)).fetchall()
+        """, [f'-{meses}'] + sp).fetchall()
         # Gastos
-        gastos_rows = c.execute("""
+        gastos_rows = c.execute(f"""
             SELECT strftime('%Y-%m', fecha) as mes, COALESCE(SUM(monto),0) as total
             FROM gastos
-            WHERE fecha >= date('now', ? || ' months')
+            WHERE fecha >= date('now', ? || ' months'){sw}
             GROUP BY mes ORDER BY mes
-        """, (f'-{meses}',)).fetchall()
+        """, [f'-{meses}'] + sp).fetchall()
         # Cobros pendientes con aging
-        pendientes_rows = c.execute("""
+        pendientes_rows = c.execute(f"""
             SELECT v.id, v.fecha, v.total, v.notas, v.fecha_despacho,
                    c.nombre as cliente_nombre, c.telefono as cliente_telefono,
                    CAST(julianday('now') - julianday(v.fecha) AS INTEGER) as dias_pendiente
             FROM ventas v LEFT JOIN clientes c ON c.id=v.cliente_id
-            WHERE v.estado_pago='PENDIENTE'
+            WHERE v.estado_pago='PENDIENTE'{swv}
             ORDER BY v.fecha ASC
-        """).fetchall()
+        """, spv).fetchall()
         # Ventas por canal (período seleccionado)
-        canal_rows = c.execute("""
+        canal_rows = c.execute(f"""
             SELECT v.canal,
                    COUNT(*) as num_ventas,
                    COALESCE(SUM(v.total),0) as facturado,
                    COALESCE(SUM(CASE WHEN v.estado_pago='PAGADO' THEN v.total ELSE 0 END),0) as cobrado
             FROM ventas v
-            WHERE v.fecha >= date('now', ? || ' months')
+            WHERE v.fecha >= date('now', ? || ' months'){swv}
             GROUP BY v.canal ORDER BY cobrado DESC
-        """, (f'-{meses}',)).fetchall()
+        """, [f'-{meses}'] + spv).fetchall()
         # Márgenes por producto (mes actual)
         mes_ini = hoy.replace(day=1).isoformat()
+        swn, spn = _suc_filtro('vn.sucursal_id')
         # Subquery: el filtro de fecha debe excluir las filas de venta_items,
         # no solo dejar vn en NULL (si va en el ON del LEFT JOIN suma histórico).
-        margenes = c.execute("""
+        margenes = c.execute(f"""
             SELECT p.nombre, p.precio, p.costo,
                    CASE WHEN p.precio>0 THEN ROUND((p.precio-p.costo)*100.0/p.precio,1) ELSE 0 END as margen_pct,
                    COALESCE(s.ventas_cnt, 0) as ventas_cnt,
@@ -8466,12 +8484,12 @@ def api_finanzas_pl():
                        SUM(vi.cantidad*vi.precio_unitario)   as facturado
                 FROM venta_items vi
                 JOIN ventas vn ON vn.id=vi.venta_id
-                WHERE vn.fecha>=?
+                WHERE vn.fecha>=?{swn}
                 GROUP BY vi.producto_id
             ) s ON s.producto_id=p.id
             WHERE p.activo=1
             ORDER BY facturado DESC
-        """, (mes_ini,)).fetchall()
+        """, [mes_ini] + spn).fetchall()
 
     # Merge por mes
     meses_set  = sorted(set([r['mes'] for r in cobrado_rows] + [r['mes'] for r in gastos_rows] + [r['mes'] for r in facturado_rows]))
@@ -8514,6 +8532,8 @@ def api_finanzas_flujo_caja():
     """Proyección de flujo de caja para las próximas 4 semanas."""
     hoy = date.today()
     semanas = []
+    suc = _sucursal_lectura()
+    sw, sp = _suc_filtro()
     with db() as c:
         gastos_fijos_total = c.execute(
             "SELECT COALESCE(SUM(monto),0) FROM gastos WHERE recurrente=1"
@@ -8521,17 +8541,20 @@ def api_finanzas_flujo_caja():
         for i in range(4):
             inicio = hoy + timedelta(weeks=i)
             fin    = hoy + timedelta(weeks=i+1) - timedelta(days=1)
-            ventas_por_cobrar = c.execute("""
+            ventas_por_cobrar = c.execute(f"""
                 SELECT COALESCE(SUM(total),0) as total, COUNT(*) as cnt
                 FROM ventas
                 WHERE estado_pago='PENDIENTE'
-                  AND (fecha_despacho BETWEEN ? AND ? OR (fecha_despacho='' AND fecha BETWEEN ? AND ?))
-            """, (inicio.isoformat(), fin.isoformat(), inicio.isoformat(), fin.isoformat())).fetchone()
-            subs_renovacion = c.execute("""
-                SELECT COALESCE(SUM(precio),0) as total, COUNT(*) as cnt
-                FROM suscripciones
-                WHERE estado='activo' AND fecha_renovacion BETWEEN ? AND ?
-            """, (inicio.isoformat(), fin.isoformat())).fetchone()
+                  AND (fecha_despacho BETWEEN ? AND ? OR (fecha_despacho='' AND fecha BETWEEN ? AND ?)){sw}
+            """, [inicio.isoformat(), fin.isoformat(), inicio.isoformat(), fin.isoformat()] + sp).fetchone()
+            if suc in (None, 1):  # suscripciones despachan de Recoleta
+                subs_renovacion = c.execute("""
+                    SELECT COALESCE(SUM(precio),0) as total, COUNT(*) as cnt
+                    FROM suscripciones
+                    WHERE estado='activo' AND fecha_renovacion BETWEEN ? AND ?
+                """, (inicio.isoformat(), fin.isoformat())).fetchone()
+            else:
+                subs_renovacion = {'total': 0, 'cnt': 0}
             ingresos = (ventas_por_cobrar['total'] or 0) + (subs_renovacion['total'] or 0)
             semanas.append({
                 'semana':       i + 1,
