@@ -20,6 +20,10 @@
   <div class="card-body">
     <label class="form-label">Efectivo inicial en caja</label>
     <input type="number" id="monto-inicial" class="form-control" placeholder="30000" min="0">
+    <div class="form-group" id="suc-group" style="display:none;margin-top:.75rem">
+      <label class="form-label">Sucursal</label>
+      <select id="turno-sucursal" class="form-control"></select>
+    </div>
     <button class="btn btn-primary mt-3 w-100" onclick="abrirCaja()">Abrir caja y empezar a vender</button>
   </div>
 </div>
@@ -110,11 +114,23 @@ async function abrirCaja() {
   const monto = parseFloat(document.getElementById('monto-inicial').value) || 0;
   const r = await fetch('/api/pos/turno/abrir', {
     method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({monto_inicial: monto})
+    body: JSON.stringify({monto_inicial: monto,
+                          sucursal_id: (document.getElementById('turno-sucursal')||{}).value || 1})
   });
   if (r.ok) location.href = '/pos';
   else { const d = await r.json(); toast(d.error, 'error'); }
 }
+
+(async () => {
+  const sel = document.getElementById('turno-sucursal');
+  if (!sel) return;  // turno ya abierto: no hay formulario de apertura
+  const r = await fetch('/api/sucursales');
+  if (!r.ok) return;
+  const d = await r.json();
+  if (d.fija) return;  // usuario de local fijo: el server decide
+  sel.innerHTML = d.sucursales.map(s => `<option value="${s.id}">${s.nombre}</option>`).join('');
+  document.getElementById('suc-group').style.display = '';
+})();
 
 async function cerrarCaja() {
   const monto = parseFloat(document.getElementById('monto-declarado').value) || 0;

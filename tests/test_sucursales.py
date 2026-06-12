@@ -71,6 +71,22 @@ def test_venta_descuenta_solo_su_sucursal(client):
     assert v['sucursal_id'] == 2
 
 
+def test_pos_venta_usa_sucursal_del_turno(client):
+    tc, app_mod = client
+    _crear_stock(app_mod, 1, 2, 10)
+    r = tc.post('/api/pos/turno/abrir', json={'monto_inicial': 0, 'sucursal_id': 2})
+    assert r.status_code == 200
+    r = tc.post('/api/pos/venta', json={'items': [{'producto_id': 1, 'nombre': 'Marraqueta',
+                                                   'cantidad': 3, 'precio_unitario': 200}],
+                                        'metodo_pago': 'efectivo', 'monto_efectivo': 600})
+    assert r.status_code == 200
+    inv2, lotes2, _ = _stock(app_mod, 1, 2)
+    assert inv2 == 7 and lotes2 == 7
+    with app_mod.db() as c:
+        v = c.execute("SELECT sucursal_id FROM ventas ORDER BY id DESC LIMIT 1").fetchone()
+    assert v['sucursal_id'] == 2
+
+
 def test_produccion_manual_suma_a_sucursal_1(client):
     tc, app_mod = client
     r = tc.post('/api/produccion/manual', json={'producto_id': 1, 'cantidad': 3})

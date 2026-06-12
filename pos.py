@@ -108,6 +108,11 @@ def api_turno_abrir():
         monto = float(body.get('monto_inicial', 0))
     except (TypeError, ValueError):
         return jsonify({'error': 'monto_inicial debe ser un número'}), 400
+    fija = session.get('user_sucursal')
+    try:
+        sucursal = int(fija) if fija else int(body.get('sucursal_id') or 1)
+    except (TypeError, ValueError):
+        sucursal = 1
     with db() as c:
         existente = c.execute(
             "SELECT id FROM pos_turnos WHERE usuario_id=? AND estado='abierto'", (uid,)
@@ -115,8 +120,8 @@ def api_turno_abrir():
         if existente:
             return jsonify({'error': 'Ya tienes un turno abierto'}), 400
         cur = c.execute(
-            "INSERT INTO pos_turnos (usuario_id, fecha_apertura, monto_inicial_efectivo, estado) VALUES (?,?,?,?)",
-            (uid, datetime.now().strftime('%Y-%m-%d %H:%M:%S'), monto, 'abierto')
+            "INSERT INTO pos_turnos (usuario_id, fecha_apertura, monto_inicial_efectivo, estado, sucursal_id) VALUES (?,?,?,?,?)",
+            (uid, datetime.now().strftime('%Y-%m-%d %H:%M:%S'), monto, 'abierto', sucursal)
         )
         turno = c.execute("SELECT * FROM pos_turnos WHERE id=?", (cur.lastrowid,)).fetchone()
     return jsonify({'ok': True, 'turno': dict(turno)})
@@ -180,16 +185,22 @@ def api_turno_resumen(tid):
 def api_pos_productos():
     q = request.args.get('q', '').strip()
     with db() as c:
+        turno = c.execute(
+            "SELECT sucursal_id FROM pos_turnos WHERE usuario_id=? AND estado='abierto' ORDER BY id DESC LIMIT 1",
+            (session.get('user_id'),)
+        ).fetchone()
+        suc = turno['sucursal_id'] if turno else (session.get('user_sucursal') or 1)
         if q:
             productos = c.execute(
                 """SELECT p.id, p.nombre, p.precio, p.categoria, p.subcategoria,
                           COALESCE(inv.stock_kg, 0) AS stock
                    FROM productos p
                    LEFT JOIN inventario inv ON inv.producto_id=p.id AND inv.bodega='productos_terminados'
+                        AND inv.sucursal_id=?
                    WHERE p.activo=1 AND p.nombre LIKE ?
                    ORDER BY p.categoria, p.subcategoria, p.nombre
                    LIMIT 20""",
-                (f'%{q}%',)
+                (suc, f'%{q}%')
             ).fetchall()
         else:
             productos = c.execute(
@@ -197,9 +208,11 @@ def api_pos_productos():
                           COALESCE(inv.stock_kg, 0) AS stock
                    FROM productos p
                    LEFT JOIN inventario inv ON inv.producto_id=p.id AND inv.bodega='productos_terminados'
+                        AND inv.sucursal_id=?
                    WHERE p.activo=1
                    ORDER BY p.categoria, p.subcategoria, p.nombre
-                   LIMIT 100"""
+                   LIMIT 100""",
+                (suc,)
             ).fetchall()
         frecuentes_rows = c.execute(
             """SELECT pf.id AS frec_id, pf.orden, p.id AS producto_id, p.nombre, p.precio,
@@ -207,8 +220,10 @@ def api_pos_productos():
                FROM pos_frecuentes pf
                JOIN productos p ON p.id=pf.producto_id
                LEFT JOIN inventario inv ON inv.producto_id=p.id AND inv.bodega='productos_terminados'
+                    AND inv.sucursal_id=?
                WHERE p.activo=1
-               ORDER BY pf.orden"""
+               ORDER BY pf.orden""",
+            (suc,)
         ).fetchall()
     prods_data = []
     for p in productos:
@@ -445,12 +460,13 @@ def api_pos_venta():
         monto_tarjeta       = total_final
     vuelto = round(max(0.0, monto_efectivo - total_final)) if metodo_pago == 'efectivo' else 0
 
+    suc = turno['sucursal_id']
     with db() as c:
         cur = c.execute(
-            """INSERT INTO ventas (fecha, canal, total, notas, estado_pago, estado_despacho, con_despacho)
-               VALUES (?,?,?,?,?,?,?)""",
+            """INSERT INTO ventas (fecha, canal, total, notas, estado_pago, estado_despacho, con_despacho, sucursal_id)
+               VALUES (?,?,?,?,?,?,?,?)""",
             (date.today().isoformat(), 'pos', total_final,
-             '; '.join(detalle_promos), 'PAGADO', 'RETIRO EN TIENDA', 0)
+             '; '.join(detalle_promos), 'PAGADO', 'RETIRO EN TIENDA', 0, suc)
         )
         venta_id = cur.lastrowid
 
@@ -464,14 +480,14 @@ def api_pos_venta():
             # Sin clamp: simétrico con la restauración al editar/borrar la venta.
             c.execute(
                 """UPDATE inventario SET stock_kg=stock_kg-?, ultima_actualizacion=date('now')
-                   WHERE bodega='productos_terminados' AND producto_id=?""",
-                (float(item['cantidad']), item['producto_id'])
+                   WHERE bodega='productos_terminados' AND producto_id=? AND sucursal_id=?""",
+                (float(item['cantidad']), item['producto_id'], suc)
             )
             c.execute(
                 "UPDATE productos SET stock=stock-? WHERE id=?",
                 (float(item['cantidad']), item['producto_id'])
             )
-            _app_mod._descontar_lotes_fifo(c, int(item['producto_id']), float(item['cantidad']), venta_id)
+            _app_mod._descontar_lotes_fifo(c, int(item['producto_id']), float(item['cantidad']), venta_id, sucursal_id=suc)
 
         pv_cur = c.execute(
             """INSERT INTO pos_ventas (turno_id,venta_id,metodo_pago,monto_efectivo,monto_tarjeta,vuelto,boleta_estado)
