@@ -2,7 +2,7 @@
 Aurora Bakers — Sistema de Ventas
 Corre con: python app.py  →  http://127.0.0.1:5000
 """
-from flask import Flask, render_template, request, jsonify, redirect, session, url_for, flash
+from flask import Flask, render_template, request, jsonify, redirect, session, url_for, flash, send_file
 from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
 import sqlite3, os, json, smtplib, urllib.request, urllib.parse, secrets, uuid
@@ -1712,6 +1712,59 @@ def api_admin_usuarios_delete(uid):
     with db() as c:
         c.execute("UPDATE usuarios SET activo=0 WHERE id=?", (uid,))
     return jsonify({'ok': True})
+
+@app.route('/api/admin/backup-db')
+@admin_required
+def api_admin_backup_db():
+    """Descarga snapshot consistente de la DB (sqlite3 backup API)."""
+    import io, tempfile
+    fd, tmp = tempfile.mkstemp(suffix='.db')
+    os.close(fd)
+    try:
+        src = sqlite3.connect(DB_PATH)
+        dst = sqlite3.connect(tmp)
+        src.backup(dst)
+        dst.close(); src.close()
+        with open(tmp, 'rb') as f:
+            data = f.read()
+    finally:
+        os.unlink(tmp)
+    return send_file(io.BytesIO(data), as_attachment=True,
+                     download_name=f'aurora-backup-{date.today()}.db',
+                     mimetype='application/octet-stream')
+
+
+@app.route('/api/admin/importar-db', methods=['POST'])
+@admin_required
+def api_admin_importar_db():
+    """Reemplaza la DB con un archivo subido (migracion inicial / restore)."""
+    import tempfile
+    archivo = request.files.get('archivo')
+    if not archivo:
+        return jsonify({'error': 'Adjunta el archivo .db en el campo "archivo"'}), 400
+    fd, tmp = tempfile.mkstemp(suffix='.db')
+    os.close(fd)
+    archivo.save(tmp)
+    try:
+        chk = sqlite3.connect(tmp)
+        ok = chk.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='productos'").fetchone()
+        chk.close()
+        if not ok:
+            os.unlink(tmp)
+            return jsonify({'error': 'El archivo no es una DB de Aurora (falta tabla productos)'}), 400
+    except sqlite3.DatabaseError:
+        os.unlink(tmp)
+        return jsonify({'error': 'El archivo no es una base SQLite valida'}), 400
+    for suf in ('-wal', '-shm'):
+        p = DB_PATH + suf
+        if os.path.exists(p):
+            os.remove(p)
+    os.replace(tmp, DB_PATH)
+    init_db()  # aplica migraciones (sucursales, etc.) a la DB importada
+    print("[admin] DB importada y migrada")
+    return jsonify({'ok': True})
+
 
 @app.route('/api/admin/mi-perfil', methods=['POST'])
 @login_required

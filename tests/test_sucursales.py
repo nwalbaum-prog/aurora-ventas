@@ -175,6 +175,21 @@ def test_resumen_filtra_por_sucursal(client):
     assert s2['ventas_hoy'] == 3000
 
 
+def test_backup_db(client):
+    tc, app_mod = client
+    from werkzeug.security import generate_password_hash
+    with app_mod.db() as c:
+        c.execute("INSERT INTO usuarios (nombre,email,password,rol) VALUES ('A','adm@a.cl',?, 'admin')",
+                  (generate_password_hash('x'),))
+    ta = app_mod.app.test_client()
+    ta.post('/login', data={'email': 'adm@a.cl', 'password': 'x'})
+    r = ta.get('/api/admin/backup-db')
+    assert r.status_code == 200
+    assert r.data[:16] == b'SQLite format 3\x00'
+    # no-admin: bloqueado
+    assert tc.get('/api/admin/backup-db').status_code == 403
+
+
 def test_produccion_manual_suma_a_sucursal_1(client):
     tc, app_mod = client
     r = tc.post('/api/produccion/manual', json={'producto_id': 1, 'cantidad': 3})
