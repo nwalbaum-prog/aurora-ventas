@@ -16,3 +16,12 @@ def test_migracion_sucursales(client):
         # inventario permite el mismo producto en 2 sucursales
         c.execute("""INSERT INTO inventario (ingrediente, bodega, stock_kg, producto_id, sucursal_id)
                      VALUES ('Marraqueta', 'productos_terminados', 5, 1, 2)""")
+
+
+def test_api_sucursales(client):
+    tc, app_mod = client
+    r = tc.get('/api/sucursales')
+    assert r.status_code == 200
+    d = r.get_json()
+    assert len(d['sucursales']) == 2
+    assert d['fija'] is None  # cajera del conftest no tiene sucursal fija

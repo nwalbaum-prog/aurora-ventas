@@ -1416,7 +1416,7 @@ def _global_auth():
 
     if session.get('user_id'):
         with db() as c:
-            u = c.execute("SELECT rol, activo, permisos FROM usuarios WHERE id=?",
+            u = c.execute("SELECT rol, activo, permisos, sucursal_id FROM usuarios WHERE id=?",
                           (session['user_id'],)).fetchone()
         if not u or not u['activo']:
             session.clear()
@@ -1428,6 +1428,7 @@ def _global_auth():
         if not permisos and u['rol'] != 'admin':
             permisos = MODULOS_DEFAULT
         session['user_permisos'] = permisos
+        session['user_sucursal'] = u['sucursal_id']
         return
 
     key = request.headers.get('X-Agent-Key', '') or request.args.get('key', '')
@@ -1511,6 +1512,41 @@ def module_required(key):
         return decorated
     return decorator
 
+# ── Sucursales: helpers de contexto ──────────────────────────────────────────
+
+def _sucursal_fija():
+    """Sucursal del usuario actual, o None si tiene acceso a todas."""
+    return session.get('user_sucursal') or None
+
+def _sucursal_escritura(d):
+    """Sucursal a usar al crear venta/turno/gasto. Usuario con sucursal fija:
+    la suya SIEMPRE (ignora lo que mande el cliente). Si no, body o 1."""
+    fija = _sucursal_fija()
+    if fija:
+        return int(fija)
+    try:
+        return int((d or {}).get('sucursal_id') or 1)
+    except (TypeError, ValueError):
+        return 1
+
+def _sucursal_lectura():
+    """Filtro de sucursal para reportes: int o None (= total). Usuario con
+    sucursal fija solo ve la suya."""
+    fija = _sucursal_fija()
+    if fija:
+        return int(fija)
+    s = request.args.get('sucursal_id', '')
+    try:
+        return int(s) if s else None
+    except ValueError:
+        return None
+
+def _suc_filtro(col='sucursal_id'):
+    """(sql_extra, params_extra) para anexar a un WHERE existente."""
+    suc = _sucursal_lectura()
+    return (f" AND {col}=?", [suc]) if suc else ('', [])
+
+
 @app.context_processor
 def inject_nav_permisos():
     return {
@@ -1538,6 +1574,7 @@ def page_login():
             if not permisos and u['rol'] != 'admin':
                 permisos = MODULOS_DEFAULT
             session['user_permisos'] = permisos
+            session['user_sucursal'] = u['sucursal_id'] if 'sucursal_id' in u.keys() else None
             with db() as c:
                 c.execute("UPDATE usuarios SET ultimo_login=? WHERE id=?",
                           (datetime.now().strftime('%Y-%m-%d %H:%M'), u['id']))
@@ -1773,6 +1810,27 @@ def page_finanzas():      return render_template('finanzas.html',        active=
 @app.route('/despacho')
 @module_required('despacho')
 def page_despacho():      return render_template('despacho.html',        active='despacho')
+
+# ── API: Sucursales ───────────────────────────────────────────────────────────
+
+@app.route('/api/sucursales')
+@login_required
+def api_sucursales():
+    with db() as c:
+        rows = c.execute("SELECT * FROM sucursales WHERE activa=1 ORDER BY id").fetchall()
+    return jsonify({'sucursales': [dict(r) for r in rows], 'fija': _sucursal_fija()})
+
+@app.route('/api/sucursales/<int:sid>', methods=['PUT'])
+@admin_required
+def api_sucursales_update(sid):
+    d = request.json or {}
+    with db() as c:
+        if not c.execute("SELECT id FROM sucursales WHERE id=?", (sid,)).fetchone():
+            return jsonify({'error': 'No encontrada'}), 404
+        for col in ('nombre', 'direccion', 'activa'):
+            if col in d:
+                c.execute(f"UPDATE sucursales SET {col}=? WHERE id=?", (d[col], sid))
+    return jsonify({'ok': True})
 
 # ── API: Productos ────────────────────────────────────────────────────────────
 
