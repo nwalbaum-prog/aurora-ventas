@@ -1340,6 +1340,20 @@ Aurora Bakers""",
                 fecha_fin        TEXT,
                 cantidad_minima  INTEGER NOT NULL DEFAULT 0
             );
+            CREATE TABLE IF NOT EXISTS traspasos (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                fecha      TEXT    NOT NULL DEFAULT (datetime('now')),
+                origen_id  INTEGER NOT NULL,
+                destino_id INTEGER NOT NULL,
+                usuario    TEXT    NOT NULL DEFAULT '',
+                notas      TEXT    NOT NULL DEFAULT ''
+            );
+            CREATE TABLE IF NOT EXISTS traspaso_items (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                traspaso_id INTEGER NOT NULL REFERENCES traspasos(id) ON DELETE CASCADE,
+                producto_id INTEGER NOT NULL,
+                cantidad    REAL    NOT NULL
+            );
         """)
 
         # Seed productos iniciales
@@ -1496,6 +1510,7 @@ MODULOS = [
     ('finanzas',          'Finanzas',             'bi-currency-dollar'),
     ('produccion',        'Producción',           'bi-fire'),
     ('inventario',        'Inventario',           'bi-boxes'),
+    ('traspasos',         'Traspasos',            'bi-arrow-left-right'),
     ('gastos',            'Gastos',               'bi-cash-coin'),
     ('agenda',            'Agenda',               'bi-calendar3'),
     ('config_negocio',    'Configuración',        'bi-gear'),
@@ -6437,6 +6452,108 @@ def api_inventario_ajustar(iid):
                 (delta_efectivo, row['producto_id'])
             )
     return jsonify(dict(row) if row else {'ok': False})
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# TRASPASOS ENTRE SUCURSALES
+# ════════════════════════════════════════════════════════════════════════════
+
+@app.route('/traspasos')
+@module_required('traspasos')
+def page_traspasos():
+    return render_template('traspasos.html', active='traspasos')
+
+@app.route('/api/traspasos', methods=['GET'])
+@login_required
+def api_traspasos_list():
+    with db() as c:
+        rows = c.execute("""
+            SELECT t.*, so.nombre AS origen_nombre, sd.nombre AS destino_nombre
+            FROM traspasos t
+            JOIN sucursales so ON so.id = t.origen_id
+            JOIN sucursales sd ON sd.id = t.destino_id
+            ORDER BY t.id DESC LIMIT 100
+        """).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            d['items'] = [dict(i) for i in c.execute(
+                """SELECT ti.*, p.nombre AS producto_nombre
+                   FROM traspaso_items ti JOIN productos p ON p.id = ti.producto_id
+                   WHERE ti.traspaso_id=?""", (r['id'],)).fetchall()]
+            result.append(d)
+    return jsonify(result)
+
+@app.route('/api/traspasos', methods=['POST'])
+@login_required
+def api_traspasos_create():
+    d = request.json or {}
+    try:
+        origen  = int(d.get('origen_id') or 1)
+        destino = int(d.get('destino_id') or 0)
+    except (TypeError, ValueError):
+        return jsonify({'error': 'Sucursales inválidas'}), 400
+    items = d.get('items', [])
+    if not destino or destino == origen:
+        return jsonify({'error': 'Elige una sucursal destino distinta del origen'}), 400
+    if not items:
+        return jsonify({'error': 'Agrega al menos un producto'}), 400
+    fija = _sucursal_fija()
+    if fija and origen != int(fija):
+        return jsonify({'error': 'Solo puedes traspasar desde tu sucursal'}), 403
+    with db() as c:
+        if not c.execute("SELECT id FROM sucursales WHERE id=? AND activa=1", (destino,)).fetchone():
+            return jsonify({'error': 'Sucursal destino no existe'}), 404
+        # Validar TODO el stock antes de mover nada (sin traspasos parciales)
+        for it in items:
+            pid, cant = int(it['producto_id']), float(it['cantidad'])
+            if cant <= 0:
+                return jsonify({'error': 'Las cantidades deben ser mayores a 0'}), 400
+            row = c.execute(
+                """SELECT stock_kg FROM inventario
+                   WHERE bodega='productos_terminados' AND producto_id=? AND sucursal_id=?""",
+                (pid, origen)).fetchone()
+            disponible = row['stock_kg'] if row else 0
+            if disponible < cant:
+                p = c.execute("SELECT nombre FROM productos WHERE id=?", (pid,)).fetchone()
+                nombre = p['nombre'] if p else f'producto {pid}'
+                return jsonify({'error': f'Stock insuficiente de {nombre}: hay {disponible:g}, pides {cant:g}'}), 400
+        cur = c.execute(
+            "INSERT INTO traspasos (origen_id, destino_id, usuario, notas) VALUES (?,?,?,?)",
+            (origen, destino, session.get('user_nombre', ''), d.get('notas', '')))
+        tid = cur.lastrowid
+        for it in items:
+            pid, cant = int(it['producto_id']), float(it['cantidad'])
+            p = c.execute("SELECT nombre FROM productos WHERE id=?", (pid,)).fetchone()
+            c.execute("INSERT INTO traspaso_items (traspaso_id, producto_id, cantidad) VALUES (?,?,?)",
+                      (tid, pid, cant))
+            # Descontar del origen
+            c.execute("""UPDATE inventario SET stock_kg=stock_kg-?, ultima_actualizacion=date('now')
+                         WHERE bodega='productos_terminados' AND producto_id=? AND sucursal_id=?""",
+                      (cant, pid, origen))
+            movimientos = _descontar_lotes_fifo(c, pid, cant, None,
+                                                sucursal_id=origen, tipo='traspaso')
+            # Sumar al destino con lotes espejo (misma fecha de elaboración)
+            inv_dest = _get_or_create_inv_terminado(c, pid, p['nombre'], destino)
+            c.execute("""UPDATE inventario SET stock_kg=stock_kg+?, ultima_actualizacion=date('now')
+                         WHERE id=?""", (cant, inv_dest))
+            movido = 0.0
+            for lote_id, cantidad_mov in movimientos:
+                fecha_elab = c.execute(
+                    "SELECT fecha_elaboracion FROM producto_lotes WHERE id=?", (lote_id,)
+                ).fetchone()['fecha_elaboracion']
+                c.execute("""INSERT INTO producto_lotes
+                             (producto_id, sucursal_id, fecha_elaboracion, cantidad_inicial, cantidad_actual, notas)
+                             VALUES (?,?,?,?,?,?)""",
+                          (pid, destino, fecha_elab, cantidad_mov, cantidad_mov, f'Traspaso #{tid}'))
+                movido += cantidad_mov
+            resto = round(cant - movido, 3)
+            if resto > 0:  # drift histórico: lotes de origen no cubrían el inventario
+                c.execute("""INSERT INTO producto_lotes
+                             (producto_id, sucursal_id, fecha_elaboracion, cantidad_inicial, cantidad_actual, notas)
+                             VALUES (?,?,date('now'),?,?,?)""",
+                          (pid, destino, resto, resto, f'Traspaso #{tid} (ajuste)'))
+    return jsonify({'ok': True, 'id': tid}), 201
 
 
 # ════════════════════════════════════════════════════════════════════════════

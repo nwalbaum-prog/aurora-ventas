@@ -87,6 +87,32 @@ def test_pos_venta_usa_sucursal_del_turno(client):
     assert v['sucursal_id'] == 2
 
 
+def test_traspaso_feliz(client):
+    tc, app_mod = client
+    _crear_stock(app_mod, 1, 1, 20)
+    _, _, total_antes = _stock(app_mod, 1, 1)
+    r = tc.post('/api/traspasos', json={'origen_id': 1, 'destino_id': 2,
+                                        'items': [{'producto_id': 1, 'cantidad': 5}]})
+    assert r.status_code == 201, r.get_json()
+    inv1, lotes1, total = _stock(app_mod, 1, 1)
+    inv2, lotes2, _ = _stock(app_mod, 1, 2)
+    assert inv2 == 5 and lotes2 == 5
+    assert inv1 == lotes1                  # origen sigue cuadrado
+    assert total == total_antes            # el total NO cambia
+    with app_mod.db() as c:
+        lote = c.execute("""SELECT notas FROM producto_lotes WHERE sucursal_id=2
+                            ORDER BY id DESC LIMIT 1""").fetchone()
+    assert 'Traspaso #' in lote['notas']
+
+
+def test_traspaso_sin_stock(client):
+    tc, app_mod = client
+    r = tc.post('/api/traspasos', json={'origen_id': 2, 'destino_id': 1,
+                                        'items': [{'producto_id': 1, 'cantidad': 999}]})
+    assert r.status_code == 400
+    assert 'insuficiente' in r.get_json()['error'].lower()
+
+
 def test_produccion_manual_suma_a_sucursal_1(client):
     tc, app_mod = client
     r = tc.post('/api/produccion/manual', json={'producto_id': 1, 'cantidad': 3})
