@@ -1742,7 +1742,8 @@ def api_admin_importar_db():
     archivo = request.files.get('archivo')
     if not archivo:
         return jsonify({'error': 'Adjunta el archivo .db en el campo "archivo"'}), 400
-    fd, tmp = tempfile.mkstemp(suffix='.db')
+    # mismo filesystem que DB_PATH — os.replace falla cross-device (/tmp vs /data)
+    fd, tmp = tempfile.mkstemp(suffix='.db', dir=os.path.dirname(DB_PATH) or '.')
     os.close(fd)
     archivo.save(tmp)
     try:
