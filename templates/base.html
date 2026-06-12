@@ -59,6 +59,9 @@
     {% if user_es_admin or 'inventario' in user_permisos %}
     <a href="/inventario" class="nav-item {% if active=='inventario' %}active{% endif %}"><i class="bi bi-boxes"></i> Inventario</a>
     {% endif %}
+    {% if user_es_admin or 'traspasos' in user_permisos %}
+    <a href="/traspasos"  class="nav-item {% if active=='traspasos'  %}active{% endif %}"><i class="bi bi-arrow-left-right"></i> Traspasos</a>
+    {% endif %}
 
     <div class="nav-divider">FINANZAS</div>
     {% if user_es_admin or 'gastos' in user_permisos %}
@@ -196,6 +199,7 @@ const CMD_PAGES = [
   {l:'Producción',          u:'/produccion',              i:'bi-fire'},
   {l:'Despacho',            u:'/despacho',                i:'bi-truck'},
   {l:'Inventario',          u:'/inventario',              i:'bi-boxes'},
+  {l:'Traspasos',           u:'/traspasos',               i:'bi-arrow-left-right'},
   {l:'Gastos',              u:'/gastos',                  i:'bi-cash-coin'},
   {l:'Finanzas',            u:'/finanzas',                i:'bi-currency-dollar'},
   {l:'Resumen',             u:'/reportes',                i:'bi-speedometer2'},

@@ -113,6 +113,19 @@ def test_traspaso_sin_stock(client):
     assert 'insuficiente' in r.get_json()['error'].lower()
 
 
+def test_pagina_traspasos_renderiza(client):
+    tc, app_mod = client
+    from werkzeug.security import generate_password_hash
+    with app_mod.db() as c:
+        c.execute("INSERT INTO usuarios (nombre,email,password,rol) VALUES ('Adm','adm@t.cl',?, 'admin')",
+                  (generate_password_hash('x'),))
+    ta = app_mod.app.test_client()
+    ta.post('/login', data={'email': 'adm@t.cl', 'password': 'x'})
+    r = ta.get('/traspasos')
+    assert r.status_code == 200
+    assert 'Nuevo traspaso' in r.get_data(as_text=True)
+
+
 def test_produccion_manual_suma_a_sucursal_1(client):
     tc, app_mod = client
     r = tc.post('/api/produccion/manual', json={'producto_id': 1, 'cantidad': 3})

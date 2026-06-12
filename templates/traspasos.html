@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% block title %}Traspasos · Aurora Bakers{% endblock %}
+{% block page_title %}Traspasos entre locales{% endblock %}
+
+{% block content %}
+<div class="card mb-24" style="max-width:640px">
+  <div class="card-title"><i class="bi bi-arrow-left-right"></i> Nuevo traspaso</div>
+  <div style="display:flex;gap:.75rem;margin-bottom:.75rem">
+    <div class="form-group" style="flex:1;margin:0">
+      <label class="form-label">Origen</label>
+      <select id="t-origen" class="form-control" onchange="renderLineas()"></select>
+    </div>
+    <div class="form-group" style="flex:1;margin:0">
+      <label class="form-label">Destino</label>
+      <select id="t-destino" class="form-control"></select>
+    </div>
+  </div>
+  <div id="t-lineas"></div>
+  <button class="btn btn-ghost" style="font-size:.8rem" onclick="agregarLinea()">
+    <i class="bi bi-plus"></i> Agregar producto</button>
+  <div class="form-group" style="margin:.75rem 0 0">
+    <input id="t-notas" class="form-control" placeholder="Notas (opcional)" />
+  </div>
+  <button class="btn btn-primary" style="margin-top:.75rem" onclick="guardarTraspaso()">
+    <i class="bi bi-check2-circle"></i> Registrar traspaso</button>
+</div>
+
+<div class="card">
+  <div class="card-title"><i class="bi bi-clock-history"></i> Historial</div>
+  <table class="table" style="width:100%;font-size:.82rem">
+    <thead><tr><th>Fecha</th><th>Origen → Destino</th><th>Productos</th><th>Usuario</th></tr></thead>
+    <tbody id="t-historial"><tr><td colspan="4" style="color:var(--text-3)">Cargando…</td></tr></tbody>
+  </table>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let SUCURSALES = [], PRODUCTOS = [], STOCK = {};  // STOCK[sucursal][producto_id] = unidades
+
+async function init() {
+  const [suc, prods, lotes] = await Promise.all([
+    api('GET', '/api/sucursales'),
+    api('GET', '/api/productos'),
+    api('GET', '/api/producto-lotes'),
+  ]);
+  SUCURSALES = suc.sucursales;
+  PRODUCTOS  = prods;
+  STOCK = {};
+  for (const p of lotes) {
+    for (const l of (p.lotes || [])) {
+      const s = l.sucursal_id || 1;
+      STOCK[s] = STOCK[s] || {};
+      STOCK[s][p.producto_id] = (STOCK[s][p.producto_id] || 0) + l.cantidad_actual;
+    }
+  }
+  const opts = SUCURSALES.map(s => `<option value="${s.id}">${s.nombre}</option>`).join('');
+  document.getElementById('t-origen').innerHTML  = opts;
+  document.getElementById('t-destino').innerHTML = opts;
+  document.getElementById('t-destino').value = SUCURSALES.length > 1 ? SUCURSALES[1].id : '';
+  if (suc.fija) {
+    document.getElementById('t-origen').value = suc.fija;
+    document.getElementById('t-origen').disabled = true;
+  }
+  document.getElementById('t-lineas').innerHTML = '';
+  agregarLinea();
+  loadHistorial();
+}
+
+function stockDe(sucursal, pid) {
+  return (STOCK[sucursal] && STOCK[sucursal][pid]) || 0;
+}
+
+function agregarLinea() {
+  const div = document.createElement('div');
+  div.className = 't-linea';
+  div.style.cssText = 'display:flex;gap:.5rem;margin-bottom:.5rem;align-items:center';
+  div.innerHTML = `
+    <select class="form-control t-prod" style="flex:2" onchange="updStock(this)">
+      <option value="">— producto —</option>
+      ${PRODUCTOS.map(p => `<option value="${p.id}">${p.nombre}</option>`).join('')}
+    </select>
+    <input class="form-control t-cant" type="number" min="1" placeholder="Cant." style="flex:1" />
+    <span class="t-stock" style="font-size:.72rem;color:var(--text-3);min-width:90px"></span>
+    <button class="btn btn-ghost" style="padding:.2rem .5rem" onclick="this.parentElement.remove()">×</button>`;
+  document.getElementById('t-lineas').appendChild(div);
+}
+
+function updStock(sel) {
+  const origen = document.getElementById('t-origen').value;
+  const span = sel.parentElement.querySelector('.t-stock');
+  span.textContent = sel.value ? `disp: ${stockDe(origen, parseInt(sel.value))}` : '';
+}
+
+function renderLineas() {
+  document.querySelectorAll('.t-prod').forEach(updStock);
+}
+
+async function guardarTraspaso() {
+  const items = [...document.querySelectorAll('.t-linea')].map(l => ({
+    producto_id: parseInt(l.querySelector('.t-prod').value || 0),
+    cantidad: parseFloat(l.querySelector('.t-cant').value || 0),
+  })).filter(i => i.producto_id && i.cantidad > 0);
+  if (!items.length) { toast('Agrega al menos un producto con cantidad', 'error'); return; }
+  try {
+    await api('POST', '/api/traspasos', {
+      origen_id:  parseInt(document.getElementById('t-origen').value),
+      destino_id: parseInt(document.getElementById('t-destino').value),
+      items, notas: document.getElementById('t-notas').value,
+    });
+    toast('Traspaso registrado');
+    document.getElementById('t-notas').value = '';
+    init();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+async function loadHistorial() {
+  const rows = await api('GET', '/api/traspasos');
+  const tb = document.getElementById('t-historial');
+  if (!rows.length) { tb.innerHTML = '<tr><td colspan="4" style="color:var(--text-3)">Sin traspasos.</td></tr>'; return; }
+  tb.innerHTML = rows.map(t => `
+    <tr>
+      <td>${t.fecha}</td>
+      <td>${t.origen_nombre} → ${t.destino_nombre}</td>
+      <td>${t.items.map(i => `${i.producto_nombre} ×${i.cantidad}`).join(', ')}</td>
+      <td>${t.usuario || '—'}</td>
+    </tr>`).join('');
+}
+
+init();
+</script>
+{% endblock %}
