@@ -2142,6 +2142,8 @@ def api_ventas():
             q += " AND v.fecha_despacho>=?"; params.append(fecha_despacho_desde)
         if fecha_despacho_hasta:
             q += " AND v.fecha_despacho<=?"; params.append(fecha_despacho_hasta)
+        sw, sp = _suc_filtro('v.sucursal_id')
+        q += sw; params += sp
         q += " ORDER BY v.fecha DESC, v.creado_en DESC"
         rows = c.execute(q, params).fetchall()
         result = []
@@ -2169,12 +2171,13 @@ def api_ventas_create():
     else:
         estado_despacho = d.get('estado_despacho', 'PENDIENTE')
 
+    suc = _sucursal_escritura(d)
     with db() as c:
         cur = c.execute(
             """INSERT INTO ventas
                (fecha, cliente_id, canal, total, notas,
-                fecha_despacho, con_despacho, tipo_cliente, estado_pago, estado_despacho)
-               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                fecha_despacho, con_despacho, tipo_cliente, estado_pago, estado_despacho, sucursal_id)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 d.get('fecha', str(date.today())),
                 d.get('cliente_id') or None,
@@ -2186,6 +2189,7 @@ def api_ventas_create():
                 d.get('tipo_cliente', 'CLIENTE'),
                 d.get('estado_pago', 'PENDIENTE'),
                 estado_despacho,
+                suc,
             )
         )
         vid = cur.lastrowid
@@ -2200,14 +2204,14 @@ def api_ventas_create():
             # restauración al editar/borrar la venta; negativo = sobreventa real.
             c.execute(
                 """UPDATE inventario SET stock_kg=stock_kg-?, ultima_actualizacion=date('now')
-                   WHERE bodega='productos_terminados' AND producto_id=?""",
-                (float(i['cantidad']), int(i['producto_id']))
+                   WHERE bodega='productos_terminados' AND producto_id=? AND sucursal_id=?""",
+                (float(i['cantidad']), int(i['producto_id']), suc)
             )
             c.execute(
                 "UPDATE productos SET stock=stock-? WHERE id=?",
                 (float(i['cantidad']), int(i['producto_id']))
             )
-            _descontar_lotes_fifo(c, int(i['producto_id']), float(i['cantidad']), vid)
+            _descontar_lotes_fifo(c, int(i['producto_id']), float(i['cantidad']), vid, sucursal_id=suc)
             p = c.execute("SELECT nombre FROM productos WHERE id=?", (i['producto_id'],)).fetchone()
             if p:
                 items_plan.append({'nombre_producto': p['nombre'], 'cantidad': float(i['cantidad']),
@@ -2257,8 +2261,10 @@ def api_ventas_update(vid):
     """Actualiza una venta: cabecera y/o items con corrección de stock."""
     d = request.json
     with db() as c:
-        if not c.execute("SELECT id FROM ventas WHERE id=?", (vid,)).fetchone():
+        v_row = c.execute("SELECT id, sucursal_id FROM ventas WHERE id=?", (vid,)).fetchone()
+        if not v_row:
             return jsonify({'error': 'Venta no encontrada'}), 404
+        v_suc = v_row['sucursal_id']
 
         # Campos de cabecera editables
         campos = {}
@@ -2278,8 +2284,8 @@ def api_ventas_update(vid):
             for i in c.execute("SELECT producto_id, cantidad FROM venta_items WHERE venta_id=?", (vid,)).fetchall():
                 c.execute(
                     """UPDATE inventario SET stock_kg=stock_kg+?, ultima_actualizacion=date('now')
-                       WHERE bodega='productos_terminados' AND producto_id=?""",
-                    (i['cantidad'], i['producto_id'])
+                       WHERE bodega='productos_terminados' AND producto_id=? AND sucursal_id=?""",
+                    (i['cantidad'], i['producto_id'], v_suc)
                 )
                 c.execute(
                     "UPDATE productos SET stock=stock+? WHERE id=?",
@@ -2297,14 +2303,14 @@ def api_ventas_update(vid):
                 )
                 c.execute(
                     """UPDATE inventario SET stock_kg=stock_kg-?, ultima_actualizacion=date('now')
-                       WHERE bodega='productos_terminados' AND producto_id=?""",
-                    (cant, int(i['producto_id']))
+                       WHERE bodega='productos_terminados' AND producto_id=? AND sucursal_id=?""",
+                    (cant, int(i['producto_id']), v_suc)
                 )
                 c.execute(
                     "UPDATE productos SET stock=stock-? WHERE id=?",
                     (cant, int(i['producto_id']))
                 )
-                _descontar_lotes_fifo(c, int(i['producto_id']), cant, vid)
+                _descontar_lotes_fifo(c, int(i['producto_id']), cant, vid, sucursal_id=v_suc)
                 total += cant * precio
             campos['total'] = total
 
@@ -2324,12 +2330,14 @@ def api_ventas_update(vid):
 @app.route('/api/ventas/<int:vid>', methods=['DELETE'])
 def api_ventas_delete(vid):
     with db() as c:
+        v_row = c.execute("SELECT id, sucursal_id FROM ventas WHERE id=?", (vid,)).fetchone()
+        v_suc = v_row['sucursal_id'] if v_row else 1
         _restaurar_lotes_venta(c, vid)
         for i in c.execute("SELECT producto_id, cantidad FROM venta_items WHERE venta_id=?", (vid,)).fetchall():
             c.execute(
                 """UPDATE inventario SET stock_kg=stock_kg+?, ultima_actualizacion=date('now')
-                   WHERE bodega='productos_terminados' AND producto_id=?""",
-                (i['cantidad'], i['producto_id'])
+                   WHERE bodega='productos_terminados' AND producto_id=? AND sucursal_id=?""",
+                (i['cantidad'], i['producto_id'], v_suc)
             )
             c.execute(
                 "UPDATE productos SET stock=stock+? WHERE id=?",
@@ -2345,13 +2353,14 @@ def api_ventas_resumen():
     today = date.today()
     w0 = today - timedelta(days=today.weekday())
     m0 = today.replace(day=1)
+    sw, sp = _suc_filtro()
     with db() as c:
         def t(d1, d2):
-            r = c.execute("SELECT COALESCE(SUM(total),0),COUNT(*) FROM ventas WHERE fecha BETWEEN ? AND ?",
-                          (str(d1),str(d2))).fetchone()
+            r = c.execute(f"SELECT COALESCE(SUM(total),0),COUNT(*) FROM ventas WHERE fecha BETWEEN ? AND ?{sw}",
+                          [str(d1), str(d2)] + sp).fetchone()
             return {'total': r[0], 'count': r[1]}
-        pendientes_pago     = c.execute("SELECT COUNT(*) FROM ventas WHERE estado_pago='PENDIENTE'").fetchone()[0]
-        pendientes_despacho = c.execute("SELECT COUNT(*) FROM ventas WHERE estado_despacho='PENDIENTE'").fetchone()[0]
+        pendientes_pago     = c.execute(f"SELECT COUNT(*) FROM ventas WHERE estado_pago='PENDIENTE'{sw}", sp).fetchone()[0]
+        pendientes_despacho = c.execute(f"SELECT COUNT(*) FROM ventas WHERE estado_despacho='PENDIENTE'{sw}", sp).fetchone()[0]
         return jsonify({
             'hoy':                t(today, today),
             'semana':             t(w0, today),
@@ -2457,16 +2466,17 @@ def api_registrar_entrega(sid):
                 qty = 1.0
             if not pid:
                 continue
+            # Despachos de suscripción salen siempre de Recoleta (sucursal 1)
             c.execute(
                 """UPDATE inventario SET stock_kg=stock_kg-?, ultima_actualizacion=date('now')
-                   WHERE bodega='productos_terminados' AND producto_id=?""",
+                   WHERE bodega='productos_terminados' AND producto_id=? AND sucursal_id=1""",
                 (qty, int(pid))
             )
             c.execute(
                 "UPDATE productos SET stock=stock-? WHERE id=?",
                 (qty, int(pid))
             )
-            _descontar_lotes_fifo(c, int(pid), qty, None)
+            _descontar_lotes_fifo(c, int(pid), qty, None, sucursal_id=1)
 
         ciclo_completo = nuevas_entregas >= 4
         email_sent = False
@@ -8020,8 +8030,8 @@ def api_agentes_ventas():
         cur = c.execute(
             """INSERT INTO ventas
                (fecha, cliente_id, canal, total, notas,
-                fecha_despacho, con_despacho, tipo_cliente, estado_pago, estado_despacho)
-               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                fecha_despacho, con_despacho, tipo_cliente, estado_pago, estado_despacho, sucursal_id)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 d.get('fecha', str(date.today())),
                 d.get('cliente_id') or None,
@@ -8033,6 +8043,7 @@ def api_agentes_ventas():
                 d.get('tipo_cliente', 'CLIENTE'),
                 d.get('estado_pago', 'PENDIENTE'),
                 d.get('estado_despacho', 'PENDIENTE'),
+                int(d.get('sucursal_id') or 1),
             )
         )
     return jsonify({'id': cur.lastrowid, 'ok': True})
