@@ -126,6 +126,41 @@ def test_pagina_traspasos_renderiza(client):
     assert 'Nuevo traspaso' in r.get_data(as_text=True)
 
 
+def test_perfiles_endpoint(client):
+    tc, app_mod = client
+    # el conftest crea usuario rol 'usuario'; este endpoint es admin-only
+    with app_mod.db() as c:
+        from werkzeug.security import generate_password_hash
+        c.execute("INSERT INTO usuarios (nombre,email,password,rol) VALUES ('A','a@a.cl',?, 'admin')",
+                  (generate_password_hash('x'),))
+    ta = app_mod.app.test_client()
+    ta.post('/login', data={'email': 'a@a.cl', 'password': 'x'})
+    d = ta.get('/api/admin/perfiles').get_json()
+    assert set(d['perfiles'].keys()) == {'cajero', 'produccion', 'encargado', 'contador'}
+    assert 'pos' in d['perfiles']['cajero']
+    assert len(d['sucursales']) == 2
+
+
+def test_usuario_sucursal_fija_forzada(client):
+    tc, app_mod = client
+    from werkzeug.security import generate_password_hash
+    with app_mod.db() as c:
+        c.execute("""INSERT INTO usuarios (nombre,email,password,rol,permisos,sucursal_id)
+                     VALUES ('Caja2','c2@a.cl',?,'usuario','["pos","ventas"]',2)""",
+                  (generate_password_hash('x'),))
+    _crear_stock(app_mod, 1, 1, 10)
+    _crear_stock(app_mod, 1, 2, 10)
+    t2 = app_mod.app.test_client()
+    t2.post('/login', data={'email': 'c2@a.cl', 'password': 'x'})
+    # Intenta vender "en sucursal 1": el server fuerza la 2
+    r = t2.post('/api/ventas', json={'sucursal_id': 1,
+                                     'items': [{'producto_id': 1, 'cantidad': 2, 'precio_unitario': 100}]})
+    assert r.status_code == 201
+    with app_mod.db() as c:
+        v = c.execute("SELECT sucursal_id FROM ventas ORDER BY id DESC LIMIT 1").fetchone()
+    assert v['sucursal_id'] == 2
+
+
 def test_produccion_manual_suma_a_sucursal_1(client):
     tc, app_mod = client
     r = tc.post('/api/produccion/manual', json={'producto_id': 1, 'cantidad': 3})

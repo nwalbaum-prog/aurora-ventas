@@ -1518,6 +1518,15 @@ MODULOS = [
 ]
 MODULOS_DEFAULT = ['pos', 'ventas', 'clientes', 'despacho', 'agenda']
 
+# Perfiles preset por función — rellenan los checkboxes de módulos al crear usuario
+PERFILES = {
+    'cajero':     ['pos', 'ventas', 'clientes', 'despacho'],
+    'produccion': ['produccion', 'inventario', 'traspasos', 'reporte_produccion', 'agenda'],
+    'encargado':  ['pos', 'ventas', 'clientes', 'despacho', 'suscripciones', 'traspasos',
+                   'reportes', 'reporte_ventas', 'agenda'],
+    'contador':   ['finanzas', 'gastos', 'reportes', 'reporte_ventas'],
+}
+
 def has_module(key):
     """True si el usuario actual tiene acceso al módulo."""
     if session.get('user_rol') == 'admin':
@@ -1633,7 +1642,7 @@ def api_admin_usuarios_list():
     if u['rol'] != 'admin':
         return jsonify({'error': 'Forbidden'}), 403
     with db() as c:
-        rows = c.execute("SELECT id,nombre,email,rol,activo,creado_en,ultimo_login,permisos FROM usuarios ORDER BY id").fetchall()
+        rows = c.execute("SELECT id,nombre,email,rol,activo,creado_en,ultimo_login,permisos,sucursal_id FROM usuarios ORDER BY id").fetchall()
         return jsonify([dict(r) for r in rows])
 
 @app.route('/api/admin/modulos', methods=['GET'])
@@ -1641,6 +1650,13 @@ def api_admin_usuarios_list():
 def api_admin_modulos():
     """Lista de módulos disponibles para asignar permisos."""
     return jsonify([{'key': k, 'nombre': n, 'icono': i} for k, n, i in MODULOS])
+
+@app.route('/api/admin/perfiles', methods=['GET'])
+@admin_required
+def api_admin_perfiles():
+    with db() as c:
+        sucs = [dict(r) for r in c.execute("SELECT id, nombre FROM sucursales WHERE activa=1 ORDER BY id")]
+    return jsonify({'perfiles': PERFILES, 'sucursales': sucs})
 
 @app.route('/api/admin/usuarios', methods=['POST'])
 @login_required
@@ -1652,12 +1668,13 @@ def api_admin_usuarios_create():
     if not d.get('email') or not d.get('password'):
         return jsonify({'error': 'Email y contraseña son requeridos'}), 400
     permisos = _json_mod.dumps(d.get('permisos', MODULOS_DEFAULT))
+    sucursal_id = d.get('sucursal_id') or None
     try:
         with db() as c:
             c.execute(
-                "INSERT INTO usuarios (nombre,email,password,rol,permisos) VALUES (?,?,?,?,?)",
+                "INSERT INTO usuarios (nombre,email,password,rol,permisos,sucursal_id) VALUES (?,?,?,?,?,?)",
                 (d.get('nombre',''), d['email'].lower().strip(),
-                 generate_password_hash(d['password']), d.get('rol','usuario'), permisos)
+                 generate_password_hash(d['password']), d.get('rol','usuario'), permisos, sucursal_id)
             )
         return jsonify({'ok': True}), 201
     except Exception:
@@ -1680,6 +1697,8 @@ def api_admin_usuarios_update(uid):
         if 'permisos' in d:
             c.execute("UPDATE usuarios SET permisos=? WHERE id=?",
                       (_json_mod.dumps(d['permisos']), uid))
+        if 'sucursal_id' in d:
+            c.execute("UPDATE usuarios SET sucursal_id=? WHERE id=?", (d['sucursal_id'] or None, uid))
     return jsonify({'ok': True})
 
 @app.route('/api/admin/usuarios/<int:uid>', methods=['DELETE'])

@@ -34,10 +34,10 @@
   <table class="u-table" id="u-table">
     <thead>
       <tr>
-        <th>Nombre</th><th>Correo</th><th>Rol</th><th>Estado</th><th>Último acceso</th><th></th>
+        <th>Nombre</th><th>Correo</th><th>Rol</th><th>Sucursal</th><th>Estado</th><th>Último acceso</th><th></th>
       </tr>
     </thead>
-    <tbody id="u-tbody"><tr><td colspan="6" style="color:var(--text-3)">Cargando…</td></tr></tbody>
+    <tbody id="u-tbody"><tr><td colspan="7" style="color:var(--text-3)">Cargando…</td></tr></tbody>
   </table>
 </div>
 
@@ -98,6 +98,16 @@
             <option value="admin">Admin — acceso total</option>
           </select>
         </div>
+        <div class="form-group" style="margin:0">
+          <label class="form-label">Sucursal</label>
+          <select id="u-sucursal" class="form-control">
+            <option value="">Todas (acceso global)</option>
+          </select>
+        </div>
+        <div class="form-group" style="margin:0">
+          <label class="form-label">Perfil rápido</label>
+          <div id="perfil-btns" style="display:flex;gap:.35rem;flex-wrap:wrap"></div>
+        </div>
       </div>
       <!-- Permisos por módulo -->
       <div id="permisos-section" class="form-group" style="margin:0">
@@ -117,14 +127,29 @@
 <script>
 let usuarios = [];
 let modulos  = [];
+let perfilesData = { perfiles: {}, sucursales: [] };
 
 async function loadUsuarios() {
-  [usuarios, modulos] = await Promise.all([
+  [usuarios, modulos, perfilesData] = await Promise.all([
     api('GET', '/api/admin/usuarios'),
     api('GET', '/api/admin/modulos'),
+    api('GET', '/api/admin/perfiles'),
   ]);
   renderTabla();
   renderPermisosGrid([]);
+  document.getElementById('u-sucursal').innerHTML =
+    '<option value="">Todas (acceso global)</option>' +
+    perfilesData.sucursales.map(s => `<option value="${s.id}">${s.nombre}</option>`).join('');
+  const NOMBRES = { cajero:'Cajero', produccion:'Jefe Producción', encargado:'Encargado local', contador:'Contador' };
+  document.getElementById('perfil-btns').innerHTML =
+    Object.keys(perfilesData.perfiles).map(k =>
+      `<button type="button" class="btn btn-ghost" style="font-size:.72rem;padding:.25rem .55rem"
+        onclick="aplicarPerfil('${k}')">${NOMBRES[k] || k}</button>`).join('');
+}
+
+function aplicarPerfil(key) {
+  renderPermisosGrid(perfilesData.perfiles[key] || []);
+  toast(`Perfil aplicado — ajusta los módulos si necesitas`);
 }
 
 function renderPermisosGrid(seleccionados) {
@@ -146,12 +171,13 @@ function onRolChange() {
 function renderTabla() {
   const tb = document.getElementById('u-tbody');
   const yo = {{ yo.id }};
-  if (!usuarios.length) { tb.innerHTML = '<tr><td colspan="6" style="color:var(--text-3)">Sin usuarios.</td></tr>'; return; }
+  if (!usuarios.length) { tb.innerHTML = '<tr><td colspan="7" style="color:var(--text-3)">Sin usuarios.</td></tr>'; return; }
   tb.innerHTML = usuarios.map(u => `
     <tr>
       <td><strong>${escHtml(u.nombre)}</strong>${u.id===yo?' <span style="font-size:.65rem;color:var(--accent)">(tú)</span>':''}</td>
       <td style="color:var(--text-2)">${escHtml(u.email)}</td>
       <td><span class="rol-badge ${u.rol==='admin'?'rol-admin':'rol-usuario'}">${u.rol}</span></td>
+      <td style="color:var(--text-2)">${u.sucursal_id ? ((perfilesData.sucursales.find(s=>s.id===u.sucursal_id)||{}).nombre || u.sucursal_id) : 'Todas'}</td>
       <td><span class="activo-dot ${u.activo?'dot-on':'dot-off'}" title="${u.activo?'Activo':'Inactivo'}"></span> ${u.activo?'Activo':'Inactivo'}</td>
       <td style="color:var(--text-3)">${u.ultimo_login || '—'}</td>
       <td>
@@ -172,6 +198,7 @@ function abrirNuevo() {
   document.getElementById('u-email').value  = '';
   document.getElementById('u-pass').value   = '';
   document.getElementById('u-rol').value    = 'usuario';
+  document.getElementById('u-sucursal').value = '';
   document.getElementById('pw-label').textContent = 'Contraseña *';
   document.getElementById('pw-hint').textContent  = '';
   renderPermisosGrid(['pos','ventas','clientes','despacho','agenda']);
@@ -188,6 +215,7 @@ function editarUsuario(id) {
   document.getElementById('u-email').value  = u.email;
   document.getElementById('u-pass').value   = '';
   document.getElementById('u-rol').value    = u.rol;
+  document.getElementById('u-sucursal').value = u.sucursal_id || '';
   document.getElementById('pw-label').textContent = 'Nueva contraseña (dejar vacío para no cambiar)';
   document.getElementById('pw-hint').textContent  = '';
   let permisos = [];
@@ -207,13 +235,14 @@ async function guardarUsuario() {
   if (!id && !pass) { toast('Ingresa una contraseña', 'error'); return; }
   const permisos = rol === 'admin' ? [] :
     [...document.querySelectorAll('.perm-check:checked')].map(el => el.value);
+  const sucursal_id = document.getElementById('u-sucursal').value || null;
   try {
     if (id) {
-      const body = { nombre, email, rol, permisos };
+      const body = { nombre, email, rol, permisos, sucursal_id };
       if (pass) body.password = pass;
       await api('PUT', `/api/admin/usuarios/${id}`, body);
     } else {
-      await api('POST', '/api/admin/usuarios', { nombre, email, password: pass, rol, permisos });
+      await api('POST', '/api/admin/usuarios', { nombre, email, password: pass, rol, permisos, sucursal_id });
     }
     closeModal('modal-nuevo');
     await loadUsuarios();
