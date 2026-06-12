@@ -29,10 +29,19 @@
 </div>
 {% else %}
 <!-- Cierre -->
+{% if turno_vencido %}
+<div style="max-width:480px;margin:0 auto 1rem;padding:.75rem 1rem;border-radius:8px;background:var(--danger-dim);color:var(--danger);border:1px solid rgba(212,30,47,.2);font-weight:600">
+  ⚠️ Esta caja quedó abierta el {{ turno.fecha_apertura[:10] }}. Debes cerrarla antes de poder vender hoy.
+</div>
+{% endif %}
 <div class="card" style="max-width:480px;margin:0 auto">
   <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
     <h3>Caja abierta</h3>
+    {% if turno_vencido %}
+    <span class="badge badge-red">● Pendiente de cierre</span>
+    {% else %}
     <span class="badge badge-success">● Activa</span>
+    {% endif %}
   </div>
   <div class="card-body">
     <div class="stat-row"><span>Apertura</span><strong>{{ turno.fecha_apertura }}</strong></div>
@@ -45,7 +54,9 @@
     <input type="number" id="monto-declarado" class="form-control" placeholder="0" min="0">
     <div id="diferencia-msg" style="margin-top:.5rem;font-size:.85rem"></div>
     <button class="btn btn-danger mt-3 w-100" onclick="cerrarCaja()">Cerrar caja</button>
+    {% if not turno_vencido %}
     <a href="/pos" class="btn btn-primary mt-2 w-100">Ir a la caja →</a>
+    {% endif %}
   </div>
 </div>
 {% endif %}

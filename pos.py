@@ -39,6 +39,13 @@ def _save_config(data):
 
 pos_bp = Blueprint('pos', __name__)
 
+
+def _turno_vencido(turno) -> bool:
+    """Turno abierto en una fecha anterior a hoy: hay que cerrarlo antes de vender."""
+    if not turno:
+        return False
+    return turno['fecha_apertura'][:10] < date.today().isoformat()
+
 # Estado en memoria del carrito activo (un proceso = un local)
 _pos_carrito_activo = {
     "turno_id": None,
@@ -59,6 +66,9 @@ def page_pos():
         ).fetchone()
     if not turno:
         return redirect(url_for('pos.page_caja', msg='Debes abrir la caja antes de vender'))
+    if _turno_vencido(turno):
+        return redirect(url_for('pos.page_caja',
+                                msg='La caja quedó abierta de un día anterior. Ciérrala y abre una nueva para vender hoy.'))
     return render_template('pos.html', active='pos', turno=dict(turno))
 
 
@@ -75,6 +85,7 @@ def page_caja():
         promociones = c.execute("SELECT * FROM pos_promociones ORDER BY id DESC").fetchall()
     return render_template('pos_caja.html', active='pos',
                            turno=dict(turno) if turno else None,
+                           turno_vencido=_turno_vencido(turno),
                            promociones=[dict(p) for p in promociones],
                            msg=msg)
 
@@ -446,6 +457,8 @@ def api_pos_venta():
 
     if not turno:
         return jsonify({'error': 'No hay turno abierto. Abre la caja primero.'}), 400
+    if _turno_vencido(turno):
+        return jsonify({'error': 'La caja quedó abierta de un día anterior. Ciérrala y abre una nueva para vender hoy.'}), 400
 
     descuento, detalle_promos = _aplicar_promociones(items)
     total_bruto = sum(float(i['cantidad']) * float(i['precio_unitario']) for i in items)
