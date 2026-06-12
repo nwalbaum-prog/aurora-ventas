@@ -42,6 +42,7 @@
       <div><label class="label">Desde</label><input id="f-desde" type="date" class="input" style="width:140px"></div>
       <div><label class="label">Hasta</label><input id="f-hasta" type="date" class="input" style="width:140px"></div>
     </div>
+    <select id="sel-sucursal" class="input" style="width:auto;display:none;margin-left:.75rem"></select>
   </div>
   <div style="display:flex;flex-wrap:wrap;gap:.75rem;align-items:flex-end">
     <div>
@@ -545,7 +546,7 @@ async function load() {
   const pago       = document.getElementById('f-pago').value;
   const clienteId  = document.getElementById('f-cliente').value;
 
-  let url = `/api/ventas?desde=${desde}&hasta=${hasta}`;
+  let url = `/api/ventas?desde=${desde}&hasta=${hasta}${SUC_PARAM}`;
   if (canal)       url += `&canal=${canal}`;
   if (tipoCliente) url += `&tipo_cliente=${tipoCliente}`;
   if (pago)        url += `&estado_pago=${pago}`;
@@ -582,6 +583,18 @@ async function cargarClientes() {
   document.getElementById('f-desde').value = `${y}-${m}-01`;
   document.getElementById('f-hasta').value = hoy.toISOString().split('T')[0];
 })();
+
+let SUC_PARAM = '';
+async function initSucursales() {
+  const d = await api('GET', '/api/sucursales');
+  if (d.fija) return;  // usuario de un solo local: sin selector, el server filtra
+  const sel = document.getElementById('sel-sucursal');
+  sel.innerHTML = '<option value="">Total (ambos locales)</option>' +
+    d.sucursales.map(s => `<option value="${s.id}">${s.nombre}</option>`).join('');
+  sel.style.display = '';
+  sel.onchange = () => { SUC_PARAM = sel.value ? `&sucursal_id=${sel.value}` : ''; load(); };
+}
+initSucursales();
 
 cargarClientes();
 load();

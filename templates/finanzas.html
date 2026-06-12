@@ -11,6 +11,7 @@
     <button class="filter-tab active" onclick="setMeses(this,6)">6 meses</button>
     <button class="filter-tab" onclick="setMeses(this,12)">12 meses</button>
   </div>
+  <select id="sel-sucursal" class="form-control" style="width:auto;display:none;margin-left:.75rem"></select>
 </div>
 
 <!-- KPIs resumen -->
@@ -150,8 +151,20 @@ function agingColor(bucket) {
   return '#dc2626';
 }
 
+let SUC_PARAM = '';
+async function initSucursales() {
+  const d = await api('GET', '/api/sucursales');
+  if (d.fija) return;  // usuario de un solo local: sin selector, el server filtra
+  const sel = document.getElementById('sel-sucursal');
+  sel.innerHTML = '<option value="">Total (ambos locales)</option>' +
+    d.sucursales.map(s => `<option value="${s.id}">${s.nombre}</option>`).join('');
+  sel.style.display = '';
+  sel.onchange = () => { SUC_PARAM = sel.value ? `&sucursal_id=${sel.value}` : ''; load(); loadFlujoCaja(); };
+}
+initSucursales();
+
 async function load() {
-  const data = await api('GET', `/api/finanzas/pl?meses=${meses}`);
+  const data = await api('GET', `/api/finanzas/pl?meses=${meses}${SUC_PARAM}`);
   const { pl, pendientes, canales, margenes, resumen } = data;
 
   // KPIs
@@ -278,7 +291,7 @@ async function load() {
 
 async function loadFlujoCaja() {
   try {
-    const semanas = await api('GET', '/api/finanzas/flujo-caja');
+    const semanas = await api('GET', '/api/finanzas/flujo-caja' + (SUC_PARAM ? '?' + SUC_PARAM.slice(1) : ''));
     document.getElementById('flujo-tbody').innerHTML = semanas.map((s, i) => {
       const flujoColor = s.flujo_neto >= 0 ? 'var(--success)' : 'var(--danger)';
       const label = i === 0 ? 'Esta semana' : `Semana ${s.semana}`;

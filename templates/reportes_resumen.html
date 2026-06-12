@@ -10,6 +10,7 @@
     <button class="filter-tab active" onclick="setPeriodo(this,'semana')">Semana</button>
     <button class="filter-tab" onclick="setPeriodo(this,'mes')">Mes</button>
   </div>
+  <select id="sel-sucursal" class="form-control" style="width:auto;display:none;margin-left:.75rem"></select>
 </div>
 
 <!-- Fila 1: KPIs ventas -->
@@ -66,8 +67,20 @@ function kpiCard(icon, label, value, sub, color) {
   </div>`;
 }
 
+let SUC_PARAM = '';
+async function initSucursales() {
+  const d = await api('GET', '/api/sucursales');
+  if (d.fija) return;  // usuario de un solo local: sin selector, el server filtra
+  const sel = document.getElementById('sel-sucursal');
+  sel.innerHTML = '<option value="">Total (ambos locales)</option>' +
+    d.sucursales.map(s => `<option value="${s.id}">${s.nombre}</option>`).join('');
+  sel.style.display = '';
+  sel.onchange = () => { SUC_PARAM = sel.value ? `&sucursal_id=${sel.value}` : ''; loadAll(); };
+}
+initSucursales();
+
 async function loadAll() {
-  const d = await api('GET', `/api/reportes/resumen?periodo=${periodo}`);
+  const d = await api('GET', `/api/reportes/resumen?periodo=${periodo}${SUC_PARAM}`);
   const periodoLabel = { hoy:'vs ayer', semana:'vs sem. anterior', mes:'vs mes anterior' }[periodo] || '';
 
   // Fila 1: KPIs ventas

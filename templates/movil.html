@@ -35,6 +35,8 @@
                display:flex; align-items:center; justify-content:center; }
 </style>
 
+<select id="sel-sucursal" class="form-control" style="width:auto;display:none;margin-bottom:.75rem"></select>
+
 <div id="dash-content">
   <div style="text-align:center;padding:3rem;color:var(--muted)"><i class="bi bi-arrow-clockwise"></i> Cargando…</div>
 </div>
@@ -46,13 +48,25 @@
 {% block scripts %}
 <script>
 let _refreshTimer = null;
+let SUC_PARAM = '';
+
+async function initSucursales() {
+  const d = await fetch('/api/sucursales').then(r => r.json());
+  if (d.fija) return;  // usuario de un solo local: sin selector, el server filtra
+  const sel = document.getElementById('sel-sucursal');
+  sel.innerHTML = '<option value="">Total (ambos locales)</option>' +
+    d.sucursales.map(s => `<option value="${s.id}">${s.nombre}</option>`).join('');
+  sel.style.display = '';
+  sel.onchange = () => { SUC_PARAM = sel.value ? `?sucursal_id=${sel.value}` : ''; loadDash(); };
+}
+initSucursales();
 
 async function loadDash() {
   const btn = document.getElementById('refresh-btn');
   btn.querySelector('i').className = 'bi bi-hourglass-split';
 
   const [stats, stock, ventas] = await Promise.all([
-    fetch('/api/movil/stats').then(r => r.json()),
+    fetch('/api/movil/stats' + SUC_PARAM).then(r => r.json()),
     fetch('/api/movil/stock-critico').then(r => r.json()),
     fetch('/api/movil/ultimas-ventas').then(r => r.json()),
   ]);
