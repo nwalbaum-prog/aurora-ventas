@@ -25,3 +25,14 @@ def test_api_sucursales(client):
     d = r.get_json()
     assert len(d['sucursales']) == 2
     assert d['fija'] is None  # cajera del conftest no tiene sucursal fija
+
+
+def test_produccion_manual_suma_a_sucursal_1(client):
+    tc, app_mod = client
+    r = tc.post('/api/produccion/manual', json={'producto_id': 1, 'cantidad': 3})
+    assert r.status_code in (200, 201)
+    with app_mod.db() as c:
+        lote = c.execute(
+            "SELECT sucursal_id FROM producto_lotes WHERE producto_id=1 ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    assert lote['sucursal_id'] == 1

@@ -58,18 +58,18 @@ def _limpiar_texto(s: str) -> str:
 # Fallback a aurora_config.json (gitignoreado) — nunca hardcodear la key aquí
 GOOGLE_PLACES_API_KEY = GOOGLE_PLACES_API_KEY or _cfg('google_places_api_key')
 
-def _get_or_create_inv_terminado(c, producto_id, nombre):
-    """Obtiene o crea entrada en inventario para un producto terminado."""
+def _get_or_create_inv_terminado(c, producto_id, nombre, sucursal_id=1):
+    """Obtiene o crea entrada en inventario para un producto terminado en una sucursal."""
     row = c.execute(
-        "SELECT id FROM inventario WHERE bodega='productos_terminados' AND producto_id=?",
-        (producto_id,)
+        "SELECT id FROM inventario WHERE bodega='productos_terminados' AND producto_id=? AND sucursal_id=?",
+        (producto_id, sucursal_id)
     ).fetchone()
     if row:
         return row['id']
     cur = c.execute(
-        "INSERT INTO inventario (ingrediente, bodega, stock_kg, unidad, alerta_minimo_kg, producto_id)"
-        " VALUES (?,?,?,?,?,?)",
-        (nombre, 'productos_terminados', 0, 'unidades', 0, producto_id)
+        "INSERT INTO inventario (ingrediente, bodega, stock_kg, unidad, alerta_minimo_kg, producto_id, sucursal_id)"
+        " VALUES (?,?,?,?,?,?,?)",
+        (nombre, 'productos_terminados', 0, 'unidades', 0, producto_id, sucursal_id)
     )
     return cur.lastrowid
 
@@ -176,31 +176,32 @@ def _deuda_mayorista(c, mayorista_id: int) -> dict:
     }
 
 
-def _descontar_lotes_fifo(c, producto_id, cantidad, venta_id, lote_id_override=None):
+def _descontar_lotes_fifo(c, producto_id, cantidad, venta_id, lote_id_override=None,
+                          sucursal_id=1, tipo='venta'):
     """
-    Descuenta `cantidad` unidades del producto desde lotes FIFO (más antiguos primero).
-    Si lote_id_override: intenta descontar de ese lote primero antes de los demás.
+    Descuenta `cantidad` unidades del producto desde lotes FIFO (más antiguos primero)
+    de una sucursal. Si lote_id_override: intenta descontar de ese lote primero.
     Registra cada movimiento en lote_movimientos.
     Retorna lista de (lote_id, cantidad_descontada).
     """
     if lote_id_override:
         lote_pref = c.execute(
-            "SELECT * FROM producto_lotes WHERE id=? AND producto_id=? AND cantidad_actual>0",
-            (lote_id_override, producto_id)
+            "SELECT * FROM producto_lotes WHERE id=? AND producto_id=? AND cantidad_actual>0 AND sucursal_id=?",
+            (lote_id_override, producto_id, sucursal_id)
         ).fetchall()
         otros = c.execute(
             """SELECT * FROM producto_lotes
-               WHERE producto_id=? AND id!=? AND cantidad_actual>0
+               WHERE producto_id=? AND id!=? AND cantidad_actual>0 AND sucursal_id=?
                ORDER BY fecha_elaboracion ASC""",
-            (producto_id, lote_id_override)
+            (producto_id, lote_id_override, sucursal_id)
         ).fetchall()
         lotes = list(lote_pref) + list(otros)
     else:
         lotes = c.execute(
             """SELECT * FROM producto_lotes
-               WHERE producto_id=? AND cantidad_actual>0
+               WHERE producto_id=? AND cantidad_actual>0 AND sucursal_id=?
                ORDER BY fecha_elaboracion ASC""",
-            (producto_id,)
+            (producto_id, sucursal_id)
         ).fetchall()
 
     movimientos = []
@@ -216,7 +217,7 @@ def _descontar_lotes_fifo(c, producto_id, cantidad, venta_id, lote_id_override=N
         c.execute(
             """INSERT INTO lote_movimientos (lote_id, tipo, cantidad, venta_id, notas)
                VALUES (?,?,?,?,?)""",
-            (lote['id'], 'venta', -descontar, venta_id, '')
+            (lote['id'], tipo, -descontar, venta_id, '')
         )
         movimientos.append((lote['id'], descontar))
         restante -= descontar
@@ -1368,24 +1369,33 @@ Aurora Bakers""",
             CREATE INDEX IF NOT EXISTS idx_producto_lotes_suc     ON producto_lotes(sucursal_id);
         """)
 
-        # Backfill lotes: si productos.stock supera la suma de lotes vigentes,
-        # crear un lote de ajuste. Idempotente; repara drift histórico (ediciones
-        # directas de stock) y mantiene el tercer contador en sync.
+        # Backfill lotes POR SUCURSAL: inventario es la verdad por local.
+        # Si inventario(p,s) > Σ lotes(p,s), crear lote de ajuste en esa sucursal.
         desync_rows = c.execute("""
-            SELECT p.id, p.stock,
+            SELECT i.producto_id, i.sucursal_id, i.stock_kg,
                    COALESCE((SELECT SUM(pl.cantidad_actual) FROM producto_lotes pl
-                             WHERE pl.producto_id = p.id), 0) AS lotes
-            FROM productos p WHERE p.activo=1
+                             WHERE pl.producto_id = i.producto_id
+                               AND pl.sucursal_id = i.sucursal_id), 0) AS lotes
+            FROM inventario i JOIN productos p ON p.id = i.producto_id
+            WHERE i.bodega='productos_terminados' AND p.activo=1
         """).fetchall()
         for r in desync_rows:
-            diff = round((r['stock'] or 0) - r['lotes'], 3)
+            diff = round((r['stock_kg'] or 0) - r['lotes'], 3)
             if diff > 0:
                 c.execute(
                     """INSERT INTO producto_lotes
-                       (producto_id, fecha_elaboracion, cantidad_inicial, cantidad_actual, notas)
-                       VALUES (?, date('now'), ?, ?, 'Ajuste sincronización lotes')""",
-                    (r['id'], diff, diff)
+                       (producto_id, sucursal_id, fecha_elaboracion, cantidad_inicial, cantidad_actual, notas)
+                       VALUES (?, ?, date('now'), ?, ?, 'Ajuste sincronización lotes')""",
+                    (r['producto_id'], r['sucursal_id'], diff, diff)
                 )
+        # productos.stock = TOTAL entre sucursales (inventario manda al arrancar)
+        c.execute("""
+            UPDATE productos SET stock = (
+                SELECT COALESCE(SUM(i.stock_kg), 0) FROM inventario i
+                WHERE i.bodega='productos_terminados' AND i.producto_id = productos.id)
+            WHERE activo=1
+              AND id IN (SELECT producto_id FROM inventario WHERE bodega='productos_terminados')
+        """)
 
 # ── Health ───────────────────────────────────────────────────────────────────
 
@@ -1921,7 +1931,7 @@ def api_producto_lotes_list():
         resultado = []
         for p in prods:
             lotes = c.execute(
-                """SELECT id, fecha_elaboracion, cantidad_inicial, cantidad_actual, merma, notas, creado_en
+                """SELECT id, fecha_elaboracion, cantidad_inicial, cantidad_actual, merma, notas, creado_en, sucursal_id
                    FROM producto_lotes WHERE producto_id=? ORDER BY fecha_elaboracion ASC""",
                 (p['id'],)
             ).fetchall()
@@ -1948,19 +1958,20 @@ def api_producto_lotes_create():
     notas    = d.get('notas', '')
     if not prod_id or cantidad <= 0:
         return jsonify({'error': 'producto_id y cantidad requeridos'}), 400
+    sucursal = _sucursal_escritura(d)
     with db() as c:
         prod = c.execute("SELECT id, nombre FROM productos WHERE id=? AND activo=1", (prod_id,)).fetchone()
         if not prod:
             return jsonify({'error': 'Producto no encontrado'}), 404
         c.execute(
-            """INSERT INTO producto_lotes (producto_id, fecha_elaboracion, cantidad_inicial, cantidad_actual, notas)
-               VALUES (?,?,?,?,?)""",
-            (prod_id, fecha, cantidad, cantidad, notas)
+            """INSERT INTO producto_lotes (producto_id, sucursal_id, fecha_elaboracion, cantidad_inicial, cantidad_actual, notas)
+               VALUES (?,?,?,?,?,?)""",
+            (prod_id, sucursal, fecha, cantidad, cantidad, notas)
         )
         lote_id = c.execute("SELECT last_insert_rowid()").fetchone()[0]
         # Crear lote = entra stock: mantener los 3 contadores en sync
         c.execute("UPDATE productos SET stock=stock+? WHERE id=?", (cantidad, prod_id))
-        inv_id = _get_or_create_inv_terminado(c, prod_id, prod['nombre'])
+        inv_id = _get_or_create_inv_terminado(c, prod_id, prod['nombre'], sucursal)
         c.execute(
             "UPDATE inventario SET stock_kg=stock_kg+?, ultima_actualizacion=date('now') WHERE id=?",
             (cantidad, inv_id)
@@ -2008,8 +2019,8 @@ def api_producto_lotes_ajustar(lid):
         )
         c.execute(
             """UPDATE inventario SET stock_kg=stock_kg+?, ultima_actualizacion=date('now')
-               WHERE bodega='productos_terminados' AND producto_id=?""",
-            (delta_efectivo, lote['producto_id'])
+               WHERE bodega='productos_terminados' AND producto_id=? AND sucursal_id=?""",
+            (delta_efectivo, lote['producto_id'], lote['sucursal_id'])
         )
         lote_updated = c.execute("SELECT * FROM producto_lotes WHERE id=?", (lid,)).fetchone()
     return jsonify(dict(lote_updated))
@@ -6322,23 +6333,29 @@ def api_inventario_create():
             nombre   = prod['nombre']      if prod else d.get('ingrediente', '')
             categoria   = prod['categoria']   if prod else d.get('categoria', '')
             subcategoria = prod['subcategoria'] if prod else d.get('subcategoria', '')
-            inv_id = _get_or_create_inv_terminado(c, int(producto_id), nombre)
+            sucursal = _sucursal_escritura(d)
+            inv_id = _get_or_create_inv_terminado(c, int(producto_id), nombre, sucursal)
             c.execute(
                 """UPDATE inventario SET stock_kg=?, alerta_minimo_kg=?, unidad=?,
                    categoria=?, subcategoria=?, ultima_actualizacion=date('now') WHERE id=?""",
                 (stock, float(d.get('alerta_minimo_kg', 0)), d.get('unidad', 'unidades'),
                  categoria, subcategoria, inv_id)
             )
-            c.execute("UPDATE productos SET stock=? WHERE id=?", (stock, int(producto_id)))
+            # productos.stock = total entre sucursales
+            c.execute("""UPDATE productos SET stock=(
+                           SELECT COALESCE(SUM(stock_kg),0) FROM inventario
+                           WHERE bodega='productos_terminados' AND producto_id=?)
+                         WHERE id=?""", (int(producto_id), int(producto_id)))
         else:
             # Upsert que conserva el id: INSERT OR REPLACE borraba la fila y
             # creaba otra, dejando recetas.inventario_id en NULL (FK SET NULL).
+            # Insumos centralizados: siempre sucursal 1.
             c.execute(
                 """INSERT INTO inventario
                    (ingrediente, stock_kg, alerta_minimo_kg, proveedor, precio_kg,
-                    ultima_actualizacion, bodega, unidad, categoria, subcategoria)
-                   VALUES (?,?,?,?,?,?,?,?,?,?)
-                   ON CONFLICT(ingrediente) DO UPDATE SET
+                    ultima_actualizacion, bodega, unidad, categoria, subcategoria, sucursal_id)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,1)
+                   ON CONFLICT(ingrediente, bodega, sucursal_id) DO UPDATE SET
                      stock_kg=excluded.stock_kg,
                      alerta_minimo_kg=excluded.alerta_minimo_kg,
                      proveedor=excluded.proveedor,
@@ -6373,7 +6390,11 @@ def api_inventario_update(iid):
         )
         row = c.execute("SELECT bodega, producto_id FROM inventario WHERE id=?", (iid,)).fetchone()
         if row and row['bodega'] == 'productos_terminados' and row['producto_id']:
-            c.execute("UPDATE productos SET stock=? WHERE id=?", (stock, row['producto_id']))
+            # productos.stock = total entre sucursales
+            c.execute("""UPDATE productos SET stock=(
+                           SELECT COALESCE(SUM(stock_kg),0) FROM inventario
+                           WHERE bodega='productos_terminados' AND producto_id=?)
+                         WHERE id=?""", (row['producto_id'], row['producto_id']))
     return jsonify({'ok': True})
 
 @app.route('/api/inventario/<int:iid>', methods=['DELETE'])
